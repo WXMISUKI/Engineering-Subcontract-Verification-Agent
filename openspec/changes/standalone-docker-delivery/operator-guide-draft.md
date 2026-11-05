@@ -23,24 +23,24 @@
 3. 准备好本地目录和离线镜像后启动基础服务：
 
    ```sh
-   docker compose up -d --wait --wait-timeout 180 mysql knowledge-postgres knowledge-redis docreader weknora
+   docker compose up -d --no-build --pull never --wait --wait-timeout 180 mysql knowledge-postgres knowledge-redis docreader weknora
    docker compose ps
-   docker compose run --rm --no-deps backend python -m app.standalone.manage init-db
-   docker compose run --rm --no-deps backend python -m app.standalone.manage create-user USERNAME
+   docker compose run --rm --no-deps --pull never backend python -m app.standalone.manage init-db
+   docker compose run --rm --no-deps --pull never backend python -m app.standalone.manage create-user USERNAME
    ```
 
-   `--wait` 等待带健康检查的服务通过检查、其他服务进入运行状态；若超时或失败，排查后再继续，不要直接执行初始化。需要支持该选项的 Docker Compose 版本。建号命令在交互终端输入两次密码，密码不写命令行或聊天。`init-db` 创建缺失表，不是升级迁移工具，只用于新库或确认版本兼容的库。
+   `--wait` 等待带健康检查的服务通过检查、其他服务进入运行状态；若超时或失败，排查后再继续，不要直接执行初始化。需要 Docker Compose 支持这些选项；`--no-build` 是 `up` 的选项，`run` 不支持该选项，使用 `--pull never` 和已加载的镜像。建号命令在交互终端输入两次密码，密码不写命令行或聊天。`init-db` 创建缺失表，不是升级迁移工具，只用于新库或确认版本兼容的库。
 4. 确认 WeKnora 健康、模型可用、源文件和外置密钥齐备，执行：
 
    ```sh
-   docker compose --profile init run --rm knowledge-init python -m app.standalone.knowledge_seed_cli --bootstrap
+   docker compose --profile init run --rm --no-deps --pull never knowledge-init python -m app.standalone.knowledge_seed_cli --bootstrap
    ```
 
-   命令只连接 Compose 内部 WeKnora 和独立 `bs_review`，创建新管理员、模型及分包知识库，等待解析、生成映射和受限查询凭据。受限凭据和模型的管理凭据分离。扫描资料通过外部 OCR/VLM 处理时，文件内容会发往所配置的服务。解析成功不代表业务依据和页码准确；上线前需核对五步召回和专家结论。
+   `--no-deps` 不会自动启动或等待依赖，因此必须先确认第 3 步中的 WeKnora 和 MySQL 健康。命令只连接 Compose 内部 WeKnora 和独立 `bs_review`，创建新管理员、模型及分包知识库，等待解析、生成映射和受限查询凭据。受限凭据和模型的管理凭据分离。扫描资料通过外部 OCR/VLM 处理时，文件内容会发往所配置的服务。解析成功不代表业务依据和页码准确；上线前需核对五步召回和专家结论。
 5. 启动应用并检查：
 
    ```sh
-   docker compose up -d backend frontend
+   docker compose up -d --no-build --pull never backend frontend
    docker compose ps
    ```
 
