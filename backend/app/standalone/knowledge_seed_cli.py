@@ -11,8 +11,10 @@ from sqlalchemy import create_engine, inspect
 from sqlalchemy.engine import make_url
 
 from .knowledge_seed_setup import initialize_seed, validate_seed_inputs, seed_needs_vision
-from .knowledge_admin_setup import prepare_embedding, prepare_vision, register_admin
+from .knowledge_admin_setup import _fingerprint, prepare_embedding, prepare_vision, register_admin
 from .knowledge_binding_finish import finish_seed_setup
+from .knowledge_upload_recovery import recover_pending_upload
+from .setup_journal import SetupJournal, SetupJournalError
 from .weknora_admin import WeKnoraAdmin
 
 
@@ -65,6 +67,43 @@ def read_vision_environment(values: Mapping[str, str]) -> tuple[str, str, str]:
     return tuple(result)
 
 
+def recover_bootstrap_upload(admin, config_dir, manifest, seed_root, package, *, username, email,
+                             password, model, base_url, dimension, vision=None):
+    """在原 bootstrap 写入任何远端对象前恢复唯一可验证的文件上传。"""
+    journal = SetupJournal(config_dir / 'setup-journal.json')
+    operations = journal.data['operations']
+    pending = [(key, value) for key, value in operations.items()
+               if not isinstance(value, dict) or value.get('status') != 'done']
+    if not pending:
+        return False
+    if len(pending) != 1 or not pending[0][0].startswith('document:') or pending[0][1] != {'status': 'pending'}:
+        raise SetupJournalError('存在无法自动核对的初始化操作')
+    expected = {
+        'administrator': {'status': 'done', 'id': _fingerprint({'username': username, 'email': email})},
+        'embedding-configuration': {'status': 'done', 'id': _fingerprint(
+            {'name': model, 'base_url': base_url, 'dimension': dimension})},
+    }
+    model_entry = operations.get('embedding-model')
+    if not isinstance(model_entry, dict) or model_entry.get('status') != 'done' or not model_entry.get('id'):
+        raise SetupJournalError('Embedding 模型身份未确认')
+    expected['embedding-model'] = model_entry.copy()
+    vision_id = None
+    if vision:
+        vision_name, vision_base = vision
+        expected['vision-configuration'] = {'status': 'done', 'id': _fingerprint(
+            {'name': vision_name, 'base_url': vision_base})}
+        vision_entry = operations.get('vision-model')
+        if not isinstance(vision_entry, dict) or vision_entry.get('status') != 'done' or not vision_entry.get('id'):
+            raise SetupJournalError('OCR 模型身份未确认')
+        expected['vision-model'] = vision_entry.copy()
+        vision_id = vision_entry['id']
+    if any(operations.get(key) != value for key, value in expected.items()):
+        raise SetupJournalError('初始化身份或模型配置已变化')
+    admin.login(email, password)
+    return recover_pending_upload(admin, model_entry['id'], manifest, seed_root, config_dir, package,
+                                  vision_model_id=vision_id, expected_operations=expected)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description='独立分包知识种子初始化')
     parser.add_argument('--bootstrap', action='store_true', help='创建新知识服务管理员和 Embedding 模型')
@@ -90,6 +129,10 @@ def main() -> None:
     with httpx.Client(base_url='http://weknora:8080', timeout=60, trust_env=False) as client:
         admin = WeKnoraAdmin(client)
         if args.bootstrap:
+            recover_bootstrap_upload(admin, Path('/data/knowledge'), manifest, seed_root, package,
+                                     username=username, email=email, password=password, model=model,
+                                     base_url=base_url, dimension=dimension,
+                                     vision=(vision_model, vision_base) if needs_vision else None)
             register_admin(admin, Path('/data/knowledge'), username, email, password)
             model_id = prepare_embedding(admin, Path('/data/knowledge'), model, base_url, api_key, dimension)
             if needs_vision:

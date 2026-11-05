@@ -1,5 +1,6 @@
 import httpx
 import pytest
+import hashlib
 
 from app.standalone.weknora_admin import KnowledgeSetupError, WeKnoraAdmin
 
@@ -60,3 +61,47 @@ def test_vision_model_is_attached_to_new_knowledge_base():
         admin = WeKnoraAdmin(client)
         vision = admin.create_vision_model('ocr', 'https://example.invalid/v1', 'synthetic-key')
         assert admin.create_knowledge_base('bs-test', 'embedding-id', vision) == 'kb-id'
+
+
+def test_recovery_requires_unique_completed_file_and_downloaded_sha256(tmp_path):
+    path = tmp_path / 'sample.txt'
+    path.write_bytes(b'synthetic source')
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    record = {'id': 'doc-id', 'knowledge_base_id': 'kb-id', 'file_name': path.name,
+              'file_size': path.stat().st_size, 'embedding_model_id': 'model-id', 'parse_status': 'completed'}
+    records = [record]
+    content = [path.read_bytes()]
+
+    def handler(request):
+        if request.url.path.endswith('/knowledge-bases/kb-id/knowledge'):
+            return httpx.Response(200, json={'success': True, 'data': records, 'total': len(records),
+                                             'page': 1, 'page_size': 100})
+        if request.url.path.endswith('/knowledge/doc-id/download'):
+            return httpx.Response(200, content=content[0])
+        return httpx.Response(200, json={'success': True, 'data': record})
+
+    with httpx.Client(base_url='http://weknora:8080', transport=httpx.MockTransport(handler)) as client:
+        admin = WeKnoraAdmin(client)
+        assert admin.find_verified_document('kb-id', path, digest, 'model-id') == 'doc-id'
+        records.append({**record, 'id': 'second-id'})
+        assert admin.find_verified_document('kb-id', path, digest, 'model-id') is None
+        records.pop()
+        content[0] = b'wrong'
+        assert admin.find_verified_document('kb-id', path, digest, 'model-id') is None
+        content[0] = path.read_bytes()
+        record['knowledge_base_id'] = 'other-kb'
+        assert admin.find_verified_document('kb-id', path, digest, 'model-id') is None
+
+
+@pytest.mark.parametrize('response', [
+    {'success': True, 'data': [], 'total': 1, 'page': 1, 'page_size': 100},
+    {'success': True, 'data': [], 'total': 0, 'page': 2, 'page_size': 100},
+    {'success': True, 'data': [], 'page': 1, 'page_size': 100},
+])
+def test_recovery_rejects_incomplete_or_inconsistent_file_list(tmp_path, response):
+    path = tmp_path / 'sample.txt'
+    path.write_bytes(b'synthetic')
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json=response))
+    with httpx.Client(base_url='http://weknora:8080', transport=transport) as client:
+        with pytest.raises(KnowledgeSetupError, match='列表'):
+            WeKnoraAdmin(client).find_verified_document('kb-id', path, hashlib.sha256(path.read_bytes()).hexdigest(), 'model-id')

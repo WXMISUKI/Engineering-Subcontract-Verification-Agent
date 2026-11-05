@@ -1,6 +1,7 @@
 """新环境知识初始化所需的 WeKnora v0.9 管理 API；不记录凭据或响应正文。"""
 
 import httpx
+import hashlib
 import json
 from pathlib import Path
 from urllib.parse import quote
@@ -96,6 +97,58 @@ class WeKnoraAdmin:
         if not isinstance(data, dict) or not isinstance(data.get('parse_status'), str):
             raise KnowledgeSetupError('知识文件状态响应无效')
         return data['parse_status']
+
+    def find_verified_document(self, kb_id: str, path: Path, sha256: str, model_id: str) -> str | None:
+        """完整列举后只读下载候选原件；任何歧义或元数据缺失均不恢复。"""
+        rows, seen, total = [], set(), None
+        for page in range(1, 102):
+            body = self._body(self.client.get(
+                f'/api/v1/knowledge-bases/{quote(kb_id, safe="")}/knowledge',
+                params={'page': page, 'page_size': 100}), (200,))
+            current, count = body.get('data'), body.get('total')
+            if (not isinstance(current, list) or isinstance(count, bool) or not isinstance(count, int)
+                    or count < 0 or count > 10000 or (total is not None and total != count)
+                    or body.get('page') != page or body.get('page_size') != 100):
+                raise KnowledgeSetupError('知识文件列表不完整，无法自动恢复')
+            total = count
+            for item in current:
+                if not isinstance(item, dict) or not isinstance(item.get('id'), str) or not item['id'] or item['id'] in seen:
+                    raise KnowledgeSetupError('知识文件列表不完整，无法自动恢复')
+                seen.add(item['id'])
+                rows.append(item)
+            if len(rows) == total:
+                break
+            if not current or len(rows) > total:
+                raise KnowledgeSetupError('知识文件列表不完整，无法自动恢复')
+        else:
+            raise KnowledgeSetupError('知识文件列表超过核对上限')
+        candidates = [item for item in rows if item.get('file_name') == path.name]
+        if len(candidates) != 1:
+            return None
+        candidate = candidates[0]
+        expected = {'knowledge_base_id': kb_id, 'file_name': path.name,
+                    'file_size': path.stat().st_size, 'embedding_model_id': model_id,
+                    'parse_status': 'completed'}
+        if any(candidate.get(key) != value for key, value in expected.items()):
+            return None
+        document_id = candidate['id']
+        digest, size = hashlib.sha256(), 0
+        with self.client.stream('GET', f'/api/v1/knowledge/{quote(document_id, safe="")}/download') as response:
+            if response.status_code != 200:
+                raise KnowledgeSetupError(f'知识原件读取失败（HTTP {response.status_code}）')
+            for chunk in response.iter_bytes():
+                size += len(chunk)
+                if size > expected['file_size']:
+                    return None
+                digest.update(chunk)
+        if size != expected['file_size'] or digest.hexdigest() != sha256:
+            return None
+        body = self._body(self.client.get(f'/api/v1/knowledge/{quote(document_id, safe="")}'), (200,))
+        latest = body.get('data')
+        if (not isinstance(latest, dict) or latest.get('id') != document_id
+                or any(latest.get(key) != value for key, value in expected.items())):
+            return None
+        return document_id
 
     def create_retrieval_key(self, kb_ids: list[str]) -> tuple[str, str]:
         if not kb_ids or any(not isinstance(item, str) or not item.strip() for item in kb_ids):
