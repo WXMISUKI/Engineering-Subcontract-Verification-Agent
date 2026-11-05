@@ -19,13 +19,13 @@
 3. 准备好本地目录和离线镜像后启动基础服务：
 
    ```sh
-   docker compose up -d mysql knowledge-postgres knowledge-redis docreader weknora
+   docker compose up -d --wait --wait-timeout 180 mysql knowledge-postgres knowledge-redis docreader weknora
    docker compose ps
    docker compose run --rm --no-deps backend python -m app.standalone.manage init-db
    docker compose run --rm --no-deps backend python -m app.standalone.manage create-user USERNAME
    ```
 
-   建号命令在交互终端输入两次密码，密码不写命令行或聊天。`init-db` 创建缺失表，不是升级迁移工具，只用于新库或确认版本兼容的库。
+   `--wait` 等待带健康检查的服务通过检查、其他服务进入运行状态；若超时或失败，排查后再继续，不要直接执行初始化。需要支持该选项的 Docker Compose 版本。建号命令在交互终端输入两次密码，密码不写命令行或聊天。`init-db` 创建缺失表，不是升级迁移工具，只用于新库或确认版本兼容的库。
 4. 确认 WeKnora 健康、模型可用、源文件和外置密钥齐备，执行：
 
    ```sh
