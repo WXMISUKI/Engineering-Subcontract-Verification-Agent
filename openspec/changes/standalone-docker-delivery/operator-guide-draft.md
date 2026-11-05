@@ -14,6 +14,8 @@
 
 在交付包目录执行，以下命令是候选操作流程，须在最终镜像及目标机器上复验。
 
+在 Linux 目标机导入镜像前，从包根目录运行 `sha256sum -c SHA256SUMS`；必须全部显示 OK 且退出码为 0，缺文件或校验失败时停止安装并重新获取完整包。校验清单本身也要通过可信渠道核对，摘要校验只能检查内容与清单是否一致，不能单独证明发布者身份。当前候选镜像为 Linux amd64；其他架构不能据此认定兼容。该命令已在断外网 Linux 容器、候选目录只读挂载的条件下验证，未覆盖客户机器。
+
 1. 从 `.env.example` 建立本机 `.env`，生成独立随机密码和密钥。`DATABASE_URL` 指向 `mysql` 容器的 `bs_review`，且连接密码与 `MYSQL_PASSWORD` 一致，特殊字符按 URL 编码。保管 `SECRET_KEY`、`KNOWLEDGE_AES_KEY` 等稳定密钥；AES 密钥必须为 32 字节，丢失后知识服务加密内容可能无法恢复。准备独立的新 WeKnora 管理账号及 Embedding 配置；六份知识原件含扫描件，因此还需配置 `KNOWLEDGE_VLM_*`。模型地址只允许必要的精确可信域名，按需设置 `KNOWLEDGE_SSRF_WHITELIST_EXTRA`。业务模型和上传材料 OCR 分别使用 `LLM_*`、`OCR_CLOUD_*`。
 2. 在本机试用时使用仅监听 `127.0.0.1` 的 HTTP 入口并设置 `COOKIE_SECURE=false`；生产使用 HTTPS 反向代理并设置 `COOKIE_SECURE=true`。默认 secure Cookie 不会随普通 HTTP 请求发送。不要将测试用 HTTP 入口暴露给其他主机。
 3. 准备好本地目录和离线镜像后启动基础服务：
