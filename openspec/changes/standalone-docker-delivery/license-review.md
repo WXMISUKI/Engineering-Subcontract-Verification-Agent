@@ -10,6 +10,8 @@
 
 对候选 ParadeDB 镜像作离线只读核查：安装的软件包 `postgresql-17-pg-search` 为 0.25.11，扩展控制文件默认版本亦为 0.25.11；另有 PostgreSQL 17.11 和 pgvector 0.8.4。镜像内软件包版权文件声明 `AGPL-3.0-or-later`，其原文已收录为 `third-party-licenses/ParadeDB-pg-search-0.25.11-copyright.txt`。但该版权文件所指的同目录 `LICENSE` 实际缺失，尽管 `dpkg -L` 仍列出此路径；候选包另行收录了上游 0.25.11 的许可证文本。包版本与上游标签一致只支持版本识别，尚不能证明该标签快照包含构建此二进制的完整对应源码、补丁和依赖，也不能据此认定分发义务已满足。
 
+进一步从 [ParadeDB v0.25.11 官方发布](https://github.com/paradedb/paradedb/releases/tag/v0.25.11)下载 PostgreSQL 17、Debian trixie、amd64 的官方 deb，包 SHA-256 与 GitHub 发布资源摘要一致。包中 `pg_search.so` 的 SHA-256 与候选镜像对应文件完全一致；包内 LICENSE 的 SHA-256 也与候选包所收录的上游许可证一致。此比对加强了该扩展二进制和许可证来源证据；未验证发布签名、源码构建过程或镜像其他文件，不能代替完整对应源码及许可证义务核查。
+
 `third-party-licenses/` 已收录上表五个重点项目对应版本的上游许可文件。Redis 和 MySQL 的版本通过候选镜像内命令核对分别为 7.0.15 和 8.0.46；保留许可证原文只完成部分准备工作，尚需确认镜像内全部组件、对应源码及适用的分发条件。
 
 | 组件及实际版本 | 初步证据 | 交付前待核 |
