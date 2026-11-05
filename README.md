@@ -14,6 +14,8 @@
 
 从源码重建后端镜像需要预先准备固定版本的 PyMuPDF 和 MuPDF 源码包，构建依赖需联网获取；输入位置、摘要及验证范围见 [PDF 源码构建记录](openspec/changes/standalone-docker-delivery/pdf-source-build.md)。离线安装使用已导出的镜像，不需要重新编译。
 
+前端镜像部署后可执行 `python scripts/check_frontend_assets.py http://127.0.0.1:8088`，检查页面实际引用的 PDF worker 和脚本是否以 JavaScript 类型交付。还应使用测试材料在浏览器中验证 PDF 显示、定位和翻页；资源检查不能代替真实渲染验证。
+
 ## 许可证与材料
 
 第三方组件和知识资料的权利范围应在对外分发前确认。[许可证核查记录](openspec/changes/standalone-docker-delivery/license-review.md)列出了已识别的 AGPL、GPL 和其他许可及未完成事项；公开仓库本身不代表许可核查已通过。知识资料原件不放在本仓库。

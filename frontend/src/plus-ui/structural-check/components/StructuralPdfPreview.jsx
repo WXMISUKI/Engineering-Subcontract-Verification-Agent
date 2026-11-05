@@ -619,7 +619,7 @@ const StructuralPdfPreview = forwardRef(function StructuralPdfPreview(
 
   const scrollToPageInternal = (targetPage) => {
     pendingFindingRef.current = null
-    appliedFindingKeyRef.current = ''
+    // 手动翻页不应让当前证据的自动定位再次触发并跳回原页。
     clearFindingRetry()
     const page = applyJumpWindow(targetPage)
     const slot = slotRefs.current[page - 1]
