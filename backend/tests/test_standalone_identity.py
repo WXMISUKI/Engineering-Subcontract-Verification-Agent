@@ -177,6 +177,13 @@ def test_cross_account_cannot_read_or_modify_task_evidence():
         f'{base}/tasks/{task_id}', f'{base}/tasks/{task_id}/subjects',
         f'{base}/tasks/{task_id}/findings', f'{base}/tasks/{task_id}/events',
         f'{base}/tasks/{task_id}/report', f'{base}/tasks/{task_id}/report/export',
+        f'{base}/tasks/{task_id}/report/evidence-bundle',
+        f'{base}/tasks/{task_id}/opinion', f'{base}/tasks/{task_id}/opinion/preview',
+        f'{base}/tasks/{task_id}/opinion/preview-markdown', f'{base}/tasks/{task_id}/opinion/export',
+        f'{base}/tasks/{task_id}/versions', f'{base}/tasks/{task_id}/versions/1',
+        f'{base}/tasks/{task_id}/versions/diff?a=1&b=2',
+        f'{base}/tasks/{task_id}/versions/1/materials/{material_id}/pages/1',
+        f'{base}/tasks/{task_id}/materials/{material_id}/history',
         f'{base}/tasks/{task_id}/references/example/file',
         f'{base}/materials/{material_id}/pages/1', f'{base}/materials/{material_id}/file',
     ]
