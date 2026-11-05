@@ -18,7 +18,7 @@ from ...limiter import limiter
 from ...utils.download import attachment_disposition
 from . import (access, admission, ai_advisory_snapshots, checklist, export, reporting, service,
                severity, zip_ingestion, knowledge_runs, reference_snapshots, rules, ruleset)
-from . import source_manifest, finding_text
+from . import source_manifest, finding_text, background_ai_review
 from . import reference_visibility
 from . import material_versions, supplement_generation, section_projection, material_confirmation
 from . import parsing
@@ -991,12 +991,39 @@ def _advisory_group_ids(run):
     return ai_advisory_snapshots.advisory_group_ids(run)
 
 
+class BackgroundAiReviewIn(BaseModel):
+    review_run_id: str
+    retry: bool = False
+
+
+@router.post('/tasks/{task_id}/ai-review', status_code=202)
+@limiter.limit('10/minute')
+async def submit_background_ai_review(task_id: int, body: BackgroundAiReviewIn, request: Request,
+                                      db: Session = Depends(get_db), user=Depends(get_current_any_user)):
+    _get_task(db, task_id, user)
+    try:
+        return background_ai_review.submit_background_job(db, task_id, user, body.review_run_id, retry=body.retry)
+    except PermissionError:
+        raise HTTPException(status_code=403, detail='无权访问该任务') from None
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+
+
+@router.get('/tasks/{task_id}/ai-review')
+def get_background_ai_review(task_id: int, review_run_id: str = Query(...),
+                             db: Session = Depends(get_db), user=Depends(get_current_any_user)):
+    task = _get_task(db, task_id, user)
+    return background_ai_review.job_status(db, task, review_run_id)
+
+
 @router.post("/tasks/{task_id}/check/{group_id}/ai-advisory-batch")
 @limiter.limit("10/minute")
 async def run_group_ai_advisory(task_id: int, group_id: str, body: BatchAdvisoryIn, request: Request,
                                  db: Session = Depends(get_db), user=Depends(get_current_any_user)):
     """仅对当前组中已关联原文的结论发起分批辅助判断。"""
     task = _get_task(db, task_id, user)
+    if background_ai_review.running_job(db, task):
+        raise HTTPException(status_code=409, detail='后台 AI 核查正在运行，请等待完成')
     if task.state not in ("running", "review"):
         raise HTTPException(status_code=409, detail="当前任务不能进行辅助核查，请先开始核查")
     if group_id not in reference_snapshots.CHECK_GROUPS:

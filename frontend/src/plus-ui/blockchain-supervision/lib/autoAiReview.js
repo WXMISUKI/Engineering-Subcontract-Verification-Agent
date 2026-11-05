@@ -2,6 +2,24 @@ export function aiReviewRequiresNewRun(error) {
   return error?.status === 409 && error?.detail === '核查材料、结论或依据授权已变化，请刷新并重新核查'
 }
 
+export async function runBackgroundAiReview({ taskId, reviewRunId, startJob, getJob, retry = false,
+  onProgress = () => {}, wait = () => new Promise((resolve) => setTimeout(resolve, 2000)) }) {
+  if (!reviewRunId) throw new Error('核查运行标识缺失，请刷新后重试')
+  let job = await startJob(taskId, reviewRunId, { retry })
+  const expectedJobId = job?.job_id
+  while (true) {
+    if (!job || job.review_run_id !== reviewRunId || !expectedJobId || job.job_id !== expectedJobId) throw new Error('后台核查状态已变化，请刷新后重试')
+    if (job.state === 'completed') return { state: 'completed', warning: job.warning === true,
+      unlocatedScopeCount: Number.isInteger(job.unlocated_scope_count) ? job.unlocated_scope_count : 0 }
+    if (job.state === 'failed' || job.state === 'interrupted') return { state: job.state,
+      failureCategories: Array.isArray(job.failure_categories) ? job.failure_categories : [] }
+    if (job.state !== 'running') throw new Error('后台核查状态无法确认，请刷新后重试')
+    onProgress(job.current_group || null)
+    await wait()
+    job = await getJob(taskId, reviewRunId)
+  }
+}
+
 function validateStatus(status, runId) {
   if (status?.run_id !== runId) throw new Error('核查运行已变化，请刷新后重试')
   const keys = ['not_started', 'pending', 'completed', 'partial', 'failed', 'not_run']

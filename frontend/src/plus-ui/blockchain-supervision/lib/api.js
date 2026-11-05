@@ -190,6 +190,19 @@ export async function getBsGroupAiStatus(taskId, groupId) {
   return _json(r, 'AI 核查状态')
 }
 
+export async function startBsBackgroundAiReview(taskId, reviewRunId, { retry = false } = {}) {
+  const r = await fetch(`${BASE}/tasks/${taskId}/ai-review`, {
+    method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ review_run_id: reviewRunId, retry }),
+  })
+  return _json(r, '后台 AI 核查')
+}
+
+export async function getBsBackgroundAiReview(taskId, reviewRunId) {
+  const r = await fetch(`${BASE}/tasks/${taskId}/ai-review?review_run_id=${encodeURIComponent(reviewRunId)}`, { credentials: 'include' })
+  return _json(r, '后台 AI 核查状态')
+}
+
 export async function runBsGroupAiAdvisory(taskId, groupId, runId, { resumePartial = false } = {}) {
   const r = await fetch(`${BASE}/tasks/${taskId}/check/${encodeURIComponent(groupId)}/ai-advisory-batch`, {
     method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },

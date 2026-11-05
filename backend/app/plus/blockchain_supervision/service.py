@@ -2959,6 +2959,9 @@ def ai_checkpoint_client_fingerprint(client) -> str | None:
 
 def current_ai_advisory_pending(db: Session, task: BsTask) -> bool:
     """按当前核查代的每项最新事件判断，不被历史租约阻塞。"""
+    from . import background_ai_review
+    if background_ai_review.running_job(db, task):
+        return True
     current_runs = {run_id for group in reference_snapshots.CHECK_GROUPS
                     if (run_id := knowledge_runs.group_pointer(task, group))}
     if not current_runs:

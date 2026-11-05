@@ -32,10 +32,10 @@ import {
   activateBsSupplementPlan, confirmBsMaterial, createBsSupplementPlan, enterBsMaterialEdit, getBsReport, getBsOpinion, getBsTask, getBsTodo, getBsReviewVersion, getBsRuleset,
   listBsFindings, listBsTasks, pingBs, reviewBsFinding, rerunBsTask, saveBlob, downloadBsReferenceFile,
   assignBsMaterialSubject, patchBsSection, runBsCheck, setBsMaterialRole, startBsReview, startBsSupplementEdit, uploadBsMaterial,
-  getBsGroupAiStatus, runBsGroupAiAdvisory,
+  startBsBackgroundAiReview, getBsBackgroundAiReview,
 } from './lib/api'
 import { pendingAutoCheckSteps, planAutoChecks, readAutoRunStatus, writeAutoRunStatus, clearAutoRunStatus } from './lib/autoCheckResume'
-import { aiReviewRequiresNewRun, runAutoAiReview } from './lib/autoAiReview'
+import { aiReviewRequiresNewRun, runBackgroundAiReview } from './lib/autoAiReview'
 import {
   collectContainerIds,
   subjectCodeLabel, subjectNeedsNameConfirm, subjectNeedsTypeConfirm,
@@ -1497,10 +1497,12 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
         doingAi = true
         aiResumeSeenRef.current = snapshot.review_run_id
         if (!Array.isArray(snapshot.ai_auto_groups)) throw new Error('AI 核查范围无效，请刷新后重试')
-        const aiResult = await runAutoAiReview({
-          taskId, runs: snapshot.runs || [], groups: snapshot.ai_auto_groups,
-          getStatus: getBsGroupAiStatus, runBatch: runBsGroupAiAdvisory, retry: retryAi,
-          onProgress: (index, total, groupId, activity) => setAutoCheck({ phase: 'running', stage: 'ai', index, total, groupId, activity, error: '' }),
+        const aiResult = await runBackgroundAiReview({
+          taskId, reviewRunId: snapshot.review_run_id,
+          startJob: startBsBackgroundAiReview, getJob: getBsBackgroundAiReview, retry: retryAi,
+          onProgress: (groupId) => setAutoCheck({ phase: 'running', stage: 'ai',
+            index: Math.max(0, snapshot.ai_auto_groups.indexOf(groupId)), total: snapshot.ai_auto_groups.length,
+            groupId, activity: 'status', error: '' }),
         })
         if (aiResult.state === 'pending') {
           aiResumeSeenRef.current = snapshot.review_run_id
@@ -1512,6 +1514,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
           const reasons = (aiResult.failureCategories || []).map((code) => labels[code]).filter(Boolean)
           throw new Error(`部分 AI 辅助核查未完成${reasons.length ? `（${reasons.join('、')}）` : ''}，请重试或人工核实`)
         }
+        if (aiResult.state === 'interrupted') throw new Error('后台核查已中断，已完成结果已保留；请确认服务正常后重试')
         aiWarning = aiResult.warning
         unlocatedScopeCount = aiResult.unlocatedScopeCount || 0
         // 模型候选可能新增复核问题；收口前读取同一核查代的最新清单。
