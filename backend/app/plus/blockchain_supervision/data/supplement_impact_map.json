@@ -1,0 +1,45 @@
+{
+  "meta": {
+    "title": "补件影响范围映射",
+    "version": "2026-10-30.1",
+    "note": "只定义材料类别到核查组的安全上界；具体 item_id 必须由当前缺件清单传入，不能由前端猜测。"
+  },
+  "categories": {
+    "certificates": {
+      "groups": ["completeness", "a2"],
+      "labels": ["营业执照", "资质证书", "安全生产许可证", "证照"],
+      "requires_subject": true,
+      "requires_item_ids": true
+    },
+    "submission_packet": {
+      "groups": ["completeness"],
+      "labels": ["分包报审附件", "报审资料包"],
+      "requires_subject": true,
+      "requires_item_ids": true
+    },
+    "personnel_social": {
+      "groups": ["completeness", "a2"],
+      "labels": ["人员与社保证明", "管理人员", "授权人员社保"],
+      "requires_subject": true,
+      "requires_item_ids": true
+    },
+    "labor_contract": {
+      "groups": ["completeness", "a1", "signature_chain"],
+      "labels": ["劳务合作合同", "劳务分包合同"],
+      "requires_subject": true,
+      "requires_item_ids": true
+    },
+    "sub_contract": {
+      "groups": ["completeness", "a1", "signature_chain"],
+      "labels": ["专业分包合同", "分包合同"],
+      "requires_subject": true,
+      "requires_item_ids": true
+    },
+    "general_contract": {
+      "groups": ["completeness", "a1"],
+      "labels": ["总包合同"],
+      "requires_subject": false,
+      "requires_item_ids": true
+    }
+  }
+}

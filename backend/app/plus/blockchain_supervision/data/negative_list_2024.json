@@ -1,0 +1,251 @@
+{
+  "meta": {
+    "title": "公路工程施工分包负面清单",
+    "version": "2024年版",
+    "source_docx": "C:/project/file/区块链监管智能体/前置背景/公路工程施工分包负面清单.docx",
+    "preamble": "以下主体和关键性工作不得进行施工分包：",
+    "leaf_count": 21,
+    "count_caliber": "（三）/（四）按情形逐条拆叶计数：桥梁 2+9+1=12、隧道 5+3=8、路基路面 1（授权省级）",
+    "structured_at": "2026-09-20"
+  },
+  "rules": [
+    {
+      "id": "NL-B-01",
+      "domain": "bridge",
+      "article": "一、（一）",
+      "text": "高度≥20米的水中沉井基础。",
+      "thresholds": [{"key": "height_m", "op": ">=", "value": 20}],
+      "threshold_logic": "all",
+      "exceptions": [],
+      "kind": "prohibited"
+    },
+    {
+      "id": "NL-B-02",
+      "domain": "bridge",
+      "article": "一、（二）",
+      "text": "水深≥10米的围堰工程（钢结构制作和运输除外）。",
+      "thresholds": [{"key": "water_depth_m", "op": ">=", "value": 10}],
+      "threshold_logic": "all",
+      "exceptions": ["钢结构制作和运输"],
+      "kind": "prohibited"
+    },
+    {
+      "id": "NL-B-03",
+      "domain": "bridge",
+      "article": "一、（三）1",
+      "parent_context": "具有下列情形之一的梁式桥上部承重结构（钢结构制作和运输除外）：",
+      "text": "高度≥20米落地式支撑架施工的现浇梁；",
+      "thresholds": [{"key": "height_m", "op": ">=", "value": 20}],
+      "threshold_logic": "all",
+      "exceptions": ["钢结构制作和运输"],
+      "kind": "prohibited"
+    },
+    {
+      "id": "NL-B-04",
+      "domain": "bridge",
+      "article": "一、（三）2",
+      "parent_context": "具有下列情形之一的梁式桥上部承重结构（钢结构制作和运输除外）：",
+      "text": "附着式支撑架施工的现浇梁；",
+      "thresholds": [],
+      "threshold_logic": "all",
+      "exceptions": ["钢结构制作和运输"],
+      "kind": "prohibited"
+    },
+    {
+      "id": "NL-B-05",
+      "domain": "bridge",
+      "article": "一、（三）3",
+      "parent_context": "具有下列情形之一的梁式桥上部承重结构（钢结构制作和运输除外）：",
+      "text": "节段重量≥200吨或长度≥4.5米悬臂施工的现浇梁；",
+      "thresholds": [
+        {"key": "segment_weight_t", "op": ">=", "value": 200},
+        {"key": "segment_length_m", "op": ">=", "value": 4.5}
+      ],
+      "threshold_logic": "any",
+      "exceptions": ["钢结构制作和运输"],
+      "kind": "prohibited"
+    },
+    {
+      "id": "NL-B-06",
+      "domain": "bridge",
+      "article": "一、（三）4",
+      "parent_context": "具有下列情形之一的梁式桥上部承重结构（钢结构制作和运输除外）：",
+      "text": "跨度≥55米移动模架施工的现浇梁；",
+      "thresholds": [{"key": "span_m", "op": ">=", "value": 55}],
+      "threshold_logic": "all",
+      "exceptions": ["钢结构制作和运输"],
+      "kind": "prohibited"
+    },
+    {
+      "id": "NL-B-07",
+      "domain": "bridge",
+      "article": "一、（三）5",
+      "parent_context": "具有下列情形之一的梁式桥上部承重结构（钢结构制作和运输除外）：",
+      "text": "节段重量≥200吨或长度≥4.5米悬拼工法施工的装配式节段梁；",
+      "thresholds": [
+        {"key": "segment_weight_t", "op": ">=", "value": 200},
+        {"key": "segment_length_m", "op": ">=", "value": 4.5}
+      ],
+      "threshold_logic": "any",
+      "exceptions": ["钢结构制作和运输"],
+      "kind": "prohibited"
+    },
+    {
+      "id": "NL-B-08",
+      "domain": "bridge",
+      "article": "一、（三）6",
+      "parent_context": "具有下列情形之一的梁式桥上部承重结构（钢结构制作和运输除外）：",
+      "text": "整孔预制安装的预制梁（外购梁预制、运输除外）；",
+      "thresholds": [],
+      "threshold_logic": "all",
+      "exceptions": ["钢结构制作和运输", "外购梁预制、运输"],
+      "kind": "prohibited"
+    },
+    {
+      "id": "NL-B-09",
+      "domain": "bridge",
+      "article": "一、（三）7",
+      "parent_context": "具有下列情形之一的梁式桥上部承重结构（钢结构制作和运输除外）：",
+      "text": "单体自重≥200吨的装配式梁；",
+      "thresholds": [{"key": "unit_weight_t", "op": ">=", "value": 200}],
+      "threshold_logic": "all",
+      "exceptions": ["钢结构制作和运输"],
+      "kind": "prohibited"
+    },
+    {
+      "id": "NL-B-10",
+      "domain": "bridge",
+      "article": "一、（三）8",
+      "parent_context": "具有下列情形之一的梁式桥上部承重结构（钢结构制作和运输除外）：",
+      "text": "顶推系统支撑跨度≥55米施工的上部承重结构；",
+      "thresholds": [{"key": "span_m", "op": ">=", "value": 55}],
+      "threshold_logic": "all",
+      "exceptions": ["钢结构制作和运输"],
+      "kind": "prohibited"
+    },
+    {
+      "id": "NL-B-11",
+      "domain": "bridge",
+      "article": "一、（三）9",
+      "parent_context": "具有下列情形之一的梁式桥上部承重结构（钢结构制作和运输除外）：",
+      "text": "上跨既有一级及以上公路、主干路及以上城市道路、铁路的上部承重结构。",
+      "thresholds": [],
+      "threshold_logic": "all",
+      "exceptions": ["钢结构制作和运输"],
+      "kind": "prohibited"
+    },
+    {
+      "id": "NL-B-12",
+      "domain": "bridge",
+      "article": "一、（四）",
+      "text": "单孔跨径≥1000米悬索桥、单孔跨径≥600米斜拉桥、单孔跨径≥400米拱桥的上部承重结构（钢结构制作和运输除外）。",
+      "thresholds": [
+        {"key": "suspension_span_m", "op": ">=", "value": 1000},
+        {"key": "cable_stayed_span_m", "op": ">=", "value": 600},
+        {"key": "arch_span_m", "op": ">=", "value": 400}
+      ],
+      "threshold_logic": "any",
+      "exceptions": ["钢结构制作和运输"],
+      "kind": "prohibited"
+    },
+    {
+      "id": "NL-T-01",
+      "domain": "tunnel",
+      "article": "二、（一）",
+      "text": "沉管工法施工的水中隧道的预制安装（基槽开挖、回填、浮运除外）。",
+      "thresholds": [],
+      "threshold_logic": "all",
+      "exceptions": ["基槽开挖、回填、浮运"],
+      "kind": "prohibited"
+    },
+    {
+      "id": "NL-T-02",
+      "domain": "tunnel",
+      "article": "二、（二）",
+      "text": "盾构法、TBM工法施工的隧道（管片预制、运输除外）。",
+      "thresholds": [],
+      "threshold_logic": "all",
+      "exceptions": ["管片预制、运输"],
+      "kind": "prohibited"
+    },
+    {
+      "id": "NL-T-03",
+      "domain": "tunnel",
+      "article": "二、（三）",
+      "text": "高瓦斯隧道（瓦斯抽排、爆破、二衬、出碴运输除外）。",
+      "thresholds": [],
+      "threshold_logic": "all",
+      "exceptions": ["瓦斯抽排、爆破、二衬、出碴运输"],
+      "kind": "prohibited"
+    },
+    {
+      "id": "NL-T-04",
+      "domain": "tunnel",
+      "article": "二、（四）1",
+      "parent_context": "长度超过3千米，且与下列情形之一并存的隧道：",
+      "text": "深埋富水；",
+      "thresholds": [{"key": "length_m", "op": ">", "value": 3000}],
+      "threshold_logic": "all",
+      "exceptions": [],
+      "kind": "prohibited"
+    },
+    {
+      "id": "NL-T-05",
+      "domain": "tunnel",
+      "article": "二、（四）2",
+      "parent_context": "长度超过3千米，且与下列情形之一并存的隧道：",
+      "text": "岩溶强发育地段；",
+      "thresholds": [{"key": "length_m", "op": ">", "value": 3000}],
+      "threshold_logic": "all",
+      "exceptions": [],
+      "kind": "prohibited"
+    },
+    {
+      "id": "NL-T-06",
+      "domain": "tunnel",
+      "article": "二、（四）3",
+      "parent_context": "长度超过3千米，且与下列情形之一并存的隧道：",
+      "text": "V级及以上围岩且开挖断面≥150平方米（爆破、二衬、出碴运输除外）。",
+      "thresholds": [
+        {"key": "length_m", "op": ">", "value": 3000},
+        {"key": "section_area_m2", "op": ">=", "value": 150}
+      ],
+      "threshold_logic": "all",
+      "exceptions": ["爆破、二衬、出碴运输"],
+      "kind": "prohibited"
+    },
+    {
+      "id": "NL-T-07",
+      "domain": "tunnel",
+      "article": "二、（五）",
+      "text": "非无轨运输出碴隧道斜井，直径≥5米且深度≥300米的隧道竖井（爆破除外）。",
+      "thresholds": [
+        {"key": "shaft_diameter_m", "op": ">=", "value": 5},
+        {"key": "shaft_depth_m", "op": ">=", "value": 300}
+      ],
+      "threshold_logic": "all",
+      "exceptions": ["爆破"],
+      "kind": "prohibited"
+    },
+    {
+      "id": "NL-T-08",
+      "domain": "tunnel",
+      "article": "二、（六）",
+      "text": "下穿既有一级及以上公路、主干路及以上城市道路、铁路、江河湖海，且长度≥50米的隧道工程（爆破、二衬、出碴运输除外）。",
+      "thresholds": [{"key": "length_m", "op": ">=", "value": 50}],
+      "threshold_logic": "all",
+      "exceptions": ["爆破、二衬、出碴运输"],
+      "kind": "prohibited"
+    },
+    {
+      "id": "NL-R-01",
+      "domain": "roadbed",
+      "article": "三、",
+      "text": "涉及大型滑坡、泥石流、冻土等不良地质和特殊性岩土处治工程，大型支挡防护工程，特殊高填深挖路基，有特殊技术要求的路面工程，桥面（隧道）铺装工程等，是否增补纳入负面清单，由省级交通运输主管部门根据本行政区域内公路工程建设实际情况自行确定。",
+      "thresholds": [],
+      "threshold_logic": "all",
+      "exceptions": [],
+      "kind": "province_delegated"
+    }
+  ]
+}

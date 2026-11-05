@@ -1,0 +1,271 @@
+{
+  "schema_version": "v1",
+  "generated_at": "2026-10-23",
+  "note": "条目 ID → 依据条款坐标；条款原文与校对状态取自 data/basis_clauses.json（不复制文本）",
+  "items": {
+    "ZHB-2025-SEAL": {
+      "clause_id": "ZHB-2025-0620#三、3",
+      "doc_id": "ZHB-2025-0620"
+    },
+    "T15-01": {
+      "clause_id": "SHJT-2026-8#第十五条（一）",
+      "doc_id": "SHJT-2026-8"
+    },
+    "T15-02": {
+      "clause_id": "SHJT-2026-8#第十五条（二）",
+      "doc_id": "SHJT-2026-8"
+    },
+    "T15-03": {
+      "clause_id": "SHJT-2026-8#第十五条（三）",
+      "doc_id": "SHJT-2026-8"
+    },
+    "T15-04": {
+      "clause_id": "SHJT-2026-8#第十五条（四）",
+      "doc_id": "SHJT-2026-8"
+    },
+    "T15-05": {
+      "clause_id": "SHJT-2026-8#第十五条（五）",
+      "doc_id": "SHJT-2026-8"
+    },
+    "T15-06": {
+      "clause_id": "SHJT-2026-8#第十五条（六）",
+      "doc_id": "SHJT-2026-8"
+    },
+    "T15-07": {
+      "clause_id": "SHJT-2026-8#第十五条（七）",
+      "doc_id": "SHJT-2026-8"
+    },
+    "T15-08": {
+      "clause_id": "SHJT-2026-8#第十五条（八）",
+      "doc_id": "SHJT-2026-8"
+    },
+    "T15-09": {
+      "clause_id": "SHJT-2026-8#第十五条（九）",
+      "doc_id": "SHJT-2026-8"
+    },
+    "T15-10": {
+      "clause_id": "SHJT-2026-8#第十五条（十）",
+      "doc_id": "SHJT-2026-8"
+    },
+    "W16-01": {
+      "clause_id": "SHJT-2026-8#第十六条（一）",
+      "doc_id": "SHJT-2026-8"
+    },
+    "W16-02": {
+      "clause_id": "SHJT-2026-8#第十六条（二）",
+      "doc_id": "SHJT-2026-8"
+    },
+    "W16-03": {
+      "clause_id": "SHJT-2026-8#第十六条（三）",
+      "doc_id": "SHJT-2026-8"
+    },
+    "W16-04": {
+      "clause_id": "SHJT-2026-8#第十六条（四）",
+      "doc_id": "SHJT-2026-8"
+    },
+    "W16-05": {
+      "clause_id": "SHJT-2026-8#第十六条（五）",
+      "doc_id": "SHJT-2026-8"
+    },
+    "W16-06": {
+      "clause_id": "SHJT-2026-8#第十六条（六）",
+      "doc_id": "SHJT-2026-8"
+    },
+    "W16-07": {
+      "clause_id": "SHJT-2026-8#第十六条（七）",
+      "doc_id": "SHJT-2026-8"
+    },
+    "V16-01": {
+      "clause_id": "SHJT-2026-8#第十六条（一）#r2",
+      "doc_id": "SHJT-2026-8"
+    },
+    "V16-02": {
+      "clause_id": "SHJT-2026-8#第十六条（二）#r2",
+      "doc_id": "SHJT-2026-8"
+    },
+    "V16-03": {
+      "clause_id": "SHJT-2026-8#第十六条（三）#r2",
+      "doc_id": "SHJT-2026-8"
+    },
+    "V16-04": {
+      "clause_id": "SHJT-2026-8#第十六条（四）#r2",
+      "doc_id": "SHJT-2026-8"
+    },
+    "L17-01": {
+      "clause_id": "SHJT-2026-8#第十七条（一）",
+      "doc_id": "SHJT-2026-8"
+    },
+    "L17-02": {
+      "clause_id": "SHJT-2026-8#第十七条（二）",
+      "doc_id": "SHJT-2026-8"
+    },
+    "L17-03": {
+      "clause_id": "SHJT-2026-8#第十七条（三）",
+      "doc_id": "SHJT-2026-8"
+    },
+    "NL-B-01": {
+      "clause_id": "MOT-NL-2024#一、（一）",
+      "doc_id": "MOT-NL-2024"
+    },
+    "NL-B-02": {
+      "clause_id": "MOT-NL-2024#一、（二）",
+      "doc_id": "MOT-NL-2024"
+    },
+    "NL-B-03": {
+      "clause_id": "MOT-NL-2024#一、（三）1",
+      "doc_id": "MOT-NL-2024"
+    },
+    "NL-B-04": {
+      "clause_id": "MOT-NL-2024#一、（三）2",
+      "doc_id": "MOT-NL-2024"
+    },
+    "NL-B-05": {
+      "clause_id": "MOT-NL-2024#一、（三）3",
+      "doc_id": "MOT-NL-2024"
+    },
+    "NL-B-06": {
+      "clause_id": "MOT-NL-2024#一、（三）4",
+      "doc_id": "MOT-NL-2024"
+    },
+    "NL-B-07": {
+      "clause_id": "MOT-NL-2024#一、（三）5",
+      "doc_id": "MOT-NL-2024"
+    },
+    "NL-B-08": {
+      "clause_id": "MOT-NL-2024#一、（三）6",
+      "doc_id": "MOT-NL-2024"
+    },
+    "NL-B-09": {
+      "clause_id": "MOT-NL-2024#一、（三）7",
+      "doc_id": "MOT-NL-2024"
+    },
+    "NL-B-10": {
+      "clause_id": "MOT-NL-2024#一、（三）8",
+      "doc_id": "MOT-NL-2024"
+    },
+    "NL-B-11": {
+      "clause_id": "MOT-NL-2024#一、（三）9",
+      "doc_id": "MOT-NL-2024"
+    },
+    "NL-B-12": {
+      "clause_id": "MOT-NL-2024#一、（四）",
+      "doc_id": "MOT-NL-2024"
+    },
+    "NL-T-01": {
+      "clause_id": "MOT-NL-2024#二、（一）",
+      "doc_id": "MOT-NL-2024"
+    },
+    "NL-T-02": {
+      "clause_id": "MOT-NL-2024#二、（二）",
+      "doc_id": "MOT-NL-2024"
+    },
+    "NL-T-03": {
+      "clause_id": "MOT-NL-2024#二、（三）",
+      "doc_id": "MOT-NL-2024"
+    },
+    "NL-T-04": {
+      "clause_id": "MOT-NL-2024#二、（四）1",
+      "doc_id": "MOT-NL-2024"
+    },
+    "NL-T-05": {
+      "clause_id": "MOT-NL-2024#二、（四）2",
+      "doc_id": "MOT-NL-2024"
+    },
+    "NL-T-06": {
+      "clause_id": "MOT-NL-2024#二、（四）3",
+      "doc_id": "MOT-NL-2024"
+    },
+    "NL-T-07": {
+      "clause_id": "MOT-NL-2024#二、（五）",
+      "doc_id": "MOT-NL-2024"
+    },
+    "NL-T-08": {
+      "clause_id": "MOT-NL-2024#二、（六）",
+      "doc_id": "MOT-NL-2024"
+    },
+    "NL-R-01": {
+      "clause_id": "MOT-NL-2024#三、",
+      "doc_id": "MOT-NL-2024"
+    },
+    "RC-A01": {
+      "clause_id": "ZHB-2025-0620#一、1",
+      "doc_id": "ZHB-2025-0620"
+    },
+    "RC-A02": {
+      "clause_id": "ZHB-2025-0620#一、2",
+      "doc_id": "ZHB-2025-0620"
+    },
+    "RC-A03": {
+      "clause_id": "ZHB-2025-0620#一、3",
+      "doc_id": "ZHB-2025-0620"
+    },
+    "RC-A04": {
+      "clause_id": "ZHB-2025-0620#一、4",
+      "doc_id": "ZHB-2025-0620"
+    },
+    "RC-A05": {
+      "clause_id": "ZHB-2025-0620#一、5",
+      "doc_id": "ZHB-2025-0620"
+    },
+    "RC-A06": {
+      "clause_id": "ZHB-2025-0620#一、6",
+      "doc_id": "ZHB-2025-0620"
+    },
+    "RC-A07": {
+      "clause_id": "ZHB-2025-0620#一、7",
+      "doc_id": "ZHB-2025-0620"
+    },
+    "RC-A08": {
+      "clause_id": "ZHB-2025-0620#一、8",
+      "doc_id": "ZHB-2025-0620"
+    },
+    "RC-A09": {
+      "clause_id": "ZHB-2025-0620#一、9",
+      "doc_id": "ZHB-2025-0620"
+    },
+    "RC-A10": {
+      "clause_id": "ZHB-2025-0620#一、10",
+      "doc_id": "ZHB-2025-0620"
+    },
+    "RC-P11": {
+      "clause_id": "ZHB-2025-0620#一、11",
+      "doc_id": "ZHB-2025-0620"
+    },
+    "RC-P12": {
+      "clause_id": "ZHB-2025-0620#一、12",
+      "doc_id": "ZHB-2025-0620"
+    },
+    "RC-P13": {
+      "clause_id": "ZHB-2025-0620#一、13",
+      "doc_id": "ZHB-2025-0620"
+    },
+    "RC-P14": {
+      "clause_id": "ZHB-2025-0620#一、14",
+      "doc_id": "ZHB-2025-0620"
+    },
+    "RC-P15": {
+      "clause_id": "ZHB-2025-0620#一、15",
+      "doc_id": "ZHB-2025-0620"
+    },
+    "RC-P16": {
+      "clause_id": "ZHB-2025-0620#一、16",
+      "doc_id": "ZHB-2025-0620"
+    },
+    "RC-L11": {
+      "clause_id": "ZHB-2025-0620#二、11",
+      "doc_id": "ZHB-2025-0620"
+    },
+    "RC-L12": {
+      "clause_id": "ZHB-2025-0620#二、12",
+      "doc_id": "ZHB-2025-0620"
+    },
+    "RC-L13": {
+      "clause_id": "ZHB-2025-0620#二、13",
+      "doc_id": "ZHB-2025-0620"
+    },
+    "RC-L14": {
+      "clause_id": "ZHB-2025-0620#二、14",
+      "doc_id": "ZHB-2025-0620"
+    }
+  }
+}

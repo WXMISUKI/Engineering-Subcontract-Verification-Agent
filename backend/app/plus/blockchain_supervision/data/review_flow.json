@@ -1,0 +1,181 @@
+{
+  "schema_version": "v1",
+  "title": "工程分包审查流程与对应依据",
+  "deliverable_for": "2026-10-16（周五）例会交付",
+  "note": "本文件是流程图与《审查流程与依据对照表》的唯一定义点：步骤 → 内核 → 依据条款坐标。内核 kind 与内核函数入口由 tests/test_bs_review_flow.py 对着报告分区与源码逐个校验；条款坐标对着 data/basis_clauses.json 逐个解析，解析不到即测试失败。改流程先改本文件，再跑 backend/scripts/render_review_flow.py。",
+  "scope_caliber": "范围口径以业主 2026-10-14 部署文件为准：二、（一）「五步审查」五步都不需要总包合同；二、（二）合同文本用词、文字细节本期不纳入；二、（六）「分包合同总合同额匹配」为后续功能。故本流程以「资料 + 规范 + 负面清单 + 管理守则」为核查锚点，总包合同是可选输入而非前提。",
+  "preconditions": [
+    {
+      "id": "p1",
+      "label": "材料上传与归类",
+      "detail": "按施工总承包（可选）/ 专业分包 / 劳务分包 / 报审资料包归类；角色决定后续哪条内核能用，未上传总承包合同时不影响五步主体的核查"
+    },
+    {
+      "id": "p2",
+      "label": "解析与文本化",
+      "detail": "文本层直读；扫描页使用已配置的OCR服务，云端优先、可用时本地兜底；保留物理页码，未读页及解析不足如实提示"
+    },
+    {
+      "id": "p3",
+      "label": "核查基准日",
+      "detail": "证件有效期、社保、事故追溯期一律以该日为基准，不用当天日期"
+    }
+  ],
+  "steps": [
+    {
+      "id": "s1",
+      "order": 1,
+      "title": "要素完整性核查",
+      "question": "报审资料与合同要素是否齐全",
+      "kernels": [
+        { "kind": "completeness", "entry": "a3_check.run_completeness_check" },
+        { "kind": "signature_chain", "entry": "signature_chain.run_signature_chain_checks" }
+      ],
+      "basis": [
+        { "clause_id": "SHCG-2025-118#第五条", "note": "集团 118 号文：分包单位申报材料（13 子项）", "basis_kind": "material_requirement" },
+        { "clause_id": "SHCG-2025-118-ANNEX#附件1", "list_no": 1, "note": "118 号文附件1 第 1 项：拟分包工程的内容和范围", "basis_kind": "material_requirement" },
+        { "clause_id": "SHCG-2025-118-ANNEX#附件1", "list_no": 5, "note": "118 号文附件1 第 5 项：拟签订的分包合同及设备清单", "basis_kind": "material_requirement" },
+        { "clause_id": "ZHB-2025-0620#一、", "note": "指挥部：专业分包附件顺序要求（4 份，16 项）", "basis_kind": "material_requirement" },
+        { "clause_id": "ZHB-2025-0620#二、", "note": "指挥部：劳务分包附件顺序要求（4 份，14 项）", "basis_kind": "material_requirement" },
+        { "clause_id": "ZHB-2025-0620#三、", "note": "指挥部：分包工程量须明确施工内容、数量、范围；资料须加盖分包单位红章", "basis_kind": "material_requirement" }
+      ],
+      "output": "缺件清单（不符合=缺件成立；符合=齐全；无法核实=无法判断是否提供）"
+    },
+    {
+      "id": "s2",
+      "order": 2,
+      "title": "资质与内容合规性审查",
+      "question": "分包单位是否具备条件、分包内容是否越界",
+      "kernels": [
+        { "kind": "qualification_match", "entry": "a2_check.run_qualification_match_check" },
+        { "kind": "negative_list", "entry": "a1_check.run_negative_list_check" },
+        { "kind": "transfer_scope", "entry": "a1_check.run_transfer_scope_check" },
+        { "kind": "illegal_subcontract", "entry": "a1_check.run_illegal_subcontract_check" }
+      ],
+      "basis": [
+        { "clause_id": "SHJT-2026-8#第十条", "note": "上海细则：分包人应当具备的 4 项条件", "basis_kind": "rule" },
+        { "clause_id": "SHJT-2026-8#第九条", "note": "上海细则：负面清单所列主体和关键性工作不得分包", "basis_kind": "rule" },
+        { "clause_id": "MOT-NL-2024#一、", "note": "负面清单（2024 年版）：桥梁工程 13 项", "basis_kind": "rule" },
+        { "clause_id": "MOT-NL-2024#二、", "note": "负面清单（2024 年版）：隧道工程 9 项", "basis_kind": "rule" },
+        { "clause_id": "MOT-NL-2024#三、", "note": "负面清单（2024 年版）：路基和路面工程（授权省级，上海不增补）", "basis_kind": "rule" },
+        { "clause_id": "SHJT-2026-8#第十五条", "note": "上海细则：禁止转包（10 子项）", "basis_kind": "rule" },
+        { "clause_id": "SHJT-2026-8#第十六条", "note": "上海细则：禁止违法分包（11 子项，其中（二）（三）以总包合同原文为证据）", "basis_kind": "rule" },
+        { "clause_id": "SHJT-2026-8#第十七条", "note": "上海细则：以劳务合作名义违法分包（3 子项）", "basis_kind": "rule" },
+        { "clause_id": "SHCG-2025-118-ANNEX#附件1", "list_no": 2, "note": "118 号文附件1 第 2 项：营业执照、资质证书、安全生产许可证、业绩证明（如需）、来沪企业备案手册", "basis_kind": "material_requirement" }
+      ],
+      "output": "资质匹配 / 负面清单情形 / 转包与违法分包情形结论"
+    },
+    {
+      "id": "s3",
+      "order": 3,
+      "title": "关键岗位人员核查",
+      "question": "人员是否一致、社保是否在册",
+      "kernels": [
+        { "kind": "person_consistency", "entry": "a2_check.run_person_consistency_check" }
+      ],
+      "basis": [
+        { "clause_id": "SHCG-2025-118-ANNEX#附件1", "list_no": 3, "note": "118 号文附件1 第 3 项：管理体系网络图、现场主要管理人员名单、联系方式及社保关系", "basis_kind": "material_requirement" },
+        { "clause_id": "SHJT-2026-8#附件3", "list_no": 3, "note": "上海细则附件3 第 3 项：管理人员简历、身份证明、相关证书、劳动合同、近一个月社保缴费证明", "basis_kind": "material_requirement" },
+        { "clause_id": "SHJT-2026-8#附件4", "list_no": 3, "note": "上海细则附件4 第 3 项：项目负责人、专职安全员等身份证明、证书、劳动合同、社保缴费证明", "basis_kind": "material_requirement" }
+      ],
+      "output": "人员一致性结论（名单/证书/合同/社保四者是否同人）"
+    },
+    {
+      "id": "s4",
+      "order": 4,
+      "title": "证件证照有效性核查",
+      "question": "证照是否在有效期内",
+      "kernels": [
+        { "kind": "cert_validity", "entry": "a2_check.run_cert_validity_check" }
+      ],
+      "basis": [
+        { "clause_id": "SHCG-2025-118-ANNEX#附件1", "list_no": 4, "note": "118 号文附件1 第 4 项：三类人员安全生产考核合格证书、职业资格/职称/岗位证书、特种作业证书", "basis_kind": "material_requirement" },
+        { "clause_id": "SHCG-2025-118-ANNEX#附件1", "list_no": 2, "note": "118 号文附件1 第 2 项：营业执照、资质证书、安全生产许可证", "basis_kind": "material_requirement" },
+        { "clause_id": "SHJT-2026-8#附件3", "list_no": 2, "note": "上海细则附件3 第 2 项：营业执照、安全生产许可证、建筑业企业资质证书、进沪备案证明", "basis_kind": "material_requirement" },
+        { "clause_id": "ZHB-2025-0620#三、", "note": "指挥部：所有注册证书必须注册在本单位，注册专业执业范围须包含分包类别，且全部在有效期内", "basis_kind": "material_requirement" }
+      ],
+      "output": "逐证有效期结论（含临近到期预警窗口）"
+    },
+    {
+      "id": "s5",
+      "order": 5,
+      "title": "内部信用与事故材料核查",
+      "question": "业主内部材料是否记载分包单位信用、警示或事故风险",
+      "kernels": [
+        { "kind": "internal_records", "entry": "internal_records.run_internal_records_check" }
+      ],
+      "basis": [
+        { "clause_id": "SHCG-2025-118#第四条", "note": "集团 118 号文：建立分包单位警示名单库并履行分包管理职责", "basis_kind": "rule" },
+        { "clause_id": "SHCG-2025-118#第七条", "note": "集团 118 号文：分包单位禁入机制，作为内部警示和事故记录的判定依据", "basis_kind": "rule" },
+        { "clause_id": "SHCG-2025-118#第八条", "note": "集团 118 号文：分包单位恢复准入机制，供内部记录的适用期间复核", "basis_kind": "rule" }
+      ],
+      "output": "只依据本任务提供的业主内部警示名单、事故记录或信用核查材料，按三态输出核查结果并保留证据定位",
+      "gap": "本期不访问信用中国或其他外部网站；未提供内部记录、记录未解析或无法定位主体事实时输出无法核实，不能据此推断无外部风险"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "o1",
+      "label": "三态结论",
+      "detail": "每个条目输出符合 / 不符合 / 无法核实，无法核实必须写明缺什么"
+    },
+    {
+      "id": "o2",
+      "label": "审查意见书",
+      "detail": "对齐 118 号文附件1《分包单位认可表》字段顺序：抬头 → 范围说明 → 建议结论 → 分项明细 → 补件清单 → 依据条款原文 → 签署区",
+      "basis": [
+        { "clause_id": "SHCG-2025-118-ANNEX#附件1", "note": "118 号文附件1：直属单位意见两条预置结论（逐字引用）", "basis_kind": "rule" }
+      ]
+    },
+    {
+      "id": "o3",
+      "label": "人工复核",
+      "detail": "本次已选核查组完成后可查看和导出标明未复核的AI初稿；未完成时列出缺项。确认稿受未处理高风险不符合项门禁约束；完成复核须处理全部不符合项，机器结论须人工核实"
+    }
+  ],
+  "scope_statements": [
+    {
+      "id": "sc1",
+      "label": "占比类本期不纳入",
+      "detail": "分包合同总合同额匹配（金额占比、工程量占比）按业主部署文件列为后续功能，本期不纳入核查；能力已实现，开关打开即纳入",
+      "basis": []
+    },
+    {
+      "id": "sc2",
+      "label": "未上传总包合同的情形不进本次范围",
+      "detail": "「分包合同明确不得分包的工程」「未依法签订或未遵循承包合同原则要求」两类情形的证据只能来自总包合同原文；任务未上传总包合同时整体不进本次范围，报告与意见书出「范围说明」，不渲染成一堆「缺件」",
+      "basis": [
+        { "clause_id": "SHJT-2026-8#第十六条", "note": "上海细则第十六条：其中（三）以总包合同明文禁止分包条款为证据、（二）需与总包合同原则对照", "basis_kind": "rule" }
+      ]
+    }
+  ],
+  "deferred": [
+    {
+      "id": "d1",
+      "label": "分包合同总合同额匹配（金额占比 / 工程量占比）",
+      "kernels": [
+        { "kind": "amount_ratio", "entry": "a1_check.run_amount_ratio_check" },
+        { "kind": "workload_ratio", "entry": "a1_check.run_workload_ratio_check" }
+      ],
+      "threshold_source": "80% 金额阈值与 30% 工程量线均非条款来源：《上海市实施细则》原文无该阈值，出处为交委智能体口径与集团/业主管理口径（详见 data/config.json 的 source_note）；30% 线当前仍标「待业主书面确认」",
+      "enable": "data/config.json 的 amount_ratio.enabled / workload_ratio.enabled，默认 false；改 true 后重新核查即纳入",
+      "basis": []
+    },
+    {
+      "id": "d2",
+      "label": "合同语义核查（条款用词与文字细节）",
+      "kernels": [
+        { "kind": "contract_semantic", "entry": "service.run_semantic_checks" }
+      ],
+      "threshold_source": "无阈值；属条款文字层面的语义比对，依赖外部大模型通道，结论为提示性",
+      "enable": "业主部署文件 二、（二）「合同文本用词、文字细节等暂不纳入本期」；本期界面与报告不列为核查项，启用前需业主书面确认口径（清除表 P-06）",
+      "basis": []
+    }
+  ],
+  "gaps": [
+    { "id": "g1", "label": "第五步仅覆盖任务内业主材料", "impact": "缺少内部记录时输出无法核实，不代表已完成外部信用或事故风险核查" },
+    { "id": "g3", "label": "第十五条第（十）子项（T15-10）无内核", "impact": "转包类规则少一条，报告里静默缺失" },
+    { "id": "g4", "label": "负面清单「三、路基和路面」未按上海不增补输出「不适用」", "impact": "该叶现状为授权省级条款，尚未实现不适用口径；输出「不适用」还是「无法核实」需业务方书面确认（设计 80 D-2）" },
+    { "id": "g6", "label": "第十六条存在两组同构编号，第 2 组按 #r2 后缀区分", "impact": "已于 2026-10-23 修复（设计 80 B-1）：条款库加 #rN 后缀、坐标端 V16-* 指向 #r2；修复前 W16-01~04 印错原文，修复后 10/10 语义校验通过并补 3 条真护栏。此处留痕仅说明该条结构特殊，勿按「编号唯一」假设重排" }
+  ]
+}

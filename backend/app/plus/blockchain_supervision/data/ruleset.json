@@ -1,0 +1,9 @@
+{
+  "version": "rs-ee3b18c8d4dcbab1",
+  "hash_algorithm": "text-lf-v1",
+  "code_revision": "2026-11-05.1",
+  "changed_item_ids": [],
+  "change_scope_complete": false,
+  "updated_at": "2026-11-05",
+  "note": "移除 JLLX20240319 项目补充要求，附件清单按 2025 年原件执行；保留原件对分包单位红章的要求。跨模块影响范围尚未完整登记，规则变化后按全量核查处理。"
+}

@@ -1,0 +1,167 @@
+# 候选配置：知识导入和离线验收完成前不得作为正式交付。
+services:
+  frontend:
+    image: bs-frontend-candidate:local
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    ports:
+      - "${BS_BIND_ADDRESS:-127.0.0.1}:${BS_PORT:-8088}:80"
+    depends_on:
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
+  backend:
+    image: bs-backend-candidate:local
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?请设置独立分包数据库连接}
+      SECRET_KEY: ${SECRET_KEY:?请设置独立分包签名密钥}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_API_BASE: ${LLM_API_BASE:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      OCR_CLOUD_MODEL: ${OCR_CLOUD_MODEL:-}
+      OCR_CLOUD_ENDPOINT: ${OCR_CLOUD_ENDPOINT:-}
+      OCR_CLOUD_API_KEY: ${OCR_CLOUD_API_KEY:-}
+      WEKNORA_API_KEY: ${WEKNORA_API_KEY:-}
+      WEKNORA_API_KEY_FILE: /data/knowledge/query-key
+      BS_WEKNORA_KB_MAP: ${BS_WEKNORA_KB_MAP:-}
+      BS_REFERENCE_MAPPING_FILE: /data/knowledge/reference-mapping.json
+    volumes:
+      - bs-uploads:/app/app/uploads
+      - ./delivery-data/knowledge-config:/data/knowledge:ro
+      - ./delivery-data/knowledge-source:/data/knowledge-source:ro
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: unless-stopped
+
+  knowledge-init:
+    image: bs-backend-candidate:local
+    profiles: ["init"]
+    command: ["python", "-m", "app.standalone.knowledge_seed_cli"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?请设置独立分包数据库连接}
+      WEKNORA_ADMIN_EMAIL: ${WEKNORA_ADMIN_EMAIL:-}
+      WEKNORA_ADMIN_PASSWORD: ${WEKNORA_ADMIN_PASSWORD:-}
+      WEKNORA_ADMIN_USERNAME: ${WEKNORA_ADMIN_USERNAME:-}
+      WEKNORA_EMBEDDING_MODEL_ID: ${WEKNORA_EMBEDDING_MODEL_ID:-}
+      WEKNORA_VLM_MODEL_ID: ${WEKNORA_VLM_MODEL_ID:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+      EMBEDDING_API_BASE: ${EMBEDDING_API_BASE:-}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-}
+      KNOWLEDGE_VLM_MODEL: ${KNOWLEDGE_VLM_MODEL:-}
+      KNOWLEDGE_VLM_API_BASE: ${KNOWLEDGE_VLM_API_BASE:-}
+      KNOWLEDGE_VLM_API_KEY: ${KNOWLEDGE_VLM_API_KEY:-}
+    volumes:
+      - ./delivery-data/knowledge-config:/data/knowledge
+      - ./delivery-data/knowledge-source:/data/knowledge-source:ro
+    depends_on:
+      weknora:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    restart: "no"
+
+  mysql:
+    image: mysql:8.0.46@sha256:7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b
+    environment:
+      MYSQL_DATABASE: bs_review
+      MYSQL_USER: bs_review
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?请设置独立数据库密码}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?请设置独立数据库管理员密码}
+    volumes:
+      - bs-mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  weknora:
+    image: wechatopenai/weknora-app:v0.9.0@sha256:25b20959b7456f7842ef55ed4feff3694dbd0c6f8af4117c1fb3c5dec6bdf14d
+    environment:
+      GIN_MODE: release
+      DB_DRIVER: postgres
+      DB_HOST: knowledge-postgres
+      DB_PORT: 5432
+      DB_USER: weknora
+      DB_NAME: weknora
+      DB_PASSWORD: ${KNOWLEDGE_DB_PASSWORD:?请设置知识库数据库密码}
+      REDIS_ADDR: knowledge-redis:6379
+      REDIS_PASSWORD: ${KNOWLEDGE_REDIS_PASSWORD:?请设置知识库缓存密码}
+      DOCREADER_ADDR: docreader:50051
+      DOCREADER_TRANSPORT: grpc
+      RETRIEVE_DRIVER: postgres
+      STORAGE_TYPE: local
+      JWT_SECRET: ${KNOWLEDGE_JWT_SECRET:?请设置知识库签名密钥}
+      SYSTEM_AES_KEY: ${KNOWLEDGE_AES_KEY:?请设置知识库 32 字节加密密钥}
+      WEKNORA_SANDBOX_DOCKER_ENABLED: "false"
+      SSRF_WHITELIST_EXTRA: ${KNOWLEDGE_SSRF_WHITELIST_EXTRA:-}
+    volumes:
+      - knowledge-files:/data/files
+      - knowledge-docreader-tmp:/tmp/docreader:ro
+    depends_on:
+      knowledge-postgres:
+        condition: service_healthy
+      knowledge-redis:
+        condition: service_started
+      docreader:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  docreader:
+    image: wechatopenai/weknora-docreader:v0.9.0@sha256:8c71ec3cc2e291829c3938d2c7dc5f921c1d10551c8774bf844c83bc4aa3cb84
+    environment:
+      DOCREADER_IMAGE_OUTPUT_DIR: /tmp/docreader
+    volumes:
+      - knowledge-docreader-tmp:/tmp/docreader
+    healthcheck:
+      test: ["CMD", "grpc_health_probe", "-addr=localhost:50051"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  knowledge-postgres:
+    image: paradedb/paradedb:v0.25.11-pg17@sha256:78d65750f0f88a56548526201bcab9910f83b90fe929cdbf979890f3f80b0f95
+    environment:
+      POSTGRES_USER: weknora
+      POSTGRES_DB: weknora
+      POSTGRES_PASSWORD: ${KNOWLEDGE_DB_PASSWORD:?请设置知识库数据库密码}
+    volumes:
+      - knowledge-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U weknora -d weknora"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  knowledge-redis:
+    image: redis:7.0-alpine@sha256:c9d92d840fd011c908f040592857c724ae6d877f2aba5c40ad963276507386b2
+    environment:
+      REDIS_PASSWORD: ${KNOWLEDGE_REDIS_PASSWORD:?请设置知识库缓存密码}
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
+    volumes:
+      - knowledge-redis:/data
+    restart: unless-stopped
+
+volumes:
+  bs-uploads:
+  bs-mysql:
+  knowledge-files:
+  knowledge-docreader-tmp:
+  knowledge-postgres:
+  knowledge-redis:

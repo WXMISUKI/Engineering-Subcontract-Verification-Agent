@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "documents": [
+    {"path": "2025年分包单位报审以及附件要求（6.20）(2).pdf", "sha256": "dd3581cd76e21537505b8e042389606be6dcc1513698f9d800904b97160040bc", "collection": "road_shanghai_basis"},
+    {"path": "《公路工程施工分包管理办法》交公路规〔2024〕2号.pdf", "sha256": "0cd3cd696d55bdaf91125ca3b6d608a106498c4e6743a547f58b6f2680d8c35e", "collection": "road_national_basis"},
+    {"path": "上海市交通委员会关于印发《上海市公路工程施工分包管理实施细则》的通知(2).pdf", "sha256": "1de8e78245c3752c4decfe978feafec96112aebf13a41ac7952c490b3cf15823", "collection": "road_shanghai_basis"},
+    {"path": "公路工程施工分包负面清单.docx", "sha256": "b95abdb5173047a6a22b847ea058146b6d377558ecaa17b238fd90a696a047c9", "collection": "road_national_basis"},
+    {"path": "沪城公路（2025）118号：关于印发《上海城投.pdf", "sha256": "d48d2d87d71650d532df75379bbdd67a71d8f1669ec0c48f69b58fa2d5ac3ab7", "collection": "road_group_basis"},
+    {"path": "建筑业企业资质标准.pdf", "sha256": "2d3dcf4484c604eb9e81a8308f32b81d19dea39318301380590b22d7a32ffc16", "collection": "shared_qualification"}
+  ]
+}

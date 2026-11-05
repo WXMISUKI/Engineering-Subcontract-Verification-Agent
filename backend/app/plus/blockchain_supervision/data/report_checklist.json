@@ -1,0 +1,242 @@
+{
+  "meta": {
+    "title": "分包报审资料完整性核查清单（2025年现场指挥部 16/14 项）",
+    "source_note": "已对齐《2025 年分包报审资料附件要求》（第一现场指挥部 2025.6.20）：专业分包 16 项 / 劳务分包 14 项，附件顺序按原文。专业/劳务前 9 项逐字一致；第 10 项同号异文（专业=项目经理、总工以及安全员授权书 3 角色 / 劳务=项目负责人和安全员授权书 2 角色）；第 11 项起数量与内容均分叉。封面（P3 专业分包报审表 / P4 劳务分包报审表）与 16/14 附件清单并列，不计入附件计数。",
+    "match_note": "报审附件多为合并 PDF：document 类条目按「报审包文件名关键词 或 包内文本关键词」双通道匹配；含 required_all 的条目按 AND 子件三态聚合（缺件须逐条枚举子件名）；content 类条目按指定材料文本层匹配；类型专属条目（packet_types 单一）只对同类型报审包评估，识别不出类型一律判不可判定。",
+    "three_state": "命中=缺陷成立；未命中=齐全；不可判定=证据不足（如扫描件无文本层），必须说明缺什么",
+    "note": "标题「（4 份）」歧义留痕（不臆断）：解释 A=报审资料一式四份（份数要求，本设计工作口径，与正文 16 项并列计数矛盾最小）；解释 B=4 类文件（与正文实列 16 项不符）；待业务确认。PDF 另附 6 张表：专业分包报审表、劳务分包报审表、分包工程清单、桩基工程量清单、分包单位业绩清单、分包管理人员名单。",
+    "structured_at": "2026-09-24",
+    "source_overlays": []
+  },
+  "items": [
+    {
+      "id": "RC-A01",
+      "label": "分包工程清单（项目部红章）",
+      "source": "《2025 分包报审附件要求》①1/②1；第一现场指挥部 2025.6.20",
+      "kind": "document",
+      "packet_types": ["professional", "labor"],
+      "keywords": ["分包工程清单", "工程清单"]
+    },
+    {
+      "id": "RC-A02",
+      "label": "营业执照",
+      "source": "《2025 分包报审附件要求》①2/②2；第一现场指挥部 2025.6.20",
+      "kind": "document",
+      "packet_types": ["professional", "labor"],
+      "keywords": ["营业执照"]
+    },
+    {
+      "id": "RC-A03",
+      "label": "资质证书",
+      "source": "《2025 分包报审附件要求》①3/②3；第一现场指挥部 2025.6.20",
+      "kind": "document",
+      "packet_types": ["professional", "labor"],
+      "keywords": ["资质证书"],
+      "note": "证书有效期核验已由「主体资格与社保资料·证件有效期」内核（A2）判定，资质匹配判定属该分组后续批次；本条目只查资料在场"
+    },
+    {
+      "id": "RC-A04",
+      "label": "安全生产许可证",
+      "source": "《2025 分包报审附件要求》①4/②4；第一现场指挥部 2025.6.20",
+      "kind": "document",
+      "packet_types": ["professional", "labor"],
+      "keywords": ["安全生产许可证"]
+    },
+    {
+      "id": "RC-A05",
+      "label": "诚信手册（沪）",
+      "source": "《2025 分包报审附件要求》①5/②5；第一现场指挥部 2025.6.20",
+      "kind": "document",
+      "packet_types": ["professional", "labor"],
+      "keywords": ["诚信手册"]
+    },
+    {
+      "id": "RC-A06",
+      "label": "本地类似业绩清单（近 3-5 年）",
+      "source": "《2025 分包报审附件要求》①6/②6；第一现场指挥部 2025.6.20",
+      "kind": "document",
+      "packet_types": ["professional", "labor"],
+      "keywords": ["业绩清单", "类似业绩", "业绩"]
+    },
+    {
+      "id": "RC-A07",
+      "label": "企业负责人（身份证、交安A证）",
+      "source": "《2025 分包报审附件要求》①7/②7；第一现场指挥部 2025.6.20",
+      "kind": "document",
+      "packet_types": ["professional", "labor"],
+      "keywords": [],
+      "required_all": [
+        {"key": "id_card", "label": "身份证", "keywords": ["身份证"]},
+        {"key": "jiaoa", "label": "交安A证", "keywords": ["交安A证", "交安 A 证"]}
+      ],
+      "note": "条件项：企业负责人非法人代表时须附红头文任命书（视主体身份触发）；required_all 仅锁身份证 + 交安A证 2 件，条件项不进必检（避免对法人代表场景过度判缺）。"
+    },
+    {
+      "id": "RC-A08",
+      "label": "项目管理体系网络图",
+      "source": "《2025 分包报审附件要求》①8/②8；第一现场指挥部 2025.6.20",
+      "kind": "document",
+      "packet_types": ["professional", "labor"],
+      "keywords": ["项目管理体系", "网络图"]
+    },
+    {
+      "id": "RC-A09",
+      "label": "主要管理人员名单及联系方式",
+      "source": "《2025 分包报审附件要求》①9/②9；第一现场指挥部 2025.6.20",
+      "kind": "document",
+      "packet_types": ["professional", "labor"],
+      "keywords": ["管理人员名单", "名单及联系方式"]
+    },
+    {
+      "id": "RC-A10",
+      "label": "授权书",
+      "source": "《2025 分包报审附件要求》①10/②10；第一现场指挥部 2025.6.20",
+      "kind": "document",
+      "packet_types": ["professional", "labor"],
+      "keywords": [],
+      "required_all": [
+        {"key": "pm", "label": "项目经理", "keywords": ["项目经理"], "packet_types": ["professional"]},
+        {"key": "chief_engineer", "label": "项目总工", "keywords": ["项目总工", "总工"], "packet_types": ["professional"]},
+        {"key": "safety_prof", "label": "安全员", "keywords": ["安全员"], "packet_types": ["professional"]},
+        {"key": "project_lead", "label": "项目负责人", "keywords": ["项目负责人"], "packet_types": ["labor"]},
+        {"key": "safety_labor", "label": "安全员", "keywords": ["安全员"], "packet_types": ["labor"]}
+      ],
+      "note": "①10=项目经理、总工以及安全员授权书(一份就行) / ②10=项目负责人和安全员授权书；两类同号异文，角色数 3 vs 2；label 取中性「授权书」，逐包按报审表类型只评估本包适用角色，不出对侧角色。"
+    },
+    {
+      "id": "RC-P11",
+      "label": "项目经理（身份证、学历证、职称证、建造师证、交安B证）",
+      "source": "《2025 分包报审附件要求》①11；第一现场指挥部 2025.6.20",
+      "kind": "document",
+      "packet_types": ["professional"],
+      "keywords": [],
+      "required_all": [
+        {"key": "id_card", "label": "身份证", "keywords": ["身份证"]},
+        {"key": "degree", "label": "学历证", "keywords": ["学历证", "学历证书"]},
+        {"key": "title", "label": "职称证", "keywords": ["职称证", "职称证书"]},
+        {"key": "builder", "label": "建造师证", "keywords": ["建造师证", "注册建造师"]},
+        {"key": "jiaob_b", "label": "交安B证", "keywords": ["交安B证", "交安 B 证"]}
+      ]
+    },
+    {
+      "id": "RC-P12",
+      "label": "项目总工（身份证、学历证、职称证、交安B证）",
+      "source": "《2025 分包报审附件要求》①12；第一现场指挥部 2025.6.20",
+      "kind": "document",
+      "packet_types": ["professional"],
+      "keywords": [],
+      "required_all": [
+        {"key": "id_card", "label": "身份证", "keywords": ["身份证"]},
+        {"key": "degree", "label": "学历证", "keywords": ["学历证", "学历证书"]},
+        {"key": "title", "label": "职称证", "keywords": ["职称证", "职称证书"]},
+        {"key": "jiaob_b", "label": "交安B证", "keywords": ["交安B证", "交安 B 证"]}
+      ]
+    },
+    {
+      "id": "RC-P13",
+      "label": "安全员（身份证、学历证、职称证、交安C证）",
+      "source": "《2025 分包报审附件要求》①13；第一现场指挥部 2025.6.20",
+      "kind": "document",
+      "packet_types": ["professional"],
+      "keywords": [],
+      "required_all": [
+        {"key": "id_card", "label": "身份证", "keywords": ["身份证"]},
+        {"key": "degree", "label": "学历证", "keywords": ["学历证", "学历证书"]},
+        {"key": "title", "label": "职称证", "keywords": ["职称证", "职称证书"]},
+        {"key": "jiaoc", "label": "交安C证", "keywords": ["交安C证", "交安 C 证"]}
+      ]
+    },
+    {
+      "id": "RC-P14",
+      "label": "授权人员的社保证明（主要人员）",
+      "source": "《2025 分包报审附件要求》①14；第一现场指挥部 2025.6.20",
+      "kind": "document",
+      "packet_types": ["professional"],
+      "keywords": ["社保证明", "社保"],
+      "note": "社保信息人员须覆盖主要管理人员（A2-01，覆盖口径，2026-10-06 定盘），本条目只查资料在场"
+    },
+    {
+      "id": "RC-P15",
+      "label": "其他管理人员相关证件",
+      "source": "《2025 分包报审附件要求》①15；第一现场指挥部 2025.6.20",
+      "kind": "document",
+      "packet_types": ["professional"],
+      "keywords": ["管理人员相关证件", "其他管理人员"]
+    },
+    {
+      "id": "RC-P16",
+      "label": "特殊工种人员名单及操作证书",
+      "source": "《2025 分包报审附件要求》①16；第一现场指挥部 2025.6.20",
+      "kind": "document",
+      "packet_types": ["professional"],
+      "keywords": [],
+      "required_all": [
+        {"key": "roster", "label": "特殊工种人员名单", "keywords": ["特殊工种人员名单", "特种作业人员名单", "特殊工种名单"]},
+        {"key": "op_cert", "label": "操作证", "keywords": ["操作证", "操作证书"]}
+      ]
+    },
+    {
+      "id": "RC-L11",
+      "label": "安全员（身份证、学历证、职称证、交安C证）",
+      "source": "《2025 分包报审附件要求》②11；第一现场指挥部 2025.6.20",
+      "kind": "document",
+      "packet_types": ["labor"],
+      "keywords": [],
+      "required_all": [
+        {"key": "id_card", "label": "身份证", "keywords": ["身份证"]},
+        {"key": "degree", "label": "学历证", "keywords": ["学历证", "学历证书"]},
+        {"key": "title", "label": "职称证", "keywords": ["职称证", "职称证书"]},
+        {"key": "jiaoc", "label": "交安C证", "keywords": ["交安C证", "交安 C 证"]}
+      ]
+    },
+    {
+      "id": "RC-L12",
+      "label": "授权人员的社保证明（主要人员）",
+      "source": "《2025 分包报审附件要求》②12；第一现场指挥部 2025.6.20",
+      "kind": "document",
+      "packet_types": ["labor"],
+      "keywords": ["社保证明", "社保"],
+      "note": "社保信息人员须覆盖主要管理人员（A2-01，覆盖口径，2026-10-06 定盘），本条目只查资料在场"
+    },
+    {
+      "id": "RC-L13",
+      "label": "其他管理人员相关证件",
+      "source": "《2025 分包报审附件要求》②13；第一现场指挥部 2025.6.20",
+      "kind": "document",
+      "packet_types": ["labor"],
+      "keywords": ["管理人员相关证件", "其他管理人员"]
+    },
+    {
+      "id": "RC-L14",
+      "label": "特殊工种人员名单及操作证书",
+      "source": "《2025 分包报审附件要求》②14；第一现场指挥部 2025.6.20",
+      "kind": "document",
+      "packet_types": ["labor"],
+      "keywords": [],
+      "required_all": [
+        {"key": "roster", "label": "特殊工种人员名单", "keywords": ["特殊工种人员名单", "特种作业人员名单", "特殊工种名单"]},
+        {"key": "op_cert", "label": "操作证", "keywords": ["操作证", "操作证书"]}
+      ]
+    },
+    {
+      "id": "RC-08",
+      "label": "分包合同报审表",
+      "source": "《2025 分包报审附件要求》附表·分包报审表（P3/P4 封面）；第一现场指挥部 2025.6.20",
+      "kind": "document",
+      "packet_types": ["professional", "labor"],
+      "keywords": ["报审表"],
+      "cover": true
+    },
+    {
+      "id": "RC-09",
+      "label": "报审表总监理工程师签章",
+      "source": "《2025 分包报审附件要求》附表·分包报审表（P3/P4 封面）；第一现场指挥部 2025.6.20",
+      "kind": "content",
+      "packet_types": ["professional", "labor"],
+      "scope_name_keywords": ["报审表"],
+      "patterns": ["总监理工程师"],
+      "note": "文本层查签字栏标识；红章图像检测待接 seal_ocr 管道；对应材料缺失时本条判不可判定（缺材料已由 RC-08 记）",
+      "cover": true
+    }
+  ]
+}

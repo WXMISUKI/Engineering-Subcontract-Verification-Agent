@@ -1,0 +1,14 @@
+FROM python:3.13-slim
+WORKDIR /app
+COPY backend/requirements-identity.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
+COPY backend/app/standalone /app/app/standalone
+COPY backend/app/auth /app/app/auth
+COPY backend/app/database.py /app/app/database.py
+COPY backend/app/limiter.py /app/app/limiter.py
+COPY backend/app/models /app/app/models
+COPY backend/app/services/__init__.py backend/app/services/token_service.py /app/app/services/
+COPY backend/app/plus/blockchain_supervision/__init__.py backend/app/plus/blockchain_supervision/manifest.py backend/app/plus/blockchain_supervision/models.py /app/app/plus/blockchain_supervision/
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+EXPOSE 8000
+CMD ["uvicorn", "app.standalone.asgi_identity_smoke:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -1,0 +1,2872 @@
+{
+  "backend_image": "bs-backend-candidate:local",
+  "backend_python_distributions": [
+    {
+      "name": "annotated-doc",
+      "version": "0.0.5",
+      "license": "MIT",
+      "classifiers": [
+        "Intended Audience :: Information Technology",
+        "Intended Audience :: System Administrators",
+        "Operating System :: OS Independent",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python",
+        "Topic :: Internet",
+        "Topic :: Software Development :: Libraries :: Application Frameworks",
+        "Topic :: Software Development :: Libraries :: Python Modules",
+        "Topic :: Software Development :: Libraries",
+        "Topic :: Software Development",
+        "Typing :: Typed",
+        "Development Status :: 4 - Beta",
+        "Intended Audience :: Developers",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14"
+      ]
+    },
+    {
+      "name": "annotated-types",
+      "version": "0.8.0",
+      "license": "MIT",
+      "classifiers": [
+        "Development Status :: 4 - Beta",
+        "Environment :: Console",
+        "Environment :: MacOS X",
+        "Intended Audience :: Developers",
+        "Intended Audience :: Information Technology",
+        "License :: OSI Approved :: MIT License",
+        "Operating System :: POSIX :: Linux",
+        "Operating System :: Unix",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Topic :: Software Development :: Libraries :: Python Modules",
+        "Typing :: Typed"
+      ]
+    },
+    {
+      "name": "anyio",
+      "version": "4.16.0",
+      "license": "MIT",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Intended Audience :: Developers",
+        "Framework :: AnyIO",
+        "Typing :: Typed",
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: 3.15",
+        "Programming Language :: Python :: Free Threading :: 2 - Beta"
+      ]
+    },
+    {
+      "name": "bcrypt",
+      "version": "4.0.1",
+      "license": "Apache License, Version 2.0",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "License :: OSI Approved :: Apache Software License",
+        "Programming Language :: Python :: Implementation :: CPython",
+        "Programming Language :: Python :: Implementation :: PyPy",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: 3.6",
+        "Programming Language :: Python :: 3.7",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10"
+      ]
+    },
+    {
+      "name": "certifi",
+      "version": "2026.10.23",
+      "license": "MPL-2.0",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Intended Audience :: Developers",
+        "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)",
+        "Natural Language :: English",
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: 3.7",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: 3.15"
+      ]
+    },
+    {
+      "name": "cffi",
+      "version": "2.1.1",
+      "license": "MIT-0",
+      "classifiers": [
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: 3.15",
+        "Programming Language :: Python :: Free Threading :: 2 - Beta",
+        "Programming Language :: Python :: Implementation :: CPython"
+      ]
+    },
+    {
+      "name": "charset-normalizer",
+      "version": "3.5.2",
+      "license": "MIT",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Intended Audience :: Developers",
+        "Operating System :: OS Independent",
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.7",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: 3.15",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: Implementation :: CPython",
+        "Programming Language :: Python :: Implementation :: PyPy",
+        "Programming Language :: Python :: Free Threading :: 4 - Resilient",
+        "Environment :: WebAssembly",
+        "Environment :: WebAssembly :: Emscripten",
+        "Topic :: Text Processing :: Linguistic",
+        "Topic :: Utilities",
+        "Typing :: Typed"
+      ]
+    },
+    {
+      "name": "click",
+      "version": "8.5.0",
+      "license": "BSD-3-Clause",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Intended Audience :: Developers",
+        "Operating System :: OS Independent",
+        "Programming Language :: Python",
+        "Typing :: Typed"
+      ]
+    },
+    {
+      "name": "colorlog",
+      "version": "6.12.0",
+      "license": "MIT License",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Environment :: Console",
+        "Intended Audience :: Developers",
+        "License :: OSI Approved :: MIT License",
+        "Operating System :: OS Independent",
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.6",
+        "Programming Language :: Python :: 3.7",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Topic :: Terminals",
+        "Topic :: Utilities"
+      ]
+    },
+    {
+      "name": "cryptography",
+      "version": "50.0.2",
+      "license": "Apache-2.0 OR BSD-3-Clause",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Intended Audience :: Developers",
+        "Natural Language :: English",
+        "Operating System :: MacOS :: MacOS X",
+        "Operating System :: POSIX",
+        "Operating System :: POSIX :: BSD",
+        "Operating System :: POSIX :: Linux",
+        "Operating System :: Microsoft :: Windows",
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: 3.15",
+        "Programming Language :: Python :: Implementation :: CPython",
+        "Programming Language :: Python :: Implementation :: PyPy",
+        "Programming Language :: Python :: Free Threading :: 3 - Stable",
+        "Topic :: Security :: Cryptography"
+      ]
+    },
+    {
+      "name": "Deprecated",
+      "version": "3.0.1",
+      "license": "MIT",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Environment :: Web Environment",
+        "Intended Audience :: Developers",
+        "Operating System :: OS Independent",
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Topic :: Software Development :: Libraries :: Python Modules",
+        "Typing :: Typed"
+      ]
+    },
+    {
+      "name": "distro",
+      "version": "1.9.0",
+      "license": "Apache License, Version 2.0",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Intended Audience :: Developers",
+        "Intended Audience :: System Administrators",
+        "License :: OSI Approved :: Apache Software License",
+        "Operating System :: POSIX :: Linux",
+        "Operating System :: POSIX :: BSD",
+        "Operating System :: POSIX :: BSD :: FreeBSD",
+        "Operating System :: POSIX :: BSD :: NetBSD",
+        "Operating System :: POSIX :: BSD :: OpenBSD",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: 3.6",
+        "Programming Language :: Python :: 3.7",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Topic :: Software Development :: Libraries :: Python Modules",
+        "Topic :: System :: Operating System"
+      ]
+    },
+    {
+      "name": "ecdsa",
+      "version": "0.19.2",
+      "license": "MIT",
+      "classifiers": [
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 2",
+        "Programming Language :: Python :: 2.6",
+        "Programming Language :: Python :: 2.7",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.6",
+        "Programming Language :: Python :: 3.7",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13"
+      ]
+    },
+    {
+      "name": "fastapi",
+      "version": "0.124.4",
+      "license": "MIT",
+      "classifiers": [
+        "Intended Audience :: Information Technology",
+        "Intended Audience :: System Administrators",
+        "Operating System :: OS Independent",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python",
+        "Topic :: Internet",
+        "Topic :: Software Development :: Libraries :: Application Frameworks",
+        "Topic :: Software Development :: Libraries :: Python Modules",
+        "Topic :: Software Development :: Libraries",
+        "Topic :: Software Development",
+        "Typing :: Typed",
+        "Development Status :: 4 - Beta",
+        "Environment :: Web Environment",
+        "Framework :: AsyncIO",
+        "Framework :: FastAPI",
+        "Framework :: Pydantic",
+        "Framework :: Pydantic :: 1",
+        "Framework :: Pydantic :: 2",
+        "Intended Audience :: Developers",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+        "Topic :: Internet :: WWW/HTTP"
+      ]
+    },
+    {
+      "name": "flatbuffers",
+      "version": "25.12.19",
+      "license": "Apache 2.0",
+      "classifiers": [
+        "Intended Audience :: Developers",
+        "License :: OSI Approved :: Apache Software License",
+        "Operating System :: OS Independent",
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 2",
+        "Programming Language :: Python :: 3",
+        "Topic :: Software Development :: Libraries :: Python Modules"
+      ]
+    },
+    {
+      "name": "h11",
+      "version": "0.16.0",
+      "license": "MIT",
+      "classifiers": [
+        "Development Status :: 3 - Alpha",
+        "Intended Audience :: Developers",
+        "License :: OSI Approved :: MIT License",
+        "Programming Language :: Python :: Implementation :: CPython",
+        "Programming Language :: Python :: Implementation :: PyPy",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Topic :: Internet :: WWW/HTTP",
+        "Topic :: System :: Networking"
+      ]
+    },
+    {
+      "name": "httpcore",
+      "version": "1.0.9",
+      "license": "BSD-3-Clause",
+      "classifiers": [
+        "Development Status :: 3 - Alpha",
+        "Environment :: Web Environment",
+        "Framework :: AsyncIO",
+        "Framework :: Trio",
+        "Intended Audience :: Developers",
+        "License :: OSI Approved :: BSD License",
+        "Operating System :: OS Independent",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Topic :: Internet :: WWW/HTTP"
+      ]
+    },
+    {
+      "name": "httptools",
+      "version": "0.9.0",
+      "license": "MIT",
+      "classifiers": [
+        "Intended Audience :: Developers",
+        "Programming Language :: Python :: 3",
+        "Operating System :: POSIX",
+        "Operating System :: MacOS :: MacOS X",
+        "Environment :: Web Environment",
+        "Development Status :: 5 - Production/Stable"
+      ]
+    },
+    {
+      "name": "httpx",
+      "version": "0.28.1",
+      "license": "BSD-3-Clause",
+      "classifiers": [
+        "Development Status :: 4 - Beta",
+        "Environment :: Web Environment",
+        "Framework :: AsyncIO",
+        "Framework :: Trio",
+        "Intended Audience :: Developers",
+        "License :: OSI Approved :: BSD License",
+        "Operating System :: OS Independent",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Topic :: Internet :: WWW/HTTP"
+      ]
+    },
+    {
+      "name": "idna",
+      "version": "3.20",
+      "license": "BSD-3-Clause",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Intended Audience :: Developers",
+        "Intended Audience :: System Administrators",
+        "Operating System :: OS Independent",
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: 3.15",
+        "Programming Language :: Python :: Implementation :: CPython",
+        "Programming Language :: Python :: Implementation :: PyPy",
+        "Topic :: Internet :: Name Service (DNS)",
+        "Topic :: Software Development :: Libraries :: Python Modules",
+        "Topic :: Utilities"
+      ]
+    },
+    {
+      "name": "jiter",
+      "version": "0.18.0",
+      "license": "MIT",
+      "classifiers": [
+        "Development Status :: 4 - Beta",
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: 3.15",
+        "Programming Language :: Python :: Implementation :: CPython",
+        "Programming Language :: Python :: Implementation :: GraalPy",
+        "Intended Audience :: Developers",
+        "Intended Audience :: Information Technology",
+        "Intended Audience :: System Administrators",
+        "Operating System :: Unix",
+        "Operating System :: POSIX :: Linux",
+        "Environment :: Console",
+        "Environment :: MacOS X",
+        "Topic :: File Formats :: JSON",
+        "Framework :: Pydantic :: 2"
+      ]
+    },
+    {
+      "name": "limits",
+      "version": "5.8.0",
+      "license": "MIT",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Intended Audience :: Developers",
+        "License :: OSI Approved :: MIT License",
+        "Operating System :: MacOS",
+        "Operating System :: OS Independent",
+        "Operating System :: POSIX :: Linux",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: Implementation :: PyPy",
+        "Topic :: Software Development :: Libraries :: Python Modules"
+      ]
+    },
+    {
+      "name": "lxml",
+      "version": "6.1.3",
+      "license": "BSD-3-Clause",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Intended Audience :: Developers",
+        "Intended Audience :: Information Technology",
+        "Programming Language :: Cython",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: 3.15",
+        "Programming Language :: C",
+        "Operating System :: OS Independent",
+        "Topic :: Text Processing :: Markup :: HTML",
+        "Topic :: Text Processing :: Markup :: XML",
+        "Topic :: Software Development :: Libraries :: Python Modules"
+      ]
+    },
+    {
+      "name": "numpy",
+      "version": "2.5.4",
+      "license": "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Intended Audience :: Science/Research",
+        "Intended Audience :: Developers",
+        "Programming Language :: C",
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: 3.15",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: Implementation :: CPython",
+        "Topic :: Software Development",
+        "Topic :: Scientific/Engineering",
+        "Typing :: Typed",
+        "Operating System :: Microsoft :: Windows",
+        "Operating System :: POSIX",
+        "Operating System :: Unix",
+        "Operating System :: MacOS"
+      ]
+    },
+    {
+      "name": "omegaconf",
+      "version": "2.4.0",
+      "license": null,
+      "classifiers": [
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "License :: OSI Approved :: BSD License",
+        "Operating System :: OS Independent"
+      ]
+    },
+    {
+      "name": "onnxruntime",
+      "version": "1.31.1",
+      "license": "MIT License",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Intended Audience :: Developers",
+        "License :: OSI Approved :: MIT License",
+        "Operating System :: POSIX :: Linux",
+        "Operating System :: Microsoft :: Windows",
+        "Operating System :: MacOS",
+        "Topic :: Scientific/Engineering",
+        "Topic :: Scientific/Engineering :: Mathematics",
+        "Topic :: Scientific/Engineering :: Artificial Intelligence",
+        "Topic :: Software Development",
+        "Topic :: Software Development :: Libraries",
+        "Topic :: Software Development :: Libraries :: Python Modules",
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14"
+      ]
+    },
+    {
+      "name": "openai",
+      "version": "2.48.0",
+      "license": "Apache-2.0",
+      "classifiers": [
+        "Intended Audience :: Developers",
+        "License :: OSI Approved :: Apache Software License",
+        "Operating System :: MacOS",
+        "Operating System :: Microsoft :: Windows",
+        "Operating System :: OS Independent",
+        "Operating System :: POSIX",
+        "Operating System :: POSIX :: Linux",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Topic :: Software Development :: Libraries :: Python Modules",
+        "Typing :: Typed"
+      ]
+    },
+    {
+      "name": "opencv-python",
+      "version": "5.0.0.93",
+      "license": "Apache 2.0",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Environment :: Console",
+        "Intended Audience :: Developers",
+        "Intended Audience :: Education",
+        "Intended Audience :: Information Technology",
+        "Intended Audience :: Science/Research",
+        "License :: OSI Approved :: Apache Software License",
+        "Operating System :: MacOS",
+        "Operating System :: Microsoft :: Windows",
+        "Operating System :: POSIX",
+        "Operating System :: Unix",
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: 3.6",
+        "Programming Language :: Python :: 3.7",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Programming Language :: C++",
+        "Programming Language :: Python :: Implementation :: CPython",
+        "Topic :: Scientific/Engineering",
+        "Topic :: Scientific/Engineering :: Image Recognition",
+        "Topic :: Software Development"
+      ]
+    },
+    {
+      "name": "packaging",
+      "version": "26.3",
+      "license": "Apache-2.0 OR BSD-2-Clause",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Intended Audience :: Developers",
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: 3.15",
+        "Programming Language :: Python :: Implementation :: CPython",
+        "Programming Language :: Python :: Implementation :: PyPy",
+        "Programming Language :: Python :: Free Threading :: 4 - Resilient",
+        "Typing :: Typed"
+      ]
+    },
+    {
+      "name": "pillow",
+      "version": "12.3.0",
+      "license": "MIT-CMU",
+      "classifiers": [
+        "Development Status :: 6 - Mature",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: Implementation :: CPython",
+        "Programming Language :: Python :: Implementation :: PyPy",
+        "Topic :: Multimedia :: Graphics",
+        "Topic :: Multimedia :: Graphics :: Capture :: Digital Camera",
+        "Topic :: Multimedia :: Graphics :: Capture :: Screen Capture",
+        "Topic :: Multimedia :: Graphics :: Graphics Conversion",
+        "Topic :: Multimedia :: Graphics :: Viewers",
+        "Typing :: Typed"
+      ]
+    },
+    {
+      "name": "pip",
+      "version": "26.2.2",
+      "license": "MIT",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Intended Audience :: Developers",
+        "Topic :: Software Development :: Build Tools",
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: 3.15",
+        "Programming Language :: Python :: Implementation :: CPython",
+        "Programming Language :: Python :: Implementation :: PyPy"
+      ]
+    },
+    {
+      "name": "protobuf",
+      "version": "7.36.2",
+      "license": "3-Clause BSD License",
+      "classifiers": [
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14"
+      ]
+    },
+    {
+      "name": "pyasn1",
+      "version": "0.6.5",
+      "license": "BSD-2-Clause",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Environment :: Console",
+        "Intended Audience :: Developers",
+        "Intended Audience :: Education",
+        "Intended Audience :: Information Technology",
+        "Intended Audience :: System Administrators",
+        "Intended Audience :: Telecommunications Industry",
+        "Natural Language :: English",
+        "Operating System :: OS Independent",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: Implementation :: CPython",
+        "Programming Language :: Python :: Implementation :: PyPy",
+        "Topic :: Communications",
+        "Topic :: Software Development :: Libraries :: Python Modules"
+      ]
+    },
+    {
+      "name": "pyclipper",
+      "version": "1.4.0",
+      "license": "MIT",
+      "classifiers": [
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Programming Language :: Cython",
+        "Programming Language :: C++",
+        "Environment :: Other Environment",
+        "Development Status :: 4 - Beta",
+        "Intended Audience :: Developers",
+        "Operating System :: OS Independent",
+        "License :: OSI Approved",
+        "License :: OSI Approved :: MIT License",
+        "Topic :: Multimedia :: Graphics",
+        "Topic :: Scientific/Engineering :: Mathematics",
+        "Topic :: Software Development :: Libraries :: Python Modules"
+      ]
+    },
+    {
+      "name": "pycparser",
+      "version": "3.12",
+      "license": "BSD-3-Clause",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: 3.15"
+      ]
+    },
+    {
+      "name": "pydantic",
+      "version": "2.14.2",
+      "license": "MIT",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Framework :: Hypothesis",
+        "Framework :: Pydantic",
+        "Intended Audience :: Developers",
+        "Intended Audience :: Information Technology",
+        "Operating System :: OS Independent",
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: 3.15",
+        "Programming Language :: Python :: Implementation :: CPython",
+        "Programming Language :: Python :: Implementation :: PyPy",
+        "Topic :: Internet",
+        "Topic :: Software Development :: Libraries :: Python Modules"
+      ]
+    },
+    {
+      "name": "pydantic_core",
+      "version": "2.50.2",
+      "license": "MIT",
+      "classifiers": [
+        "Development Status :: 3 - Alpha",
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: Implementation :: CPython",
+        "Programming Language :: Python :: Implementation :: PyPy",
+        "Programming Language :: Python :: Implementation :: GraalPy",
+        "Programming Language :: Rust",
+        "Framework :: Pydantic",
+        "Intended Audience :: Developers",
+        "Intended Audience :: Information Technology",
+        "Operating System :: POSIX :: Linux",
+        "Operating System :: Microsoft :: Windows",
+        "Operating System :: MacOS",
+        "Typing :: Typed"
+      ]
+    },
+    {
+      "name": "pymupdf",
+      "version": "1.28.0",
+      "license": "Dual Licensed - GNU AFFERO GPL 3.0 or Artifex Commercial License",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Intended Audience :: Developers",
+        "Intended Audience :: Information Technology",
+        "Operating System :: MacOS",
+        "Operating System :: Microsoft :: Windows",
+        "Operating System :: POSIX :: Linux",
+        "Programming Language :: C",
+        "Programming Language :: C++",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: Implementation :: CPython",
+        "Topic :: Utilities",
+        "Topic :: Multimedia :: Graphics",
+        "Topic :: Software Development :: Libraries"
+      ]
+    },
+    {
+      "name": "PyMySQL",
+      "version": "1.1.1",
+      "license": "MIT License",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.7",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: Implementation :: CPython",
+        "Programming Language :: Python :: Implementation :: PyPy",
+        "Intended Audience :: Developers",
+        "License :: OSI Approved :: MIT License",
+        "Topic :: Database"
+      ]
+    },
+    {
+      "name": "pypdf",
+      "version": "6.11.0",
+      "license": "BSD-3-Clause",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Intended Audience :: Developers",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Operating System :: OS Independent",
+        "Topic :: Software Development :: Libraries :: Python Modules",
+        "Typing :: Typed"
+      ]
+    },
+    {
+      "name": "python-docx",
+      "version": "1.1.2",
+      "license": "MIT",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Environment :: Console",
+        "Intended Audience :: Developers",
+        "License :: OSI Approved :: MIT License",
+        "Operating System :: OS Independent",
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.7",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Topic :: Office/Business :: Office Suites",
+        "Topic :: Software Development :: Libraries"
+      ]
+    },
+    {
+      "name": "python-dotenv",
+      "version": "1.2.4",
+      "license": "BSD-3-Clause",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: Implementation :: PyPy",
+        "Intended Audience :: Developers",
+        "Intended Audience :: System Administrators",
+        "Operating System :: OS Independent",
+        "Topic :: System :: Systems Administration",
+        "Topic :: Utilities",
+        "Environment :: Web Environment"
+      ]
+    },
+    {
+      "name": "python-jose",
+      "version": "3.3.0",
+      "license": "MIT",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Intended Audience :: Developers",
+        "Natural Language :: English",
+        "License :: OSI Approved :: MIT License",
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: 3.6",
+        "Programming Language :: Python :: 3.7",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: Implementation :: PyPy",
+        "Topic :: Utilities"
+      ]
+    },
+    {
+      "name": "python-multipart",
+      "version": "0.0.27",
+      "license": "Apache-2.0",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Environment :: Web Environment",
+        "Intended Audience :: Developers",
+        "License :: OSI Approved :: Apache Software License",
+        "Operating System :: OS Independent",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Topic :: Software Development :: Libraries :: Python Modules"
+      ]
+    },
+    {
+      "name": "PyYAML",
+      "version": "6.0.3",
+      "license": "MIT",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Intended Audience :: Developers",
+        "License :: OSI Approved :: MIT License",
+        "Operating System :: OS Independent",
+        "Programming Language :: Cython",
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: Implementation :: CPython",
+        "Programming Language :: Python :: Implementation :: PyPy",
+        "Topic :: Software Development :: Libraries :: Python Modules",
+        "Topic :: Text Processing :: Markup"
+      ]
+    },
+    {
+      "name": "RapidFuzz",
+      "version": "3.14.6",
+      "license": "MIT",
+      "classifiers": [
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14"
+      ]
+    },
+    {
+      "name": "rapidocr",
+      "version": "3.9.2",
+      "license": "Apache-2.0",
+      "classifiers": [
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13"
+      ]
+    },
+    {
+      "name": "rapidocr-onnxruntime",
+      "version": "1.2.3",
+      "license": "Apache-2.0",
+      "classifiers": [
+        "Programming Language :: Python :: 3.6",
+        "Programming Language :: Python :: 3.7",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10"
+      ]
+    },
+    {
+      "name": "requests",
+      "version": "2.34.2",
+      "license": "Apache-2.0",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Environment :: Web Environment",
+        "Intended Audience :: Developers",
+        "License :: OSI Approved :: Apache Software License",
+        "Natural Language :: English",
+        "Operating System :: OS Independent",
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: 3.15",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: Implementation :: CPython",
+        "Programming Language :: Python :: Implementation :: PyPy",
+        "Programming Language :: Python :: Free Threading :: 2 - Beta",
+        "Topic :: Internet :: WWW/HTTP",
+        "Topic :: Software Development :: Libraries"
+      ]
+    },
+    {
+      "name": "rsa",
+      "version": "4.9.1",
+      "license": "Apache-2.0",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Intended Audience :: Developers",
+        "Intended Audience :: Education",
+        "Intended Audience :: Information Technology",
+        "License :: OSI Approved :: Apache Software License",
+        "Operating System :: OS Independent",
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.6",
+        "Programming Language :: Python :: 3.7",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: Implementation :: CPython",
+        "Programming Language :: Python :: Implementation :: PyPy",
+        "Topic :: Security :: Cryptography"
+      ]
+    },
+    {
+      "name": "shapely",
+      "version": "2.2.0",
+      "license": "BSD-3-Clause",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Intended Audience :: Developers",
+        "Intended Audience :: Science/Research",
+        "Operating System :: Unix",
+        "Operating System :: MacOS",
+        "Operating System :: Microsoft :: Windows",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: 3.15",
+        "Topic :: Scientific/Engineering :: GIS"
+      ]
+    },
+    {
+      "name": "six",
+      "version": "1.17.0",
+      "license": "MIT",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Programming Language :: Python :: 2",
+        "Programming Language :: Python :: 3",
+        "Intended Audience :: Developers",
+        "License :: OSI Approved :: MIT License",
+        "Topic :: Software Development :: Libraries",
+        "Topic :: Utilities"
+      ]
+    },
+    {
+      "name": "slowapi",
+      "version": "0.1.10",
+      "license": "MIT",
+      "classifiers": [
+        "License :: OSI Approved :: MIT License",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.7",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13"
+      ]
+    },
+    {
+      "name": "sniffio",
+      "version": "1.3.1",
+      "license": "MIT OR Apache-2.0",
+      "classifiers": [
+        "License :: OSI Approved :: MIT License",
+        "License :: OSI Approved :: Apache Software License",
+        "Framework :: Trio",
+        "Framework :: AsyncIO",
+        "Operating System :: POSIX :: Linux",
+        "Operating System :: MacOS :: MacOS X",
+        "Operating System :: Microsoft :: Windows",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: Implementation :: CPython",
+        "Programming Language :: Python :: Implementation :: PyPy",
+        "Intended Audience :: Developers",
+        "Development Status :: 5 - Production/Stable"
+      ]
+    },
+    {
+      "name": "SQLAlchemy",
+      "version": "2.0.36",
+      "license": "MIT",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Intended Audience :: Developers",
+        "License :: OSI Approved :: MIT License",
+        "Operating System :: OS Independent",
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.7",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: Implementation :: CPython",
+        "Programming Language :: Python :: Implementation :: PyPy",
+        "Topic :: Database :: Front-Ends"
+      ]
+    },
+    {
+      "name": "starlette",
+      "version": "0.50.0",
+      "license": "BSD-3-Clause",
+      "classifiers": [
+        "Development Status :: 3 - Alpha",
+        "Environment :: Web Environment",
+        "Framework :: AnyIO",
+        "Intended Audience :: Developers",
+        "Operating System :: OS Independent",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Topic :: Internet :: WWW/HTTP"
+      ]
+    },
+    {
+      "name": "tqdm",
+      "version": "4.70.1",
+      "license": "MPL-2.0 AND MIT",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Environment :: Console",
+        "Environment :: MacOS X",
+        "Environment :: Other Environment",
+        "Environment :: Win32 (MS Windows)",
+        "Environment :: X11 Applications",
+        "Framework :: IPython",
+        "Framework :: Jupyter",
+        "Intended Audience :: Developers",
+        "Intended Audience :: Education",
+        "Intended Audience :: End Users/Desktop",
+        "Intended Audience :: Other Audience",
+        "Intended Audience :: System Administrators",
+        "Operating System :: MacOS",
+        "Operating System :: MacOS :: MacOS X",
+        "Operating System :: Microsoft",
+        "Operating System :: Microsoft :: MS-DOS",
+        "Operating System :: Microsoft :: Windows",
+        "Operating System :: POSIX",
+        "Operating System :: POSIX :: BSD",
+        "Operating System :: POSIX :: BSD :: FreeBSD",
+        "Operating System :: POSIX :: Linux",
+        "Operating System :: POSIX :: SunOS/Solaris",
+        "Operating System :: Unix",
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: Implementation",
+        "Programming Language :: Python :: Implementation :: IronPython",
+        "Programming Language :: Python :: Implementation :: PyPy",
+        "Programming Language :: Unix Shell",
+        "Topic :: Desktop Environment",
+        "Topic :: Education :: Computer Aided Instruction (CAI)",
+        "Topic :: Education :: Testing",
+        "Topic :: Office/Business",
+        "Topic :: Other/Nonlisted Topic",
+        "Topic :: Software Development :: Build Tools",
+        "Topic :: Software Development :: Libraries",
+        "Topic :: Software Development :: Libraries :: Python Modules",
+        "Topic :: Software Development :: Pre-processors",
+        "Topic :: Software Development :: User Interfaces",
+        "Topic :: System :: Installation/Setup",
+        "Topic :: System :: Logging",
+        "Topic :: System :: Monitoring",
+        "Topic :: System :: Shells",
+        "Topic :: Terminals",
+        "Topic :: Utilities"
+      ]
+    },
+    {
+      "name": "typing-inspection",
+      "version": "0.4.5",
+      "license": "MIT",
+      "classifiers": [
+        "Development Status :: 3 - Alpha",
+        "Intended Audience :: Developers",
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: 3.15",
+        "Programming Language :: Python :: Implementation :: CPython",
+        "Topic :: Software Development :: Libraries :: Python Modules",
+        "Typing :: Typed"
+      ]
+    },
+    {
+      "name": "typing_extensions",
+      "version": "4.16.0",
+      "license": "PSF-2.0",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Environment :: Console",
+        "Intended Audience :: Developers",
+        "Operating System :: OS Independent",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: 3.15",
+        "Topic :: Software Development"
+      ]
+    },
+    {
+      "name": "urllib3",
+      "version": "2.8.0",
+      "license": "MIT",
+      "classifiers": [
+        "Environment :: Web Environment",
+        "Intended Audience :: Developers",
+        "Operating System :: OS Independent",
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: 3.15",
+        "Programming Language :: Python :: Free Threading :: 2 - Beta",
+        "Programming Language :: Python :: Implementation :: CPython",
+        "Programming Language :: Python :: Implementation :: PyPy",
+        "Topic :: Internet :: WWW/HTTP",
+        "Topic :: Software Development :: Libraries"
+      ]
+    },
+    {
+      "name": "uvicorn",
+      "version": "0.49.0",
+      "license": "BSD-3-Clause",
+      "classifiers": [
+        "Development Status :: 4 - Beta",
+        "Environment :: Web Environment",
+        "Intended Audience :: Developers",
+        "Operating System :: OS Independent",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: Implementation :: CPython",
+        "Programming Language :: Python :: Implementation :: PyPy",
+        "Topic :: Internet :: WWW/HTTP"
+      ]
+    },
+    {
+      "name": "uvloop",
+      "version": "0.23.0",
+      "license": "MIT License",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Framework :: AsyncIO",
+        "Intended Audience :: Developers",
+        "License :: OSI Approved :: Apache Software License",
+        "License :: OSI Approved :: MIT License",
+        "Operating System :: POSIX",
+        "Operating System :: MacOS :: MacOS X",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: Implementation :: CPython",
+        "Topic :: System :: Networking"
+      ]
+    },
+    {
+      "name": "watchfiles",
+      "version": "1.3.0",
+      "license": "MIT",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Environment :: Console",
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: 3.15",
+        "Intended Audience :: Developers",
+        "Intended Audience :: Information Technology",
+        "Intended Audience :: System Administrators",
+        "License :: OSI Approved :: MIT License",
+        "Operating System :: POSIX :: Linux",
+        "Operating System :: Microsoft :: Windows",
+        "Operating System :: MacOS",
+        "Environment :: MacOS X",
+        "Topic :: Software Development :: Libraries :: Python Modules",
+        "Topic :: System :: Filesystems",
+        "Framework :: AnyIO"
+      ]
+    },
+    {
+      "name": "websockets",
+      "version": "17.4",
+      "license": "BSD-3-Clause",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Environment :: Web Environment",
+        "Intended Audience :: Developers",
+        "Operating System :: OS Independent",
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: 3.15"
+      ]
+    },
+    {
+      "name": "wrapt",
+      "version": "2.5.2",
+      "license": "BSD-2-Clause",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: 3.15",
+        "Programming Language :: Python :: Implementation :: CPython",
+        "Programming Language :: Python :: Implementation :: PyPy"
+      ]
+    }
+  ],
+  "frontend_production_licenses": {
+    "MIT": [
+      {
+        "name": "@napi-rs/canvas",
+        "versions": [
+          "0.1.100"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\@napi-rs+canvas@0.1.100\\node_modules\\@napi-rs\\canvas"
+        ],
+        "license": "MIT",
+        "homepage": "https://github.com/Brooooooklyn/canvas#readme",
+        "description": "Canvas for Node.js with skia backend"
+      },
+      {
+        "name": "@napi-rs/canvas-win32-x64-msvc",
+        "versions": [
+          "0.1.100"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\@napi-rs+canvas-win32-x64-msvc@0.1.100\\node_modules\\@napi-rs\\canvas-win32-x64-msvc"
+        ],
+        "license": "MIT",
+        "homepage": "https://github.com/Brooooooklyn/canvas#readme",
+        "description": "Canvas for Node.js with skia backend"
+      },
+      {
+        "name": "@types/debug",
+        "versions": [
+          "4.1.13"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\@types+debug@4.1.13\\node_modules\\@types\\debug"
+        ],
+        "license": "MIT",
+        "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/debug",
+        "description": "TypeScript definitions for debug"
+      },
+      {
+        "name": "@types/estree",
+        "versions": [
+          "1.0.10"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\@types+estree@1.0.10\\node_modules\\@types\\estree"
+        ],
+        "license": "MIT",
+        "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/estree",
+        "description": "TypeScript definitions for estree"
+      },
+      {
+        "name": "@types/estree-jsx",
+        "versions": [
+          "1.0.5"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\@types+estree-jsx@1.0.5\\node_modules\\@types\\estree-jsx"
+        ],
+        "license": "MIT",
+        "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/estree-jsx",
+        "description": "TypeScript definitions for estree-jsx"
+      },
+      {
+        "name": "@types/hast",
+        "versions": [
+          "3.0.5"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\@types+hast@3.0.5\\node_modules\\@types\\hast"
+        ],
+        "license": "MIT",
+        "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/hast",
+        "description": "TypeScript definitions for hast"
+      },
+      {
+        "name": "@types/mdast",
+        "versions": [
+          "4.0.4"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\@types+mdast@4.0.4\\node_modules\\@types\\mdast"
+        ],
+        "license": "MIT",
+        "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/mdast",
+        "description": "TypeScript definitions for mdast"
+      },
+      {
+        "name": "@types/ms",
+        "versions": [
+          "2.1.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\@types+ms@2.1.0\\node_modules\\@types\\ms"
+        ],
+        "license": "MIT",
+        "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/ms",
+        "description": "TypeScript definitions for ms"
+      },
+      {
+        "name": "@types/react",
+        "versions": [
+          "19.3.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\@types+react@19.3.0\\node_modules\\@types\\react"
+        ],
+        "license": "MIT",
+        "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/react",
+        "description": "TypeScript definitions for react"
+      },
+      {
+        "name": "@types/unist",
+        "versions": [
+          "2.0.11",
+          "3.0.3"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\@types+unist@2.0.11\\node_modules\\@types\\unist",
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\@types+unist@3.0.3\\node_modules\\@types\\unist"
+        ],
+        "license": "MIT",
+        "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/unist",
+        "description": "TypeScript definitions for unist"
+      },
+      {
+        "name": "bail",
+        "versions": [
+          "2.0.2"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\bail@2.0.2\\node_modules\\bail"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/wooorm/bail#readme",
+        "description": "Throw a given error"
+      },
+      {
+        "name": "ccount",
+        "versions": [
+          "2.0.1"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\ccount@2.0.1\\node_modules\\ccount"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/wooorm/ccount#readme",
+        "description": "Count how often a character (or substring) is used in a string"
+      },
+      {
+        "name": "character-entities",
+        "versions": [
+          "2.0.2"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\character-entities@2.0.2\\node_modules\\character-entities"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/wooorm/character-entities#readme",
+        "description": "Map of named character references"
+      },
+      {
+        "name": "character-entities-html4",
+        "versions": [
+          "2.1.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\character-entities-html4@2.1.0\\node_modules\\character-entities-html4"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/wooorm/character-entities-html4#readme",
+        "description": "Map of named character references from HTML 4"
+      },
+      {
+        "name": "character-entities-legacy",
+        "versions": [
+          "3.0.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\character-entities-legacy@3.0.0\\node_modules\\character-entities-legacy"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/wooorm/character-entities-legacy#readme",
+        "description": "List of legacy HTML named character references that don’t need a trailing semicolon"
+      },
+      {
+        "name": "character-reference-invalid",
+        "versions": [
+          "2.0.1"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\character-reference-invalid@2.0.1\\node_modules\\character-reference-invalid"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/wooorm/character-reference-invalid#readme",
+        "description": "Map of invalid numeric character references to their replacements, according to HTML"
+      },
+      {
+        "name": "comma-separated-tokens",
+        "versions": [
+          "2.0.3"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\comma-separated-tokens@2.0.3\\node_modules\\comma-separated-tokens"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/wooorm/comma-separated-tokens#readme",
+        "description": "Parse and stringify comma-separated tokens"
+      },
+      {
+        "name": "csstype",
+        "versions": [
+          "3.2.3"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\csstype@3.2.3\\node_modules\\csstype"
+        ],
+        "license": "MIT",
+        "author": "Fredrik Nicol",
+        "homepage": "https://github.com/frenic/csstype#readme",
+        "description": "Strict TypeScript and Flow types for style based on MDN data"
+      },
+      {
+        "name": "debug",
+        "versions": [
+          "4.4.3"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\debug@4.4.3\\node_modules\\debug"
+        ],
+        "license": "MIT",
+        "author": "Josh Junon",
+        "homepage": "https://github.com/debug-js/debug#readme",
+        "description": "Lightweight debugging utility for Node.js and the browser"
+      },
+      {
+        "name": "decode-named-character-reference",
+        "versions": [
+          "1.3.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\decode-named-character-reference@1.3.0\\node_modules\\decode-named-character-reference"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/wooorm/decode-named-character-reference#readme",
+        "description": "Decode named character references"
+      },
+      {
+        "name": "dequal",
+        "versions": [
+          "2.0.3"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\dequal@2.0.3\\node_modules\\dequal"
+        ],
+        "license": "MIT",
+        "author": "Luke Edwards",
+        "homepage": "https://github.com/lukeed/dequal#readme",
+        "description": "A tiny (304B to 489B) utility for check for deep equality"
+      },
+      {
+        "name": "devlop",
+        "versions": [
+          "1.1.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\devlop@1.1.0\\node_modules\\devlop"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/wooorm/devlop#readme",
+        "description": "Do things in development and nothing otherwise"
+      },
+      {
+        "name": "escape-string-regexp",
+        "versions": [
+          "5.0.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\escape-string-regexp@5.0.0\\node_modules\\escape-string-regexp"
+        ],
+        "license": "MIT",
+        "author": "Sindre Sorhus",
+        "homepage": "https://github.com/sindresorhus/escape-string-regexp#readme",
+        "description": "Escape RegExp special characters"
+      },
+      {
+        "name": "estree-util-is-identifier-name",
+        "versions": [
+          "3.0.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\estree-util-is-identifier-name@3.0.0\\node_modules\\estree-util-is-identifier-name"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/syntax-tree/estree-util-is-identifier-name#readme",
+        "description": "Check if something can be an ecmascript (javascript) identifier name"
+      },
+      {
+        "name": "extend",
+        "versions": [
+          "3.0.2"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\extend@3.0.2\\node_modules\\extend"
+        ],
+        "license": "MIT",
+        "author": "Stefan Thomas",
+        "homepage": "https://github.com/justmoon/node-extend#readme",
+        "description": "Port of jQuery.extend for node.js and the browser"
+      },
+      {
+        "name": "hast-util-to-jsx-runtime",
+        "versions": [
+          "2.3.7"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\hast-util-to-jsx-runtime@2.3.7\\node_modules\\hast-util-to-jsx-runtime"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/syntax-tree/hast-util-to-jsx-runtime#readme",
+        "description": "hast utility to transform to preact, react, solid, svelte, vue, etc"
+      },
+      {
+        "name": "hast-util-whitespace",
+        "versions": [
+          "3.0.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\hast-util-whitespace@3.0.0\\node_modules\\hast-util-whitespace"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/syntax-tree/hast-util-whitespace#readme",
+        "description": "hast utility to check if a node is inter-element whitespace"
+      },
+      {
+        "name": "html-url-attributes",
+        "versions": [
+          "3.0.1"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\html-url-attributes@3.0.1\\node_modules\\html-url-attributes"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/rehypejs/rehype-minify/tree/main#readme",
+        "description": "Map of URL attributes in HTML"
+      },
+      {
+        "name": "inline-style-parser",
+        "versions": [
+          "0.2.9"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\inline-style-parser@0.2.9\\node_modules\\inline-style-parser"
+        ],
+        "license": "MIT",
+        "homepage": "https://github.com/remarkablemark/inline-style-parser#readme",
+        "description": "An inline style parser."
+      },
+      {
+        "name": "is-alphabetical",
+        "versions": [
+          "2.0.1"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\is-alphabetical@2.0.1\\node_modules\\is-alphabetical"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/wooorm/is-alphabetical#readme",
+        "description": "Check if a character is alphabetical"
+      },
+      {
+        "name": "is-alphanumerical",
+        "versions": [
+          "2.0.1"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\is-alphanumerical@2.0.1\\node_modules\\is-alphanumerical"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/wooorm/is-alphanumerical#readme",
+        "description": "Check if a character is alphanumerical"
+      },
+      {
+        "name": "is-decimal",
+        "versions": [
+          "2.0.1"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\is-decimal@2.0.1\\node_modules\\is-decimal"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/wooorm/is-decimal#readme",
+        "description": "Check if a character is decimal"
+      },
+      {
+        "name": "is-hexadecimal",
+        "versions": [
+          "2.0.1"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\is-hexadecimal@2.0.1\\node_modules\\is-hexadecimal"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/wooorm/is-hexadecimal#readme",
+        "description": "Check if a character is hexadecimal"
+      },
+      {
+        "name": "is-plain-obj",
+        "versions": [
+          "4.1.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\is-plain-obj@4.1.0\\node_modules\\is-plain-obj"
+        ],
+        "license": "MIT",
+        "author": "Sindre Sorhus",
+        "homepage": "https://github.com/sindresorhus/is-plain-obj#readme",
+        "description": "Check if a value is a plain object"
+      },
+      {
+        "name": "js-tokens",
+        "versions": [
+          "4.0.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\js-tokens@4.0.0\\node_modules\\js-tokens"
+        ],
+        "license": "MIT",
+        "author": "Simon Lydell",
+        "homepage": "https://github.com/lydell/js-tokens#readme",
+        "description": "A regex that tokenizes JavaScript."
+      },
+      {
+        "name": "longest-streak",
+        "versions": [
+          "3.1.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\longest-streak@3.1.0\\node_modules\\longest-streak"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/wooorm/longest-streak#readme",
+        "description": "Count the longest repeating streak of a substring"
+      },
+      {
+        "name": "loose-envify",
+        "versions": [
+          "1.4.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\loose-envify@1.4.0\\node_modules\\loose-envify"
+        ],
+        "license": "MIT",
+        "author": "Andres Suarez",
+        "homepage": "https://github.com/zertosh/loose-envify",
+        "description": "Fast (and loose) selective `process.env` replacer using js-tokens instead of an AST"
+      },
+      {
+        "name": "markdown-table",
+        "versions": [
+          "3.1.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\markdown-table@3.1.0\\node_modules\\markdown-table"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/wooorm/markdown-table#readme",
+        "description": "Generate a markdown (GFM) table"
+      },
+      {
+        "name": "mdast-util-find-and-replace",
+        "versions": [
+          "3.0.4"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\mdast-util-find-and-replace@3.0.4\\node_modules\\mdast-util-find-and-replace"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/syntax-tree/mdast-util-find-and-replace#readme",
+        "description": "mdast utility to find and replace text in a tree"
+      },
+      {
+        "name": "mdast-util-from-markdown",
+        "versions": [
+          "2.1.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\mdast-util-from-markdown@2.1.0\\node_modules\\mdast-util-from-markdown"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/syntax-tree/mdast-util-from-markdown#readme",
+        "description": "mdast utility to parse markdown"
+      },
+      {
+        "name": "mdast-util-gfm",
+        "versions": [
+          "3.1.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\mdast-util-gfm@3.1.0\\node_modules\\mdast-util-gfm"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/syntax-tree/mdast-util-gfm#readme",
+        "description": "mdast extension to parse and serialize GFM (GitHub Flavored Markdown)"
+      },
+      {
+        "name": "mdast-util-gfm-autolink-literal",
+        "versions": [
+          "2.0.1"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\mdast-util-gfm-autolink-literal@2.0.1\\node_modules\\mdast-util-gfm-autolink-literal"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/syntax-tree/mdast-util-gfm-autolink-literal#readme",
+        "description": "mdast extension to parse and serialize GFM autolink literals"
+      },
+      {
+        "name": "mdast-util-gfm-footnote",
+        "versions": [
+          "2.1.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\mdast-util-gfm-footnote@2.1.0\\node_modules\\mdast-util-gfm-footnote"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/syntax-tree/mdast-util-gfm-footnote#readme",
+        "description": "mdast extension to parse and serialize GFM footnotes"
+      },
+      {
+        "name": "mdast-util-gfm-strikethrough",
+        "versions": [
+          "2.0.1"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\mdast-util-gfm-strikethrough@2.0.1\\node_modules\\mdast-util-gfm-strikethrough"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/syntax-tree/mdast-util-gfm-strikethrough#readme",
+        "description": "mdast extension to parse and serialize GFM strikethrough"
+      },
+      {
+        "name": "mdast-util-gfm-table",
+        "versions": [
+          "2.0.1"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\mdast-util-gfm-table@2.0.1\\node_modules\\mdast-util-gfm-table"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/syntax-tree/mdast-util-gfm-table#readme",
+        "description": "mdast extension to parse and serialize GFM tables"
+      },
+      {
+        "name": "mdast-util-gfm-task-list-item",
+        "versions": [
+          "2.0.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\mdast-util-gfm-task-list-item@2.0.0\\node_modules\\mdast-util-gfm-task-list-item"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/syntax-tree/mdast-util-gfm-task-list-item#readme",
+        "description": "mdast extension to parse and serialize GFM task list items"
+      },
+      {
+        "name": "mdast-util-mdx-expression",
+        "versions": [
+          "2.0.1"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\mdast-util-mdx-expression@2.0.1\\node_modules\\mdast-util-mdx-expression"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/syntax-tree/mdast-util-mdx-expression#readme",
+        "description": "mdast extension to parse and serialize MDX (or MDX.js) expressions"
+      },
+      {
+        "name": "mdast-util-mdx-jsx",
+        "versions": [
+          "3.2.1"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\mdast-util-mdx-jsx@3.2.1\\node_modules\\mdast-util-mdx-jsx"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/syntax-tree/mdast-util-mdx-jsx#readme",
+        "description": "mdast extension to parse and serialize MDX or MDX.js JSX"
+      },
+      {
+        "name": "mdast-util-mdxjs-esm",
+        "versions": [
+          "2.0.1"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\mdast-util-mdxjs-esm@2.0.1\\node_modules\\mdast-util-mdxjs-esm"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/syntax-tree/mdast-util-mdxjs-esm#readme",
+        "description": "mdast extension to parse and serialize MDX.js ESM (import/exports)"
+      },
+      {
+        "name": "mdast-util-phrasing",
+        "versions": [
+          "4.1.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\mdast-util-phrasing@4.1.0\\node_modules\\mdast-util-phrasing"
+        ],
+        "license": "MIT",
+        "author": "Victor Felder",
+        "homepage": "https://github.com/syntax-tree/mdast-util-phrasing#readme",
+        "description": "mdast utility to check if a node is phrasing content"
+      },
+      {
+        "name": "mdast-util-to-hast",
+        "versions": [
+          "13.2.1"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\mdast-util-to-hast@13.2.1\\node_modules\\mdast-util-to-hast"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/syntax-tree/mdast-util-to-hast#readme",
+        "description": "mdast utility to transform to hast"
+      },
+      {
+        "name": "mdast-util-to-markdown",
+        "versions": [
+          "2.2.2"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\mdast-util-to-markdown@2.2.2\\node_modules\\mdast-util-to-markdown"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/syntax-tree/mdast-util-to-markdown#readme",
+        "description": "mdast utility to serialize markdown"
+      },
+      {
+        "name": "mdast-util-to-string",
+        "versions": [
+          "4.0.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\mdast-util-to-string@4.0.0\\node_modules\\mdast-util-to-string"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/syntax-tree/mdast-util-to-string#readme",
+        "description": "mdast utility to get the plain text content of a node"
+      },
+      {
+        "name": "micromark",
+        "versions": [
+          "4.0.3"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\micromark@4.0.3\\node_modules\\micromark"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/micromark/micromark/tree/main#readme",
+        "description": "small commonmark compliant markdown parser with positional info and concrete tokens"
+      },
+      {
+        "name": "micromark-core-commonmark",
+        "versions": [
+          "2.0.4"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\micromark-core-commonmark@2.0.4\\node_modules\\micromark-core-commonmark"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/micromark/micromark/tree/main#readme",
+        "description": "The CommonMark markdown constructs"
+      },
+      {
+        "name": "micromark-extension-gfm",
+        "versions": [
+          "3.0.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\micromark-extension-gfm@3.0.0\\node_modules\\micromark-extension-gfm"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/micromark/micromark-extension-gfm#readme",
+        "description": "micromark extension to support GFM (GitHub Flavored Markdown)"
+      },
+      {
+        "name": "micromark-extension-gfm-autolink-literal",
+        "versions": [
+          "2.1.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\micromark-extension-gfm-autolink-literal@2.1.0\\node_modules\\micromark-extension-gfm-autolink-literal"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/micromark/micromark-extension-gfm-autolink-literal#readme",
+        "description": "micromark extension to support GFM autolink literals"
+      },
+      {
+        "name": "micromark-extension-gfm-footnote",
+        "versions": [
+          "2.1.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\micromark-extension-gfm-footnote@2.1.0\\node_modules\\micromark-extension-gfm-footnote"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/micromark/micromark-extension-gfm-footnote#readme",
+        "description": "micromark extension to support GFM footnotes"
+      },
+      {
+        "name": "micromark-extension-gfm-strikethrough",
+        "versions": [
+          "2.1.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\micromark-extension-gfm-strikethrough@2.1.0\\node_modules\\micromark-extension-gfm-strikethrough"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/micromark/micromark-extension-gfm-strikethrough#readme",
+        "description": "micromark extension to support GFM strikethrough"
+      },
+      {
+        "name": "micromark-extension-gfm-table",
+        "versions": [
+          "2.1.2"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\micromark-extension-gfm-table@2.1.2\\node_modules\\micromark-extension-gfm-table"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/micromark/micromark-extension-gfm-table#readme",
+        "description": "micromark extension to support GFM tables"
+      },
+      {
+        "name": "micromark-extension-gfm-tagfilter",
+        "versions": [
+          "2.0.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\micromark-extension-gfm-tagfilter@2.0.0\\node_modules\\micromark-extension-gfm-tagfilter"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/micromark/micromark-extension-gfm-tagfilter#readme",
+        "description": "micromark extension to support GFM tagfilter"
+      },
+      {
+        "name": "micromark-extension-gfm-task-list-item",
+        "versions": [
+          "2.1.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\micromark-extension-gfm-task-list-item@2.1.0\\node_modules\\micromark-extension-gfm-task-list-item"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/micromark/micromark-extension-gfm-task-list-item#readme",
+        "description": "micromark extension to support GFM task list items"
+      },
+      {
+        "name": "micromark-factory-destination",
+        "versions": [
+          "2.0.1"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\micromark-factory-destination@2.0.1\\node_modules\\micromark-factory-destination"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/micromark/micromark/tree/main#readme",
+        "description": "micromark factory to parse destinations (found in resources, definitions)"
+      },
+      {
+        "name": "micromark-factory-label",
+        "versions": [
+          "2.0.1"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\micromark-factory-label@2.0.1\\node_modules\\micromark-factory-label"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/micromark/micromark/tree/main#readme",
+        "description": "micromark factory to parse labels (found in media, definitions)"
+      },
+      {
+        "name": "micromark-factory-space",
+        "versions": [
+          "2.1.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\micromark-factory-space@2.1.0\\node_modules\\micromark-factory-space"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/micromark/micromark/tree/main#readme",
+        "description": "micromark factory to parse markdown space (found in lots of places)"
+      },
+      {
+        "name": "micromark-factory-title",
+        "versions": [
+          "2.0.1"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\micromark-factory-title@2.0.1\\node_modules\\micromark-factory-title"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/micromark/micromark/tree/main#readme",
+        "description": "micromark factory to parse markdown titles (found in resources, definitions)"
+      },
+      {
+        "name": "micromark-factory-whitespace",
+        "versions": [
+          "2.0.1"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\micromark-factory-whitespace@2.0.1\\node_modules\\micromark-factory-whitespace"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/micromark/micromark/tree/main#readme",
+        "description": "micromark factory to parse markdown whitespace (found in lots of places)"
+      },
+      {
+        "name": "micromark-util-character",
+        "versions": [
+          "2.1.1"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\micromark-util-character@2.1.1\\node_modules\\micromark-util-character"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/micromark/micromark/tree/main#readme",
+        "description": "micromark utility to handle character codes"
+      },
+      {
+        "name": "micromark-util-chunked",
+        "versions": [
+          "2.0.1"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\micromark-util-chunked@2.0.1\\node_modules\\micromark-util-chunked"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/micromark/micromark/tree/main#readme",
+        "description": "micromark utility to splice and push with giant arrays"
+      },
+      {
+        "name": "micromark-util-classify-character",
+        "versions": [
+          "2.0.1"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\micromark-util-classify-character@2.0.1\\node_modules\\micromark-util-classify-character"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/micromark/micromark/tree/main#readme",
+        "description": "micromark utility to classify whether a character is whitespace or punctuation"
+      },
+      {
+        "name": "micromark-util-combine-extensions",
+        "versions": [
+          "2.0.1"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\micromark-util-combine-extensions@2.0.1\\node_modules\\micromark-util-combine-extensions"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/micromark/micromark/tree/main#readme",
+        "description": "micromark utility to combine syntax or html extensions"
+      },
+      {
+        "name": "micromark-util-decode-numeric-character-reference",
+        "versions": [
+          "2.0.2"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\micromark-util-decode-numeric-character-reference@2.0.2\\node_modules\\micromark-util-decode-numeric-character-reference"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/micromark/micromark/tree/main#readme",
+        "description": "micromark utility to decode numeric character references"
+      },
+      {
+        "name": "micromark-util-decode-string",
+        "versions": [
+          "2.0.1"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\micromark-util-decode-string@2.0.1\\node_modules\\micromark-util-decode-string"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/micromark/micromark/tree/main#readme",
+        "description": "micromark utility to decode markdown strings"
+      },
+      {
+        "name": "micromark-util-edit-map",
+        "versions": [
+          "1.0.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\micromark-util-edit-map@1.0.0\\node_modules\\micromark-util-edit-map"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/micromark/micromark/tree/main#readme",
+        "description": "micromark utility to batch changes to lists of events"
+      },
+      {
+        "name": "micromark-util-encode",
+        "versions": [
+          "2.0.1"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\micromark-util-encode@2.0.1\\node_modules\\micromark-util-encode"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/micromark/micromark/tree/main#readme",
+        "description": "micromark utility to encode dangerous html characters"
+      },
+      {
+        "name": "micromark-util-html-tag-name",
+        "versions": [
+          "2.0.1"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\micromark-util-html-tag-name@2.0.1\\node_modules\\micromark-util-html-tag-name"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/micromark/micromark/tree/main#readme",
+        "description": "micromark utility with list of html tag names"
+      },
+      {
+        "name": "micromark-util-normalize-identifier",
+        "versions": [
+          "2.0.1"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\micromark-util-normalize-identifier@2.0.1\\node_modules\\micromark-util-normalize-identifier"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/micromark/micromark/tree/main#readme",
+        "description": "micromark utility normalize identifiers (as found in references, definitions)"
+      },
+      {
+        "name": "micromark-util-resolve-all",
+        "versions": [
+          "2.0.1"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\micromark-util-resolve-all@2.0.1\\node_modules\\micromark-util-resolve-all"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/micromark/micromark/tree/main#readme",
+        "description": "micromark utility to resolve subtokens"
+      },
+      {
+        "name": "micromark-util-sanitize-uri",
+        "versions": [
+          "2.0.1"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\micromark-util-sanitize-uri@2.0.1\\node_modules\\micromark-util-sanitize-uri"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/micromark/micromark/tree/main#readme",
+        "description": "micromark utility to sanitize urls"
+      },
+      {
+        "name": "micromark-util-subtokenize",
+        "versions": [
+          "2.1.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\micromark-util-subtokenize@2.1.0\\node_modules\\micromark-util-subtokenize"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/micromark/micromark/tree/main#readme",
+        "description": "micromark utility to tokenize subtokens"
+      },
+      {
+        "name": "micromark-util-symbol",
+        "versions": [
+          "2.0.1"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\micromark-util-symbol@2.0.1\\node_modules\\micromark-util-symbol"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/micromark/micromark/tree/main#readme",
+        "description": "micromark utility with symbols"
+      },
+      {
+        "name": "micromark-util-types",
+        "versions": [
+          "2.0.3"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\micromark-util-types@2.0.3\\node_modules\\micromark-util-types"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/micromark/micromark/tree/main#readme",
+        "description": "micromark utility with a couple of typescript types"
+      },
+      {
+        "name": "ms",
+        "versions": [
+          "2.1.3"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\ms@2.1.3\\node_modules\\ms"
+        ],
+        "license": "MIT",
+        "homepage": "https://github.com/vercel/ms#readme",
+        "description": "Tiny millisecond conversion utility"
+      },
+      {
+        "name": "parse-entities",
+        "versions": [
+          "4.0.2"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\parse-entities@4.0.2\\node_modules\\parse-entities"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/wooorm/parse-entities#readme",
+        "description": "Parse HTML character references"
+      },
+      {
+        "name": "property-information",
+        "versions": [
+          "7.2.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\property-information@7.2.0\\node_modules\\property-information"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/wooorm/property-information#readme",
+        "description": "Info on the properties and attributes of the web platform"
+      },
+      {
+        "name": "react",
+        "versions": [
+          "18.3.1"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\react@18.3.1\\node_modules\\react"
+        ],
+        "license": "MIT",
+        "homepage": "https://reactjs.org/",
+        "description": "React is a JavaScript library for building user interfaces."
+      },
+      {
+        "name": "react-dom",
+        "versions": [
+          "18.3.1"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\react-dom@18.3.1_react@18.3.1\\node_modules\\react-dom"
+        ],
+        "license": "MIT",
+        "homepage": "https://reactjs.org/",
+        "description": "React package for working with the DOM."
+      },
+      {
+        "name": "react-markdown",
+        "versions": [
+          "10.1.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\react-markdown@10.1.0_@types+react@19.3.0_react@18.3.1\\node_modules\\react-markdown"
+        ],
+        "license": "MIT",
+        "author": "Espen Hovlandsdal",
+        "homepage": "https://github.com/remarkjs/react-markdown#readme",
+        "description": "React component to render markdown"
+      },
+      {
+        "name": "remark-gfm",
+        "versions": [
+          "4.0.1"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\remark-gfm@4.0.1\\node_modules\\remark-gfm"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/remarkjs/remark-gfm#readme",
+        "description": "remark plugin to support GFM (autolink literals, footnotes, strikethrough, tables, tasklists)"
+      },
+      {
+        "name": "remark-parse",
+        "versions": [
+          "11.0.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\remark-parse@11.0.0\\node_modules\\remark-parse"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://remark.js.org",
+        "description": "remark plugin to add support for parsing markdown input"
+      },
+      {
+        "name": "remark-rehype",
+        "versions": [
+          "11.1.2"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\remark-rehype@11.1.2\\node_modules\\remark-rehype"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/remarkjs/remark-rehype#readme",
+        "description": "remark plugin that turns markdown into HTML to support rehype"
+      },
+      {
+        "name": "remark-stringify",
+        "versions": [
+          "11.0.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\remark-stringify@11.0.0\\node_modules\\remark-stringify"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://remark.js.org",
+        "description": "remark plugin to add support for serializing markdown"
+      },
+      {
+        "name": "scheduler",
+        "versions": [
+          "0.23.2"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\scheduler@0.23.2\\node_modules\\scheduler"
+        ],
+        "license": "MIT",
+        "homepage": "https://reactjs.org/",
+        "description": "Cooperative scheduler for the browser environment."
+      },
+      {
+        "name": "space-separated-tokens",
+        "versions": [
+          "2.0.2"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\space-separated-tokens@2.0.2\\node_modules\\space-separated-tokens"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/wooorm/space-separated-tokens#readme",
+        "description": "Parse and stringify space separated tokens"
+      },
+      {
+        "name": "stringify-entities",
+        "versions": [
+          "4.0.4"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\stringify-entities@4.0.4\\node_modules\\stringify-entities"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/wooorm/stringify-entities#readme",
+        "description": "Serialize (encode) HTML character references"
+      },
+      {
+        "name": "style-to-object",
+        "versions": [
+          "2.0.2"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\style-to-object@2.0.2\\node_modules\\style-to-object"
+        ],
+        "license": "MIT",
+        "author": "Mark",
+        "homepage": "https://github.com/remarkablemark/style-to-object#readme",
+        "description": "Parse CSS inline style to JavaScript object."
+      },
+      {
+        "name": "trim-lines",
+        "versions": [
+          "3.0.1"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\trim-lines@3.0.1\\node_modules\\trim-lines"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/wooorm/trim-lines#readme",
+        "description": "Remove spaces and tabs around line-breaks"
+      },
+      {
+        "name": "trough",
+        "versions": [
+          "2.2.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\trough@2.2.0\\node_modules\\trough"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/wooorm/trough#readme",
+        "description": "`trough` is middleware"
+      },
+      {
+        "name": "unified",
+        "versions": [
+          "11.0.5"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\unified@11.0.5\\node_modules\\unified"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://unifiedjs.com",
+        "description": "parse, inspect, transform, and serialize content through syntax trees"
+      },
+      {
+        "name": "unist-util-is",
+        "versions": [
+          "6.0.1"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\unist-util-is@6.0.1\\node_modules\\unist-util-is"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/syntax-tree/unist-util-is#readme",
+        "description": "unist utility to check if a node passes a test"
+      },
+      {
+        "name": "unist-util-position",
+        "versions": [
+          "5.0.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\unist-util-position@5.0.0\\node_modules\\unist-util-position"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/syntax-tree/unist-util-position#readme",
+        "description": "unist utility to get the position of a node"
+      },
+      {
+        "name": "unist-util-stringify-position",
+        "versions": [
+          "4.0.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\unist-util-stringify-position@4.0.0\\node_modules\\unist-util-stringify-position"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/syntax-tree/unist-util-stringify-position#readme",
+        "description": "unist utility to serialize a node, position, or point as a human readable location"
+      },
+      {
+        "name": "unist-util-visit",
+        "versions": [
+          "5.2.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\unist-util-visit@5.2.0\\node_modules\\unist-util-visit"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/syntax-tree/unist-util-visit#readme",
+        "description": "unist utility to visit nodes"
+      },
+      {
+        "name": "unist-util-visit-parents",
+        "versions": [
+          "6.1.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\unist-util-visit-parents@6.1.0\\node_modules\\unist-util-visit-parents"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/syntax-tree/unist-util-visit-parents#readme",
+        "description": "unist utility to recursively walk over nodes, with ancestral information"
+      },
+      {
+        "name": "vfile",
+        "versions": [
+          "6.0.3"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\vfile@6.0.3\\node_modules\\vfile"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/vfile/vfile#readme",
+        "description": "Virtual file format for text processing"
+      },
+      {
+        "name": "vfile-message",
+        "versions": [
+          "4.0.3"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\vfile-message@4.0.3\\node_modules\\vfile-message"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/vfile/vfile-message#readme",
+        "description": "vfile utility to create a virtual message"
+      },
+      {
+        "name": "zwitch",
+        "versions": [
+          "2.0.4"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\zwitch@2.0.4\\node_modules\\zwitch"
+        ],
+        "license": "MIT",
+        "author": "Titus Wormer",
+        "homepage": "https://github.com/wooorm/zwitch#readme",
+        "description": "Handle values based on a property"
+      }
+    ],
+    "ISC": [
+      {
+        "name": "@ungap/structured-clone",
+        "versions": [
+          "1.4.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\@ungap+structured-clone@1.4.0\\node_modules\\@ungap\\structured-clone"
+        ],
+        "license": "ISC",
+        "author": "Andrea Giammarchi",
+        "homepage": "https://github.com/ungap/structured-clone#readme",
+        "description": "A structuredClone polyfill"
+      },
+      {
+        "name": "lucide-react",
+        "versions": [
+          "0.460.0"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\lucide-react@0.460.0_react@18.3.1\\node_modules\\lucide-react"
+        ],
+        "license": "ISC",
+        "author": "Eric Fennis",
+        "homepage": "https://lucide.dev",
+        "description": "A Lucide icon library package for React applications"
+      }
+    ],
+    "Apache-2.0": [
+      {
+        "name": "pdfjs-dist",
+        "versions": [
+          "5.7.284"
+        ],
+        "paths": [
+          "C:\\project\\nanjin\\Engineering-Subcontract-Verification-Agent\\frontend\\node_modules\\.pnpm\\pdfjs-dist@5.7.284\\node_modules\\pdfjs-dist"
+        ],
+        "license": "Apache-2.0",
+        "homepage": "https://mozilla.github.io/pdf.js/",
+        "description": "Generic build of Mozilla's PDF.js library."
+      }
+    ]
+  },
+  "limitations": "Python metadata and pnpm output only; excludes OS packages and other images, and requires manual review."
+}

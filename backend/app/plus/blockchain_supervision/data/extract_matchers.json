@@ -1,0 +1,32 @@
+{
+  "meta": {
+    "title": "合同字段统一抽取层匹配器（A-15；纯正则/词表，零 LLM）",
+    "companion_of": "无——本层只读 material.pages_json；金额复用 a1_check.extract_contract_amount，公司名归一复用 a2_check.norm_company",
+    "discipline": "抽不到 → 不可判定并写明缺哪类字段；绝不留空、绝不猜测、绝不静默归「未命中」（AGENTS 纪律 4）；数值必带 unit",
+    "regex_target": "去空白归一化文本（与 a1_check._norm_pages 同口径，空白字符先剥离再匹配）",
+    "structured_at": "2026-09-24"
+  },
+  "types": {
+    "general": ["总包", "总承包", "施工总承包", "施工合同"],
+    "sub": ["专业分包", "分包"],
+    "labor": ["劳务合作", "劳务分包", "劳务"]
+  },
+  "type_labels": {
+    "general": "总包",
+    "sub": "专业分包",
+    "labor": "劳务合作"
+  },
+  "scope_keywords": ["工程范围", "承包范围", "分包范围", "工程内容", "工作内容"],
+  "party_name_regex": "(甲方|发包人|建设单位|总承包人|乙方|分包人|分包单位|承包人)[:：]\\s*([^\\s，。；、,;；]{2,40}?(?:有限公司|有限责任公司|集团有限公司|工程公司|公司))",
+  "uscc_regex": "[0-9A-HJ-NPQRTUWXY]{18}",
+  "date_keywords": ["签订日期", "签订时间", "签约日期", "生效日期", "合同生效日期"],
+  "date_regex": "(\\d{4})\\s*年\\s*(\\d{1,2})\\s*月\\s*(\\d{1,2})\\s*日|(\\d{4})-(\\d{1,2})-(\\d{1,2})",
+  "mgmt_fee_keyword": "管理费",
+  "mgmt_fee_ratio_regex": "管理费[^0-9%％]{0,12}(\\d+(?:\\.\\d+)?)\\s*[%％]",
+  "mgmt_fee_absent_words": ["不计管理费", "不收管理费", "不收取管理费", "无管理费", "免管理费", "不计取管理费"],
+  "material_fee_keywords": ["材料款", "周转材料款", "周转材料"],
+  "party_words": ["甲方", "发包人", "建设单位", "总承包人", "乙方", "分包人", "承包人"],
+  "plan_keywords": ["施工方案"],
+  "plan_verb_keywords": ["编制", "负责编制", "组织编制"],
+  "declaration_patterns": ["不得转包", "不得分包", "不得再分包", "不得违法分包", "禁止转包", "禁止分包", "指定分包"]
+}

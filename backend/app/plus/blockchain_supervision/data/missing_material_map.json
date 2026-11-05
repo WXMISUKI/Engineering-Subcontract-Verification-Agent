@@ -1,0 +1,168 @@
+{
+  "meta": {
+    "name": "缺件 → 材料类归并映射（BS-P1-12 / BS-P1-06 前置）",
+    "note": "规则=数据：把结构化缺件 key 归并到「该补哪一份材料」的有限集合。改动走本文件，可 diff、可回滚，不写死在代码里。本文件**不进库**——库里只存 key，中文标签与归并关系都在这里现读，所以改文案不会让已落库结论失效。",
+    "source_note": "材料类依据《2025 年分包报审资料附件要求》与 118 号文附件 1 的报审资料分类拟定；key 取自 data/transfer_rules.json 的 required_evidence 字段（同名即同义，不另造 key）。",
+    "why": "缺件若只存在 message 文案里，面板只能靠正则拆（实测嵌套中文括号 `全部工程覆盖（肢解/分别发包）明文` 必被截断），且 BS-P1-02 已改过一次缺件文案 ⇒ 文案一改面板就坏。故落 missing_json 存 key，材料类归并由本文件承担。"
+  },
+  "material_categories": {
+    "general_contract": {
+      "label": "总包合同",
+      "hint": "总包（承包）合同，含合同金额、承包范围、双方主体、签字盖章",
+      "roles": ["general"]
+    },
+    "sub_contract": {
+      "label": "分包合同",
+      "hint": "拟分包的施工合同，含分包范围、金额、双方主体",
+      "roles": ["sub"]
+    },
+    "labor_contract": {
+      "label": "劳务合作合同",
+      "hint": "劳务合作/劳务分包合同，含劳务范围、计费与价款条款",
+      "roles": ["labor"]
+    },
+    "certificates": {
+      "label": "证照",
+      "hint": "营业执照、资质证书、安全生产许可证（需在有效期内）",
+      "roles": ["cert", "packet"]
+    },
+    "personnel_social": {
+      "label": "人员与社保证明",
+      "hint": "派驻人员名单、主要管理人员名单、劳动合同、社保缴纳证明（含统计期间）",
+      "roles": ["person", "packet"]
+    },
+    "procurement_lease": {
+      "label": "采购与租赁凭证",
+      "hint": "主要材料/周转材料的采购合同、租赁合同、发票与供应商主体",
+      "roles": ["packet"]
+    },
+    "fund_flow": {
+      "label": "资金流凭证",
+      "hint": "工程款收付流水、发票流，含统计期间与扣费转拨关系",
+      "roles": ["fund", "packet"]
+    },
+    "supervision_consent": {
+      "label": "监理审查与发包人同意",
+      "hint": "监理审查意见、发包人书面同意文件（含同意日期）",
+      "roles": ["packet"]
+    },
+    "joint_venture": {
+      "label": "联合体协议",
+      "hint": "联合体协议与内部分工约定",
+      "roles": ["packet"]
+    },
+    "plan_and_signature": {
+      "label": "方案编制与署名",
+      "hint": "施工组织设计/专项方案，含编制主体署名与责任条款",
+      "roles": ["packet"]
+    },
+    "submission_packet": {
+      "label": "分包报审附件",
+      "hint": "按主体补充分包报审包中明确缺少的附件或组合子件",
+      "roles": ["packet", "sub", "labor"]
+    },
+    "statutory_authority": {
+      "label": "法规明文与认定标准",
+      "hint": "兜底条款所需的法规明文与确定性认定标准——不是可提交的材料，须由有权口径补充",
+      "roles": []
+    },
+    "review_output": {
+      "label": "审查产出或人工作判（非补件）",
+      "hint": "这类缺口不是「少交一份材料」：可能是本系统尚未产出的核查结论、两份材料的对照判断、或只能由人工/有权口径确认的定性。补件补不上，需在工作台走人工确认",
+      "roles": []
+    }
+  },
+  "evidence_to_category": {
+    "general_contract": "general_contract",
+    "general_scope": "general_contract",
+    "contract_parties": "general_contract",
+    "no_subcontract_clause": "general_contract",
+    "employer_subject": "general_contract",
+    "contractor_subject": "general_contract",
+    "subcontract_authority": "general_contract",
+    "whole_project_scope": "general_contract",
+    "whole_project_payment": "general_contract",
+    "whole_project_transfer": "general_contract",
+
+    "subcontract": "sub_contract",
+    "subcontract_scope": "sub_contract",
+    "sub_scope": "sub_contract",
+    "subcontract_scopes": "sub_contract",
+    "subcontractor_identity": "sub_contract",
+    "subcontractor_subject": "sub_contract",
+    "section_anchor": "sub_contract",
+    "scope_coverage": "sub_contract",
+    "contract_chain": "sub_contract",
+    "downstream_subject": "sub_contract",
+
+    "labor_contract": "labor_contract",
+    "labor_scope": "labor_contract",
+    "labor_fee": "labor_contract",
+    "labor_payment_terms": "labor_contract",
+    "construction_scope": "labor_contract",
+
+    "license": "certificates",
+    "qualification": "certificates",
+    "safety_permit": "certificates",
+    "required_condition": "certificates",
+
+    "deployed_personnel": "personnel_social",
+    "manager_roster": "personnel_social",
+    "site_management_org": "personnel_social",
+    "project_manager_management": "personnel_social",
+    "social_security_or_wage_relation": "personnel_social",
+    "social_security_period": "personnel_social",
+
+    "procurement_or_lease_contract": "procurement_lease",
+    "procurement_responsibility": "procurement_lease",
+    "supplier_subject": "procurement_lease",
+    "main_material_fee": "procurement_lease",
+    "main_turnover_material_fee": "procurement_lease",
+
+    "fund_flow_statement": "fund_flow",
+    "coverage_period": "fund_flow",
+    "pass_through_payment": "fund_flow",
+    "payment_relationship": "fund_flow",
+    "invoice_or_explanation": "fund_flow",
+    "management_fee": "fund_flow",
+    "management_fee_deduction": "fund_flow",
+
+    "supervision_review": "supervision_consent",
+    "employer_written_consent": "supervision_consent",
+    "consent_date": "supervision_consent",
+
+    "joint_venture_agreement": "joint_venture",
+    "joint_work_division": "joint_venture",
+
+    "construction_plan_owner": "plan_and_signature",
+    "management_responsibility": "plan_and_signature",
+    "quality_safety_owner": "plan_and_signature",
+    "testing_owner": "plan_and_signature",
+    "survey_owner": "plan_and_signature",
+    "archive_owner": "plan_and_signature",
+
+    "review_output": "review_output",
+    "negative_list_match": "review_output",
+    "threshold_values": "review_output",
+    "principle_comparison": "review_output",
+    "equipment_facility_explanation": "review_output",
+    "l17_related_evidence": "review_output",
+    "illegal_subcontract_exclusion": "review_output",
+    "management_evidence": "review_output",
+    "technical_quality_safety_equipment_guidance": "review_output",
+    "contract_and_material_subjects": "review_output",
+    "named_subject": "review_output",
+    "actual_builder": "review_output",
+    "actual_construction": "review_output",
+    "actual_implementation": "review_output",
+    "actual_management": "review_output",
+    "cooperation_form": "review_output",
+
+    "additional_rule_text": "statutory_authority",
+    "deterministic_criterion": "statutory_authority"
+  },
+  "unmapped_policy": {
+    "note": "未登记归并关系的 key 不得猜测分类：面板按「其他」单列并原样显示中文标签。宁可多一栏，不可把材料指错方向（归因纪律：报错方向比报错数量更糟）。",
+    "fallback_category": null
+  }
+}

@@ -1,0 +1,13 @@
+.codegraph/
+.env
+.env.*
+!.env.example
+delivery-data/
+release/
+__pycache__/
+.pytest_cache/
+node_modules/
+dist/
+.venv/
+backend/app/uploads/
+.research/

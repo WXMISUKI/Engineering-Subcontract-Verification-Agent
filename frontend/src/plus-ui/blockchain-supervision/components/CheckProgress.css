@@ -1,0 +1,9 @@
+/* 复用开工条件核查的斜纹与呼吸反馈；动画不改变真实完成比例。 */
+@keyframes bs-stripes { from { background-position: 0 0; } to { background-position: 22.6px 0; } }
+@keyframes bs-breathe { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
+.bs-progress-stripes { background-image: repeating-linear-gradient(45deg, transparent, transparent 8px, rgba(255,255,255,.28) 8px, rgba(255,255,255,.28) 16px); animation: bs-stripes .9s linear infinite; }
+.bs-progress-dot { animation: bs-breathe 1.4s ease-in-out infinite; }
+.bs-progress-comet { animation: bs-breathe 1.3s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .bs-progress-stripes, .bs-progress-dot, .bs-progress-comet { animation: none; }
+}

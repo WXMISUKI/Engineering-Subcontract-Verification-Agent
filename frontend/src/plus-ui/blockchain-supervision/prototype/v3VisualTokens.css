@@ -1,0 +1,214 @@
+/* BS v3 prototype visual tokens.
+ * The workbench previously carried the older warm-brown palette in arbitrary
+ * Tailwind classes. Keep behavior and state contracts unchanged while mapping
+ * the visible prototype surface to the v3 blue/cool-gray system from the
+ * authoritative HTML prototype.
+ */
+.bs-v3 {
+  background: #FBFAF7;
+  color: #3B332B;
+  font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+/* Review workbench tokens: keep the three columns visually consistent with the
+ * reference prototype instead of relying on each component's legacy utility
+ * classes to choose its own typography and density. */
+.bs-v3 [data-testid="review-workbench-layout"] {
+  --review-font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", Arial, sans-serif;
+  --review-text: #3B332B;
+  --review-muted: #7A6C5A;
+  --review-border: #E5DED3;
+  --review-surface: #FFFFFF;
+  --review-soft: #FBF8F2;
+  --review-radius: 6px;
+  font-family: var(--review-font-family);
+  color: var(--review-text);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.bs-v3 [data-testid="review-workbench-layout"] [data-testid="review-prototype-left-rail"],
+.bs-v3 [data-testid="review-workbench-layout"] [data-testid="review-queue"],
+.bs-v3 [data-testid="review-workbench-layout"] [data-testid="review-step-detail"] {
+  border-color: var(--review-border);
+  border-radius: var(--review-radius);
+}
+.bs-v3 [data-testid="review-workbench-layout"] [data-testid="review-prototype-left-rail"] {
+  background: var(--review-soft);
+}
+.bs-v3 [data-testid="review-workbench-layout"] [data-testid="review-queue"],
+.bs-v3 [data-testid="review-workbench-layout"] [data-testid="review-step-detail"] {
+  background: var(--review-surface);
+}
+.bs-v3 [data-testid="review-workbench-layout"] [data-testid="review-queue"] {
+  font-size: 12px;
+}
+.bs-v3 [data-testid="review-workbench-layout"] [data-testid="review-queue"] button,
+.bs-v3 [data-testid="review-workbench-layout"] [data-testid="five-step-cards"] button {
+  font-family: var(--review-font-family);
+}
+.bs-v3 [data-testid="review-workbench-layout"] [data-testid^="review-queue-section-"] > header {
+  min-height: 30px;
+  background: var(--review-soft);
+}
+.bs-v3 [data-testid="review-workbench-layout"] [data-finding-card] {
+  border-color: var(--review-border);
+}
+.bs-v3 [data-testid="review-workbench-layout"] [class*="text-[#143B63]"],
+.bs-v3 [data-testid="review-workbench-layout"] [class*="text-[#174C7E]"],
+.bs-v3 [data-testid="review-workbench-layout"] [class*="text-[#16283D]"] {
+  color: #5A4632 !important;
+}
+.bs-v3 [data-testid="review-workbench-layout"] [class*="text-[#587089]"],
+.bs-v3 [data-testid="review-workbench-layout"] [class*="text-[#64748B]"] {
+  color: #7A6C5A !important;
+}
+.bs-v3 [data-testid="review-workbench-layout"] [class*="bg-[#EAF2FB]"],
+.bs-v3 [data-testid="review-workbench-layout"] [class*="bg-[#F1F6FB]"] {
+  background-color: #FBF5EC !important;
+}
+.bs-v3 [data-testid="review-workbench-layout"] [class*="border-[#DCE5EE]"],
+.bs-v3 [data-testid="review-workbench-layout"] [class*="border-[#D8E1EB]"] {
+  border-color: #E5DED3 !important;
+}
+.bs-v3 [data-testid="review-workbench-layout"] [class*="border-l-[#174C7E]"] {
+  border-left-color: #8B7355 !important;
+}
+.bs-v3 [data-testid="review-workbench-layout"] [class*="bg-[#174C7E]"],
+.bs-v3 [data-testid="review-workbench-layout"] [class*="bg-[#8B7355]"] {
+  background-color: #8B7355 !important;
+}
+.bs-v3 [data-testid="review-workbench-layout"] [data-finding-card] > button {
+  min-height: 72px;
+}
+.bs-v3 [data-testid="review-header-actions"] {
+  font-size: 12px;
+}
+.bs-v3 [data-testid="review-compare-mode"] [data-testid="compare-left"],
+.bs-v3 [data-testid="review-compare-mode"] [data-testid="compare-right"] {
+  background: #F4F7FA;
+}
+.bs-v3 [data-testid="review-compare-mode"] [data-testid="compare-splitter"] {
+  width: 6px;
+  background: #E5DED3;
+}
+
+.bs-v3 button,
+.bs-v3 input,
+.bs-v3 textarea,
+.bs-v3 select {
+  font-family: inherit;
+}
+.bs-v3 [data-testid="workbench-stage"] {
+  background: #FBFAF7;
+}
+.bs-v3 [data-testid="workbench-content"]:has([data-testid="review-compare-mode"]) [data-testid="workbench-header"] {
+  display: none;
+}
+.bs-v3 [data-testid="prototype-flow-header"] {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 auto;
+}
+
+/* The static v3 page keeps only the global topbar sticky; the task head scrolls with the page. */
+.bs-v3 [data-testid="workbench-header"] {
+  position: static !important;
+  top: auto !important;
+  z-index: auto !important;
+}
+
+/* primitive text tokens */
+.bs-v3 [class*="text-[#1A1A1A]"], .bs-v3 [class*="text-[#1F2937]"], .bs-v3 [class*="text-[#17283D]"] { color: #3B332B !important; }
+.bs-v3 [class*="text-[#6B7280]"], .bs-v3 [class*="text-[#4B5563]"], .bs-v3 [class*="text-[#64748B]"], .bs-v3 [class*="text-[#374151]"] { color: #7A6C5A !important; }
+.bs-v3 [class*="text-[#9CA3AF]"], .bs-v3 [class*="text-[#94A3B8]"] { color: #9A8D7D !important; }
+.bs-v3 [class*="text-[#8B7355]"], .bs-v3 [class*="text-[#5B4A2F]"] { color: #8B7355 !important; }
+
+/* primitive surfaces */
+.bs-v3 [class*="bg-[#fafafa]"], .bs-v3 [class*="bg-[#FAFAF7]"], .bs-v3 [class*="bg-[#FAFAFA]"] { background-color: #FBFAF7 !important; }
+.bs-v3 [class*="bg-[#F7F1E9]"], .bs-v3 [class*="bg-[#FCFAF6]"], .bs-v3 [class*="bg-[#FAF8F4]"] { background-color: #FBF5EC !important; }
+.bs-v3 [class*="bg-[#F8FAFC]"] { background-color: #FBF8F2 !important; }
+.bs-v3 [class*="bg-[#8B7355]"] { background-color: #8B7355 !important; }
+.bs-v3 [class*="bg-[#FDFAF4]"], .bs-v3 [class*="bg-[#FFFDF8]"] { background-color: #FFF8E9 !important; }
+.bs-v3 [class*="bg-[#FDECEA]"], .bs-v3 [class*="bg-[#FDF3F3]"] { background-color: #FFF4F3 !important; }
+.bs-v3 [class*="bg-[#F3FAF3]"], .bs-v3 [class*="bg-[#F8FCF8]"] { background-color: #EFFAF2 !important; }
+
+/* borders and focus tokens */
+.bs-v3 [class*="border-[#8B7355]"], .bs-v3 [class*="border-[#5B4A2F]"] { border-color: #8B7355 !important; }
+.bs-v3 [class*="border-[#E9E3D9]"], .bs-v3 [class*="border-[#EFE6D8]"], .bs-v3 [class*="border-[#E5E5E5]"], .bs-v3 [class*="border-[#E5E7EB]"], .bs-v3 [class*="border-[#F1ECE4]"], .bs-v3 [class*="border-[#F2EDE5]"], .bs-v3 [class*="border-[#EEF2F7]"] { border-color: #DCE5EE !important; }
+.bs-v3 [class*="border-[#F0DCB8]"] { border-color: #EAD5AA !important; }
+.bs-v3 [class*="border-[#F5C6C6]"], .bs-v3 [class*="border-[#F3C9C9]"] { border-color: #EFC4C4 !important; }
+.bs-v3 [class*="border-[#C8B89E]"] { border-color: #8DB9E6 !important; }
+
+/* status colors */
+.bs-v3 [class*="text-[#C62828]"], .bs-v3 [class*="text-[#B45309]"] { color: #BD3E3E !important; }
+.bs-v3 [class*="text-[#92400E]"] { color: #96651C !important; }
+.bs-v3 [class*="text-[#2E7D32]"] { color: #2F7D49 !important; }
+.bs-v3 [class*="border-[#CFE8D4]"], .bs-v3 [class*="border-[#DDEBDD]"] { border-color: #C8E4CF !important; }
+
+/* v3 uses a restrained blue focus ring instead of the old brown ring. */
+.bs-v3 [class*="shadow-[0_0_0_3px_#F7F1E9]"] { box-shadow: 0 0 0 3px #EAF2FB !important; }
+
+/* Upload page geometry mirrors the prototype's .form-grid / .field tokens. */
+.bs-v3 [data-testid="prototype-upload-page"] > section:first-of-type {
+  /* 浮层边界规则：日期选择器需要越过卡片底边，不能被 overflow-hidden 裁剪。 */
+  position: relative;
+  z-index: 30;
+  overflow: visible;
+}
+.bs-v3 [data-testid="material-ledger"] {
+  position: relative;
+  z-index: 1;
+}
+.bs-v3 [data-testid="baseline-date-picker"] {
+  z-index: 50;
+}
+.bs-v3 [data-testid="prototype-upload-page"] > section:first-of-type .grid {
+  column-gap: 18px;
+  row-gap: 12px;
+  padding: 16px;
+}
+.bs-v3 [data-testid="prototype-upload-page"] > section:first-of-type label {
+  color: #8291A1;
+  font-size: 13px;
+  font-weight: 600;
+}
+.bs-v3 [data-testid="prototype-upload-page"] > section:first-of-type input {
+  min-height: 40px;
+  height: 40px;
+  font-weight: 400;
+}
+.bs-v3 [data-testid="prototype-upload-page"] > section:first-of-type input:disabled {
+  background: #FBFAF7;
+  color: #17283D;
+}
+.bs-v3 [data-testid="prototype-upload-page"] > section:first-of-type label:has(input[aria-label="核查基准日"]) {
+  display: none;
+}
+.bs-v3 [data-testid="subject-type-notices"] [data-testid="prototype-baseline-date-field"] {
+  display: none;
+}
+.bs-v3 [data-testid="material-ledger"] > button {
+  margin-bottom: 14px;
+}
+.bs-v3 [data-testid^="prototype-material-"] b[title] {
+  white-space: pre-line;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+/* Run page geometry mirrors the prototype's .run-panel / .step-row tokens. */
+.bs-v3 [data-testid="check-run-view"] {
+  gap: 14px;
+}
+.bs-v3 [data-testid="check-run-view"] > div:nth-child(2) {
+  padding: 20px 22px;
+}
+.bs-v3 [data-testid="check-run-steps"] > li {
+  min-height: 44px;
+  padding: 10px 12px;
+}
+.bs-v3 [data-testid="check-run-steps"] > li > span:last-child {
+  font-variant-numeric: tabular-nums;
+}
