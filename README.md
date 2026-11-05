@@ -8,6 +8,8 @@
 
 `compose.yaml` 编排前端、后端、MySQL、WeKnora、DocReader、ParadeDB 和 Redis。首次部署需要独立数据库和账号、分包知识原件、Embedding 服务，以及扫描件所需的视觉识别服务；业务 LLM 和 OCR 按环境配置。镜像和知识原件可离线交付，外部模型是否可离线取决于实际部署。
 
+分包材料扫描识别、质量重试和旋转补读均使用配置的线上 OCR；线上不可用时保留未读及人工核实，不使用本地 OCR 模型。知识种子识别使用单独的视觉模型配置。
+
 从 `.env.example` 创建本地 `.env`，不要将真实密钥提交到仓库；知识原件与初始化输出分别放入 `delivery-data/knowledge-source/` 和 `delivery-data/knowledge-config/`，均不纳入 Git。初始化、单实例限制、HTTPS 和恢复边界见 [运维说明](openspec/changes/standalone-docker-delivery/operator-guide-draft.md)及[冷备与恢复草案](openspec/changes/standalone-docker-delivery/cold-backup-recovery-draft.md)。
 
 从源码重建后端镜像需要预先准备固定版本的 PyMuPDF 和 MuPDF 源码包，构建依赖需联网获取；输入位置、摘要及验证范围见 [PDF 源码构建记录](openspec/changes/standalone-docker-delivery/pdf-source-build.md)。离线安装使用已导出的镜像，不需要重新编译。

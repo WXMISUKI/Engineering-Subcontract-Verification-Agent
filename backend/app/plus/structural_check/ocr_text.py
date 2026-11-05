@@ -11,7 +11,7 @@
   会把二维公式（分式/根式/上下标）压成一维字符串，产生 `Anb=`、`Ocr三`、`Y==一`
   这类失真；而模型对同一页其实已能输出正确 LaTeX。故现在优先取模型的结构化
   markdown（含 LaTeX），仅在 markdown 缺失时回退词级装配。
-- **本地兜底**：云端单页失败 → 该页转本地 rapidocr（3.x 优先，回退 onnxruntime）。
+- **本地兜底**：历史兼容路径仅显式启用时可用；独立分包版禁用且不打包本地 OCR 模型。
 - **逐页容错**：不使用 `cloud_ocr_page_concurrent`——它对任一页失败即整文件抛错，
   对动辄上百页的规范过于脆弱。本模块自行并发，单页失败仅记账，不中断整本。
 - **落盘缓存**：按 (绝对路径, 大小, mtime, dpi, 提示词版本) 缓存页文本，重复运行不重复计费。
@@ -536,8 +536,9 @@ def ocr_pdf_pages(
     prompt: str | None = None,
     use_cloud: bool = True,
     cloud_limiter=None,
+    allow_local: bool = False,
 ) -> tuple[dict[int, str], dict]:
-    """对指定页做 OCR（云端优先、本地兜底、逐页容错、落盘缓存）。
+    """对指定页做 OCR；默认只用云端，按需逐页容错并缓存。
 
     返回 (page_no → 文本, stats)。stats:
         {engine, cached_pages, ocr_pages, local_pages, failed_pages}
@@ -607,7 +608,7 @@ def ocr_pdf_pages(
 
             cloud_cfg = cloud_config() or {}
         except Exception as exc:  # noqa: BLE001
-            logger.warning("[norm-ocr] 云端 OCR 不可用，转本地: %s", exc)
+            logger.warning("[norm-ocr] 云端 OCR 不可用%s: %s", "，转本地" if allow_local else "，需人工核实", exc)
 
     if cloud_cfg:
         import asyncio
@@ -681,13 +682,18 @@ def ocr_pdf_pages(
             asyncio.run(run())
             stats["engine"] = f"cloud:{cloud_cfg['model']}"
         except Exception as exc:  # noqa: BLE001
-            logger.warning("[norm-ocr] 云端并发层异常，转本地: %s", exc)
+            logger.warning("[norm-ocr] 云端并发层异常%s: %s", "，转本地" if allow_local else "，需人工核实", exc)
             failed_cloud = list(todo)
     else:
         failed_cloud = list(todo)
 
     # ---- 本地兜底 ----
-    if failed_cloud:
+    if failed_cloud and not allow_local:
+        for pno in failed_cloud:
+            if pno not in pages and pno not in stats['failed_pages']:
+                stats['failed_pages'].append(pno)
+                _page_done(pno, 'failed')
+    elif failed_cloud:
         try:
             engine, kind = _local_ocr_engine()
             for pno in failed_cloud:

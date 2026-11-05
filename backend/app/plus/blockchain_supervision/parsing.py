@@ -1,7 +1,7 @@
 """PDF 文本层提取（W1 口径：fitz 同步提取；P2-1 起扫描件走 OCR 兜底）。
 
 诚实纪律：扫描件（无文本层）**不假装解析**——先走 OCR 兜底（复用
-structural_check.ocr_text：云端优先/本地兜底/落盘缓存）；OCR 不可用或全部
+structural_check.ocr_text：独立版只使用线上 OCR，禁用本地兜底及旧缓存）；OCR 不可用或全部
 失败时记录降级 no_text_layer，下游 A3-01 对表据此判「不可判定」而不是
 「缺失」，绝不伪造内容。红章图像检测复用 startup_conditions_check，此处不碰。
 """
@@ -172,9 +172,7 @@ def ocr_text_pages(abs_path: str, *, page_nos=None, use_cache: bool = True,
     出参按「索引 + 1」换回原始页码。旧版直接把 1..N 当索引用，导致内容整体错位一页
     （第 1 页永远识别不到、单页扫描件识别为空）；此处修正后 page 可回原始文件定位。
 
-    `use_cache=False`/`use_cloud=False` 仅用于疑似质量页的一次本地重试，避免把错误的
-    云端缓存结果再次当成正文；普通摄取仍默认复用缓存并优先云端。惰性 import：OCR
-    依赖缺失不影响普通文本件摄取。
+    独立版业务 OCR 始终使用云端，禁用旧 OCR 缓存与本地兜底；失败页留待人工核实。
     """
     try:
         import fitz
@@ -198,10 +196,11 @@ def ocr_text_pages(abs_path: str, *, page_nos=None, use_cache: bool = True,
         if not idx_to_page:
             return [], None
         # 分包所有文件共用进程内云 OCR 限额，避免文件数乘以页并发。
+        if not use_cloud:
+            raise ValueError('分包材料仅支持线上 OCR')
         ocr_kwargs = dict(concurrency=_BS_CLOUD_OCR_CONCURRENCY, prompt=BS_CONTRACT_OCR_PROMPT,
-                          use_cache=use_cache, use_cloud=use_cloud)
-        if use_cloud:
-            ocr_kwargs["cloud_limiter"] = _BS_CLOUD_OCR_LIMITER
+                          use_cache=False, use_cloud=True, allow_local=False,
+                          cloud_limiter=_BS_CLOUD_OCR_LIMITER)
         if progress is not None:
             def on_page(index, source):
                 if index in idx_to_page:
@@ -278,7 +277,7 @@ def ocr_rotated_text_pages(abs_path: str, page_nos: list[int]) -> tuple:
                     return [], None
                 rotated.save(target)
             pages, info = ocr_text_pages(target, page_nos=list(range(1, len(valid) + 1)),
-                                         use_cache=False, use_cloud=False)
+                                         use_cache=False, use_cloud=True)
             output = []
             for page in pages:
                 position = page.get("page")
@@ -286,7 +285,7 @@ def ocr_rotated_text_pages(abs_path: str, page_nos: list[int]) -> tuple:
                     continue
                 meta = page.get("ocr_meta") or {}
                 text = page.get("text") or ""
-                rotated_meta = {"source": "local_rotated", "quality": meta.get("quality", "ocr_ok"),
+                rotated_meta = {"source": "cloud_rotated", "quality": meta.get("quality", "ocr_ok"),
                                 "retry_count": 2, "layout": [], "rotation_retry": 90}
                 if re.search(r"(?:特殊工种|特种作业).{0,16}(?:名单|名册)", text):
                     clues = [{"name": name, "post": post, **({"parts": parts} if len(parts) > 1 else {}),
@@ -411,7 +410,7 @@ def prepare_targeted_page_text_candidate(abs_path: str, pages: list, page_nos: l
     indexed = {p.get("page"): p for p in pages if isinstance(p, dict) and type(p.get("page")) is int}
     if len(indexed) != len(pages) or any(n not in indexed or not isinstance(indexed[n].get("text"), str) for n in page_nos):
         raise ValueError("指定页不存在或无法核对原解析")
-    recognized, info = ocr_text_pages(abs_path, page_nos=page_nos, use_cache=False, use_cloud=False)
+    recognized, info = ocr_text_pages(abs_path, page_nos=page_nos, use_cache=False, use_cloud=True)
     if _source_sha256(abs_path) != digest:
         raise ValueError("原件在补读期间变化，候选已丢弃")
     if not isinstance(recognized, list) or any(not isinstance(p, dict) or type(p.get("page")) is not int
@@ -789,9 +788,9 @@ def _ocr_single_short_fragment(page: dict) -> bool:
 
 
 def _ocr_sideways_layout(page: dict) -> bool:
-    """本地 OCR 长横行若在原页坐标中竖直排列，阅读顺序不能视为可靠。"""
+    """OCR 长横行若在原页坐标中竖直排列，阅读顺序不能视为可靠。"""
     meta = page.get("ocr_meta") or {}
-    if not isinstance(meta, dict) or meta.get("source") != "local":
+    if not isinstance(meta, dict) or meta.get("source") not in {"local", "cloud"}:
         return False
     count = 0
     for block in meta.get("layout") or []:
@@ -950,7 +949,7 @@ def parse_material_pages(abs_path: str, *, progress=None) -> tuple:
     rotation_recovered = []
     rotated_info = None
     if retry_pages:
-        retry_kwargs = {"page_nos": retry_pages, "use_cache": False, "use_cloud": False}
+        retry_kwargs = {"page_nos": retry_pages, "use_cache": False, "use_cloud": True}
         if progress is not None:
             progress(0, total, "retry", len(retry_pages))
             def retry_progress(page, page_total, source, work_total):

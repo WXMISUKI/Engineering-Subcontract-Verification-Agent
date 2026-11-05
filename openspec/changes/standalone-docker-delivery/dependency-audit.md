@@ -30,7 +30,7 @@
 
 云端 OCR 已改为显式配置模型、端点和凭据，移除广场计费依赖，保留原协议与用量回调；模拟 HTTP 测试通过，真实 OCR 和扫描件仍未验证。
 
-源工程分包 `parsing.py` 和共享 `ocr_text.py` 的代码路径为云端优先；云端配置不可用或单页失败时可能进入本地 RapidOCR，部分低质量页还会使用本地重试。该代码证据不能证明任何具体线上任务实际使用了本地 OCR，需查看相应任务的解析事件或日志。当前镜像中 `rapidocr` 和 `rapidocr-onnxruntime` 的发行包元数据均声明依赖 OpenCV；原工程分包材料摄取代码也调用过共享的图像印章候选检测，独立版复制该小段实现，不代表具备印章真伪鉴定能力或完成真实材料验收。若以后考虑移除本地 OCR 或检测器，须先明确失败及重试行为并重新验证扫描材料流程。
+源工程分包 `parsing.py` 和共享 `ocr_text.py` 的代码路径为云端优先；源代码保留本地 RapidOCR 兜底和重试，不能由此证明任何具体线上任务实际使用了本地 OCR。用户确认独立版全程使用线上 OCR 后，独立版禁用本地兜底、旧 OCR 缓存，并将质量重试、旋转及指定页补读改为线上请求；未读页继续人工核实。候选后端移除 `rapidocr`、`rapidocr-onnxruntime` 和 `onnxruntime`，但保留 OpenCV：原工程分包材料摄取调用过共享的图像印章候选检测，独立版复制了这一小段实现，不代表具备印章真伪鉴定能力或完成真实材料验收。模拟线上请求与失败路径已验证，真实模型和真实扫描材料仍须验收。
 
 WeKnora 上游候选版本 `v0.9.0`：已核实 Docker Hub 的 app 与 docreader 镜像均有 Linux amd64 和 arm64 清单；[该版本官方 Compose](https://github.com/Tencent/WeKnora/blob/v0.9.0/docker-compose.yml) 和 [知识文件接口](https://github.com/Tencent/WeKnora/blob/v0.9.0/website-docs/04-api/02-api-knowledge.md) 可供适配。原环境 WeKnora 版本尚不明，候选版本与原适配器兼容性、镜像加载、服务启动和召回均未验证，不视为最终锁定版本。
 

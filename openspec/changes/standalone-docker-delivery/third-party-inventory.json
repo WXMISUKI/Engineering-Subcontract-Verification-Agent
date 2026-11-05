@@ -558,31 +558,6 @@
       ]
     },
     {
-      "name": "onnxruntime",
-      "version": "1.31.1",
-      "license": "MIT License",
-      "classifiers": [
-        "Development Status :: 5 - Production/Stable",
-        "Intended Audience :: Developers",
-        "License :: OSI Approved :: MIT License",
-        "Operating System :: POSIX :: Linux",
-        "Operating System :: Microsoft :: Windows",
-        "Operating System :: MacOS",
-        "Topic :: Scientific/Engineering",
-        "Topic :: Scientific/Engineering :: Mathematics",
-        "Topic :: Scientific/Engineering :: Artificial Intelligence",
-        "Topic :: Software Development",
-        "Topic :: Software Development :: Libraries",
-        "Topic :: Software Development :: Libraries :: Python Modules",
-        "Programming Language :: Python",
-        "Programming Language :: Python :: 3 :: Only",
-        "Programming Language :: Python :: 3.11",
-        "Programming Language :: Python :: 3.12",
-        "Programming Language :: Python :: 3.13",
-        "Programming Language :: Python :: 3.14"
-      ]
-    },
-    {
       "name": "openai",
       "version": "2.48.0",
       "license": "Apache-2.0",
@@ -1017,31 +992,6 @@
         "Programming Language :: Python :: 3.12",
         "Programming Language :: Python :: 3.13",
         "Programming Language :: Python :: 3.14"
-      ]
-    },
-    {
-      "name": "rapidocr",
-      "version": "3.9.2",
-      "license": "",
-      "classifiers": [
-        "Programming Language :: Python :: 3.8",
-        "Programming Language :: Python :: 3.9",
-        "Programming Language :: Python :: 3.10",
-        "Programming Language :: Python :: 3.11",
-        "Programming Language :: Python :: 3.12",
-        "Programming Language :: Python :: 3.13"
-      ]
-    },
-    {
-      "name": "rapidocr-onnxruntime",
-      "version": "1.2.3",
-      "license": "Apache-2.0",
-      "classifiers": [
-        "Programming Language :: Python :: 3.6",
-        "Programming Language :: Python :: 3.7",
-        "Programming Language :: Python :: 3.8",
-        "Programming Language :: Python :: 3.9",
-        "Programming Language :: Python :: 3.10"
       ]
     },
     {
@@ -2869,5 +2819,5 @@
     ]
   },
   "limitations": "Python metadata and pnpm output only; excludes OS packages and other images, and requires manual review.",
-  "backend_image_digest": "sha256:e89aa8e1e825227acb74633f5a438a759d21fac27f83aa3a930e4a5515a2093b"
+  "backend_image_digest": "sha256:92e8a7cc1ab7635a199bc42fb796b565eb9bb4249d466534653768ae4a2d841a"
 }

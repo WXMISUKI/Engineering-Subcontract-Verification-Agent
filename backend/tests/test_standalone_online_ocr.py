@@ -1,0 +1,129 @@
+import hashlib
+
+import fitz
+
+from app.plus.blockchain_supervision import parsing
+from app.plus.structural_check import ocr_text
+
+
+def pdf_file(tmp_path):
+    path = tmp_path / 'synthetic.pdf'
+    doc = fitz.open()
+    doc.new_page()
+    doc.save(path)
+    doc.close()
+    return path
+
+
+def test_cloud_failure_records_unread_without_calling_local(monkeypatch, tmp_path):
+    from app.plus.safety_review import ocr_cloud
+
+    called = []
+    monkeypatch.setattr(ocr_cloud, 'cloud_config', lambda: {})
+    monkeypatch.setattr(ocr_text, '_local_ocr_engine', lambda: called.append(True))
+    monkeypatch.setattr(ocr_text, '_render_pages', lambda path, pages, dpi: {})
+    done = []
+    pages, stats = ocr_text.ocr_pdf_pages(str(pdf_file(tmp_path)), [0], use_cache=False,
+                                         allow_local=False, on_page=lambda page, source: done.append((page, source)))
+    assert pages == {}
+    assert stats['failed_pages'] == [0]
+    assert done == [(0, 'failed')]
+    assert called == []
+
+
+def test_online_error_does_not_fall_back_and_material_stays_unread(monkeypatch, tmp_path):
+    from app.plus.safety_review import ocr_cloud
+    path = tmp_path / 'scanned.pdf'
+    doc = fitz.open()
+    page = doc.new_page()
+    page.draw_rect(fitz.Rect(30, 30, 90, 90), fill=(0, 0, 0))
+    doc.save(path)
+    doc.close()
+    called = []
+    async def fail(*args, **kwargs):
+        raise TimeoutError('synthetic timeout')
+    monkeypatch.setattr(ocr_cloud, 'cloud_config', lambda: {'model': 'synthetic', 'endpoint': 'https://example.invalid', 'api_key': 'synthetic'})
+    monkeypatch.setattr(ocr_cloud, 'cloud_ocr_structured', fail)
+    monkeypatch.setattr(ocr_text, '_local_ocr_engine', lambda: called.append(True))
+    pages, degradations = parsing.parse_material_pages(str(path))
+    assert not pages
+    assert called == []
+    assert any(item.get('kind') == 'parse_incomplete' and 1 in item.get('unread_pages', []) for item in degradations)
+
+
+def test_subcontract_ocr_uses_cloud_and_bypasses_untrusted_cache(monkeypatch, tmp_path):
+    calls = []
+    def fake_ocr(path, pages, **kwargs):
+        calls.append(kwargs)
+        return {0: 'synthetic recognized text'}, {'page_meta': {}, 'engine': 'cloud:synthetic'}
+    monkeypatch.setattr(ocr_text, 'ocr_pdf_pages', fake_ocr)
+    path = pdf_file(tmp_path)
+    pages, _ = parsing.ocr_text_pages(str(path), page_nos=[1])
+    assert pages[0]['page'] == 1
+    assert calls[0]['use_cloud'] is True
+    assert calls[0]['allow_local'] is False
+    assert calls[0]['use_cache'] is False
+    rejected, info = parsing.ocr_text_pages(str(path), page_nos=[1], use_cloud=False)
+    assert rejected == [] and info is None and len(calls) == 1
+
+
+def test_rotated_and_targeted_retries_use_online_service(monkeypatch, tmp_path):
+    path = pdf_file(tmp_path)
+    calls = []
+    def fake_ocr(path, **kwargs):
+        calls.append(kwargs)
+        return [{'page': 1, 'text': 'synthetic readable content',
+                 'ocr_meta': {'source': 'cloud', 'quality': 'ocr_ok'}}], {'engine': 'cloud:synthetic'}
+    monkeypatch.setattr(parsing, 'ocr_text_pages', fake_ocr)
+    rotated, _ = parsing.ocr_rotated_text_pages(str(path), [1])
+    assert rotated[0]['page'] == 1
+    assert rotated[0]['ocr_meta']['source'] == 'cloud_rotated'
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    parsing.prepare_targeted_page_text_candidate(str(path), [{'page': 1, 'text': 'original'}], [1], expected_sha256=digest)
+    assert len(calls) == 2
+    assert all(call.get('use_cloud', True) is True and call['use_cache'] is False for call in calls)
+
+
+def test_low_quality_page_retries_online_without_cache(monkeypatch, tmp_path):
+    path = tmp_path / 'quality.pdf'
+    doc = fitz.open()
+    doc.new_page().draw_rect(fitz.Rect(30, 30, 90, 90), fill=(0, 0, 0))
+    doc.save(path)
+    doc.close()
+    calls = []
+    def fake_ocr(path, **kwargs):
+        calls.append(kwargs)
+        text = '短' if len(calls) == 1 else '工程分包材料内容用于审查主体名称和施工合同信息' * 3
+        return [{'page': 1, 'text': text, 'ocr_meta': {'source': 'cloud'}}], {'engine': 'cloud:synthetic'}
+    monkeypatch.setattr(parsing, 'ocr_text_pages', fake_ocr)
+    pages, _ = parsing.parse_material_pages(str(path))
+    assert len(calls) == 2
+    assert calls[1]['use_cloud'] is True and calls[1]['use_cache'] is False
+    assert pages[0]['text'].startswith('工程分包材料')
+
+
+def test_real_online_adapter_handles_normal_and_rotated_pages(monkeypatch, tmp_path):
+    import httpx
+    path = pdf_file(tmp_path)
+    for key, value in [('OCR_CLOUD_MODEL', 'synthetic'), ('OCR_CLOUD_ENDPOINT', 'https://ocr.invalid/api'),
+                       ('OCR_CLOUD_API_KEY', 'synthetic')]:
+        monkeypatch.setenv(key, value)
+    calls = []
+    def handler(request):
+        calls.append(request.url.host)
+        return httpx.Response(200, json={'output': {'choices': [{'message': {'content': [{'text': '合成线上识别材料内容'}]}}]}})
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(httpx, 'AsyncClient', lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs))
+    monkeypatch.setattr(ocr_text, '_local_ocr_engine', lambda: (_ for _ in ()).throw(AssertionError('local OCR called')))
+    pages, info = parsing.ocr_text_pages(str(path), page_nos=[1])
+    rotated, rotated_info = parsing.ocr_rotated_text_pages(str(path), [1])
+    assert pages[0]['text'] == '合成线上识别材料内容'
+    assert rotated[0]['text'] == pages[0]['text'] and rotated[0]['page'] == 1
+    assert rotated[0]['ocr_meta']['source'] == 'cloud_rotated'
+    assert info['engine'].startswith('cloud:') and rotated_info['engine'].startswith('cloud:')
+    assert calls == ['ocr.invalid', 'ocr.invalid']
+
+
+def test_online_vertical_layout_can_trigger_rotation_review():
+    blocks = [{'text': '工程分包施工单位信息内容', 'bbox': [i * 20, 0, i * 20 + 10, 100]} for i in range(3)]
+    assert parsing._ocr_sideways_layout({'ocr_meta': {'source': 'cloud', 'layout': blocks}})
