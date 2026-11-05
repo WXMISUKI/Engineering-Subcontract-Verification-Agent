@@ -21,4 +21,4 @@ def authorized_file_scope(stored):
         return ()
     if not isinstance(values, list) or any(not isinstance(value, str) or not value.strip() for value in values):
         return ()
-    return tuple(dict.fromkeys(value.strip() for value in values)) or None
+    return tuple(dict.fromkeys(value.strip() for value in values))

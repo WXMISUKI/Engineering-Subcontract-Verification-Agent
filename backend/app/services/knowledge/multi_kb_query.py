@@ -70,7 +70,7 @@ class QueryTarget:
     weight: float
     priority: int
     tenant_ref: Optional[str] = None
-    # None=绑定授权默认的整库；明确空tuple=本次不查。旧存储NULL/[]由resolver转换None。
+    # None=绑定授权默认的整库；明确空tuple=本次不查。
     knowledge_ids: Optional[Sequence[str]] = None
     provider_id: Optional[int] = None
     binding_id: Optional[int] = None
@@ -157,7 +157,7 @@ def resolve_query_targets(db: Any, agent_id: int) -> List[QueryTarget]:
                 tenant_ref=provider.tenant_ref,
                 weight=float(row.retrieval_weight),
                 priority=int(row.priority),
-                # 旧绑定 NULL/[] 都是整库；运行时显式空选由 apply_target_selection 保留。
+                # 只有 NULL 表示整库；空列表或无效格式不授权任何文件。
                 knowledge_ids=authorized_file_scope(row.selected_knowledge_ids),
                 provider_id=provider.id,
                 binding_id=row.id,
@@ -218,10 +218,8 @@ def apply_target_selection(
         elif "knowledge_ids" in selection:
             out.append(narrow(target, selection["knowledge_ids"]))
         else:
-            # 显式勾库但没给文件清单 = 整库：覆盖 binding 的默认文件范围，
-            # 与界面「勾了库但没选文件时按整库召回」一致；显式 knowledge_ids:[]
-            # 仍走上一分支表示空范围。
-            out.append(replace(target, knowledge_ids=None))
+            # 勾选知识库不能扩张服务端绑定的文件授权；整库绑定仍保持整库。
+            out.append(target)
     return out
 
 
