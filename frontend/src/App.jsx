@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { PanelLeftClose, PanelLeftOpen, Trash2 } from 'lucide-react'
+import { PanelLeftClose, PanelLeftOpen, Trash2, X } from 'lucide-react'
 import Workbench from './plus-ui/blockchain-supervision/BlockchainSupervisionWorkbench'
 
 async function api(path, options = {}) {
@@ -40,6 +40,49 @@ function Login({ onLogin }) {
   </main>
 }
 
+function DeleteConversationDialog({ row, busy, error, returnFocus, onCancel, onConfirm }) {
+  const dialogRef = useRef(null)
+  const cancelRef = useRef(null)
+  const returnFocusRef = useRef(returnFocus)
+
+  useEffect(() => {
+    cancelRef.current?.focus()
+    return () => { if (returnFocusRef.current?.isConnected) returnFocusRef.current.focus() }
+  }, [])
+
+  function handleKeyDown(event) {
+    if (event.key === 'Escape' && !busy) { event.preventDefault(); onCancel(); return }
+    if (event.key !== 'Tab') return
+    const buttons = Array.from(dialogRef.current.querySelectorAll('button:not(:disabled)'))
+    if (!buttons.length) { event.preventDefault(); return }
+    const first = buttons[0], last = buttons[buttons.length - 1]
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
+  }
+
+  return <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[#201a14]/40 p-4" onKeyDown={handleKeyDown}>
+    <section ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="delete-task-title" aria-describedby="delete-task-description" className="w-full max-w-[460px] rounded-2xl border border-[#e9e3d9] bg-white shadow-[0_24px_70px_rgba(35,28,20,0.22)]">
+      <div className="flex items-start gap-4 px-6 pt-6">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#fdf0ed] text-[#b54b40]" aria-hidden="true"><Trash2 size={20} /></div>
+        <div className="min-w-0 flex-1 pt-0.5">
+          <h2 id="delete-task-title" className="text-[17px] font-semibold text-[#302b25]">删除审查任务？</h2>
+          <p id="delete-task-description" className="mt-2 text-sm leading-6 text-[#665f56]">确定将这项任务从列表中移除吗？关联的材料和审查记录仍会保留。</p>
+        </div>
+        <button type="button" disabled={busy} aria-label="关闭" onClick={onCancel} className="-mr-2 -mt-2 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[#8a8074] hover:bg-[#f6f3ef] hover:text-[#302b25] disabled:opacity-50"><X size={18} /></button>
+      </div>
+      <div className="mx-6 mt-5 rounded-lg border border-[#eee7de] bg-[#faf8f5] px-4 py-3 text-sm text-[#473f36]">
+        <span className="block text-xs text-[#887d70]">待删除任务</span>
+        <span className="mt-1 block break-words font-medium">{row.title}</span>
+      </div>
+      {error && <p role="alert" className="mx-6 mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+      <div className="mt-6 flex justify-end gap-3 border-t border-[#f0ebe5] px-6 py-4">
+        <button ref={cancelRef} type="button" disabled={busy} onClick={onCancel} className="min-h-11 rounded-lg border border-[#ddd5cb] px-5 text-sm font-medium text-[#51483e] hover:bg-[#f8f6f3] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#8b7355] disabled:opacity-50">取消</button>
+        <button type="button" disabled={busy} onClick={onConfirm} className="min-h-11 rounded-lg bg-[#b54b40] px-5 text-sm font-medium text-white hover:bg-[#9d3e35] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#b54b40] disabled:opacity-60">{busy ? '删除中…' : '确认删除'}</button>
+      </div>
+    </section>
+  </div>
+}
+
 export default function App() {
   const [user, setUser] = useState(null)
   const [checking, setChecking] = useState(true)
@@ -48,7 +91,10 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState(null)
+  const [deleteError, setDeleteError] = useState('')
   const initialization = useRef(null)
+  const deleteButtonRef = useRef(null)
 
   useEffect(() => { api('/api/session').then(setUser).catch(() => setUser(null)).finally(() => setChecking(false)) }, [])
   const refresh = useCallback(async () => {
@@ -82,15 +128,18 @@ export default function App() {
       await refresh()
     } catch (err) { setError(err.message) } finally { setBusy(false) }
   }
-  async function deleteConversation(row) {
-    if (!window.confirm(`确定删除“${row.title}”吗？删除后将从列表中移除，关联资料仍会保留。`)) return
+  async function deleteConversation() {
+    const row = deleteTarget
+    if (!row || busy) return
     setBusy(true)
-    setError('')
+    setDeleteError('')
     try {
       await api(`/api/conversations/${row.id}`, { method: 'DELETE' })
-      const rows = await refresh()
+      const rows = conversations.filter(item => item.id !== row.id)
+      setConversations(rows)
       setSelected(current => current === row.id ? (rows[0]?.id ?? null) : current)
-    } catch (err) { setError(err.message) } finally { setBusy(false) }
+      setDeleteTarget(null)
+    } catch (err) { setDeleteError(err.message) } finally { setBusy(false) }
   }
   async function logout() {
     try { await api('/api/logout', { method: 'POST' }) } catch { /* 登录已过期时仍清除本地视图 */ }
@@ -110,7 +159,7 @@ export default function App() {
       <nav className="mt-4 flex-1 overflow-y-auto" aria-label="历史任务">
         {conversations.map(row => <div key={row.id} className={`mb-1 flex items-center rounded ${selected === row.id ? 'bg-white font-medium' : 'hover:bg-white/60'}`}>
           <button onClick={() => setSelected(row.id)} aria-current={selected === row.id ? 'page' : undefined} className="min-h-11 min-w-0 flex-1 truncate px-3 text-left text-sm">{row.title}</button>
-          <button type="button" onClick={() => deleteConversation(row)} disabled={busy} aria-label={`删除${row.title}`} title="删除任务" className="flex h-10 w-10 shrink-0 items-center justify-center rounded text-[#776b5e] hover:bg-red-50 hover:text-red-700 disabled:opacity-50"><Trash2 size={16} aria-hidden="true" /></button>
+          <button type="button" onClick={event => { deleteButtonRef.current = event.currentTarget; setDeleteError(''); setDeleteTarget(row) }} disabled={busy} aria-label={`删除${row.title}`} title="删除任务" className="flex h-10 w-10 shrink-0 items-center justify-center rounded text-[#776b5e] hover:bg-red-50 hover:text-red-700 disabled:opacity-50"><Trash2 size={16} aria-hidden="true" /></button>
         </div>)}
       </nav>
       <div className="mt-4 flex items-center justify-between gap-2 text-sm"><span className="truncate">{user.username}</span><button onClick={logout} className="min-h-11 px-2 underline">退出登录</button></div>
@@ -121,5 +170,6 @@ export default function App() {
       {selected ? <Workbench key={selected} conversationId={selected} onContentChange={contentChanged} /> :
         <div className="m-auto text-center"><p className="text-[#665f56]">选择历史任务或新建审查</p><button onClick={createConversation} disabled={busy} className="mt-4 min-h-11 rounded bg-[#6b5a45] px-5 text-white">新建审查</button></div>}
     </main>
+    {deleteTarget && <DeleteConversationDialog row={deleteTarget} busy={busy} error={deleteError} returnFocus={deleteButtonRef.current} onCancel={() => setDeleteTarget(null)} onConfirm={deleteConversation} />}
   </div>
 }

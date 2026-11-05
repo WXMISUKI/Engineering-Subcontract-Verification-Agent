@@ -30,14 +30,32 @@ describe('独立分包入口', () => {
       throw new Error(`unexpected request ${url}`)
     })
     vi.stubGlobal('fetch', fetchMock)
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true)
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: '删除当前任务' }))
+    expect(screen.getByRole('dialog', { name: '删除审查任务？' })).toBeTruthy()
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: '取消' }))
+    fireEvent.click(screen.getByRole('button', { name: '取消' }))
     expect(fetchMock).not.toHaveBeenCalledWith('/api/conversations/2', expect.anything())
     fireEvent.click(screen.getByRole('button', { name: '删除当前任务' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认删除' }))
     await waitFor(() => expect(screen.getByText('工作台 1')).toBeTruthy())
     expect(screen.queryByRole('button', { name: '当前任务' })).toBeNull()
-    confirm.mockRestore()
+  })
+  it('删除失败在弹窗中显示原因，Escape 可取消', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url, options = {}) => {
+      if (url === '/api/session') return { ok: true, json: async () => ({ username: 'alice' }) }
+      if (url === '/api/conversations') return { ok: true, json: async () => [{ id: 1, title: '处理中的任务' }] }
+      if (options.method === 'DELETE') return { ok: false, json: async () => ({ detail: '任务正在处理，请等待完成后再删除' }) }
+      throw new Error('unexpected request')
+    }))
+    render(<App />)
+    const open = await screen.findByRole('button', { name: '删除处理中的任务' })
+    fireEvent.click(open)
+    fireEvent.click(screen.getByRole('button', { name: '确认删除' }))
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', '任务正在处理，请等待完成后再删除')
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(document.activeElement).toBe(open)
   })
   it('登录后显示本人历史任务并可切换', async () => {
     let loggedIn = false
