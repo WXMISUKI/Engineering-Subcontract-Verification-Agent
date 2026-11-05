@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { PanelLeftClose, PanelLeftOpen, Trash2 } from 'lucide-react'
 import Workbench from './plus-ui/blockchain-supervision/BlockchainSupervisionWorkbench'
 
 async function api(path, options = {}) {
@@ -81,6 +82,16 @@ export default function App() {
       await refresh()
     } catch (err) { setError(err.message) } finally { setBusy(false) }
   }
+  async function deleteConversation(row) {
+    if (!window.confirm(`确定删除“${row.title}”吗？删除后将从列表中移除，关联资料仍会保留。`)) return
+    setBusy(true)
+    setError('')
+    try {
+      await api(`/api/conversations/${row.id}`, { method: 'DELETE' })
+      const rows = await refresh()
+      setSelected(current => current === row.id ? (rows[0]?.id ?? null) : current)
+    } catch (err) { setError(err.message) } finally { setBusy(false) }
+  }
   async function logout() {
     try { await api('/api/logout', { method: 'POST' }) } catch { /* 登录已过期时仍清除本地视图 */ }
     initialization.current = null
@@ -89,17 +100,25 @@ export default function App() {
   if (checking) return <main className="p-6" role="status">正在检查登录状态…</main>
   if (!user) return <Login onLogin={setUser} />
   return <div className="flex h-full min-h-0 bg-[#fafaf9]">
-    {sidebarOpen && <aside className="flex w-64 shrink-0 flex-col border-r border-[#e5ddd3] bg-[#f7f1e9] p-4" aria-label="审查任务">
-      <h1 className="font-semibold">工程分包审查</h1>
+    <aside className={`flex shrink-0 flex-col border-r border-[#e5ddd3] bg-[#f7f1e9] ${sidebarOpen ? 'w-64 p-4' : 'w-14 items-center py-4'}`} aria-label="审查任务">
+      <div className={`flex items-center ${sidebarOpen ? 'justify-between' : 'justify-center'}`}>
+        {sidebarOpen && <h1 className="font-semibold">工程分包审查</h1>}
+        <button type="button" onClick={() => setSidebarOpen(value => !value)} aria-label={sidebarOpen ? '收起任务列表' : '展开任务列表'} aria-expanded={sidebarOpen} title={sidebarOpen ? '收起任务列表' : '展开任务列表'} className="flex h-10 w-10 items-center justify-center rounded text-[#665f56] hover:bg-white"><span aria-hidden="true">{sidebarOpen ? <PanelLeftClose size={19} /> : <PanelLeftOpen size={19} />}</span></button>
+      </div>
+      {sidebarOpen && <>
       <button onClick={createConversation} disabled={busy} className="mt-5 min-h-11 rounded border border-[#bda98f] bg-white px-3 text-left text-sm disabled:opacity-60">新建审查</button>
       <nav className="mt-4 flex-1 overflow-y-auto" aria-label="历史任务">
-        {conversations.map(row => <button key={row.id} onClick={() => setSelected(row.id)} aria-current={selected === row.id ? 'page' : undefined} className={`mb-1 min-h-11 w-full rounded px-3 text-left text-sm ${selected === row.id ? 'bg-white font-medium' : 'hover:bg-white/60'}`}>{row.title}</button>)}
+        {conversations.map(row => <div key={row.id} className={`mb-1 flex items-center rounded ${selected === row.id ? 'bg-white font-medium' : 'hover:bg-white/60'}`}>
+          <button onClick={() => setSelected(row.id)} aria-current={selected === row.id ? 'page' : undefined} className="min-h-11 min-w-0 flex-1 truncate px-3 text-left text-sm">{row.title}</button>
+          <button type="button" onClick={() => deleteConversation(row)} disabled={busy} aria-label={`删除${row.title}`} title="删除任务" className="flex h-10 w-10 shrink-0 items-center justify-center rounded text-[#776b5e] hover:bg-red-50 hover:text-red-700 disabled:opacity-50"><Trash2 size={16} aria-hidden="true" /></button>
+        </div>)}
       </nav>
       <div className="mt-4 flex items-center justify-between gap-2 text-sm"><span className="truncate">{user.username}</span><button onClick={logout} className="min-h-11 px-2 underline">退出登录</button></div>
-    </aside>}
+      </>}
+    </aside>
     <main className="flex min-w-0 flex-1 flex-col">
       {error && <p role="alert" className="bg-red-50 p-3 text-sm text-red-800">{error}</p>}
-      {selected ? <Workbench key={selected} conversationId={selected} sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(value => !value)} onContentChange={contentChanged} /> :
+      {selected ? <Workbench key={selected} conversationId={selected} onContentChange={contentChanged} /> :
         <div className="m-auto text-center"><p className="text-[#665f56]">选择历史任务或新建审查</p><button onClick={createConversation} disabled={busy} className="mt-4 min-h-11 rounded bg-[#6b5a45] px-5 text-white">新建审查</button></div>}
     </main>
   </div>

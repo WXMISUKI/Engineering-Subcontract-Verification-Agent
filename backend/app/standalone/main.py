@@ -136,4 +136,28 @@ def create_app(engine, secret_key: str, *, cookie_secure: bool = True, include_s
             raise HTTPException(status_code=404, detail='会话不存在')
         return {'id': row.id}
 
+    @app.delete('/api/conversations/{conversation_id}', status_code=204)
+    def delete_conversation(conversation_id: int, user: User = Depends(get_current_any_user),
+                            db: Session = Depends(get_db)):
+        row = db.scalar(select(ConversationMapping).where(
+            ConversationMapping.id == conversation_id, ConversationMapping.user_id == user.id,
+            ConversationMapping.user_type == 'web', ConversationMapping.is_deleted.is_(False)
+        ).with_for_update())
+        if row is None:
+            raise HTTPException(status_code=404, detail='会话不存在')
+        if include_subcontract:
+            from ..plus.blockchain_supervision.models import BsTask, BsMaterial
+            from ..plus.blockchain_supervision import service, reference_snapshots
+            tasks = db.scalars(select(BsTask).where(BsTask.conversation_id == row.id).order_by(BsTask.id).with_for_update()).all()
+            for task in tasks:
+                snapshot = reference_snapshots.get_reference_snapshot(db, task) or {}
+                processing = db.scalar(select(BsMaterial.id).where(
+                    BsMaterial.task_id == task.id, BsMaterial.parse_state.in_(('uploading', 'parsing'))).limit(1))
+                if (task.state == 'preparing' or processing is not None
+                        or snapshot.get('state') == 'running' or service.current_ai_advisory_pending(db, task)):
+                    raise HTTPException(status_code=409, detail='任务正在处理，请等待完成后再删除')
+        row.is_deleted = True
+        db.commit()
+        return Response(status_code=204)
+
     return app

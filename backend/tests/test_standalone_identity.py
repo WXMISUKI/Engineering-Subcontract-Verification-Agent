@@ -46,6 +46,44 @@ def test_conversations_are_private_to_the_account():
     assert client.get(f'/api/conversations/{created}').status_code == 404
 
 
+def test_delete_conversation_soft_deletes_only_owned_data():
+    from app.standalone.identity import ConversationMapping
+    client, engine = client_and_engine()
+    client.post('/api/login', json={'username': 'alice', 'password': 'Alice-pass-123'})
+    cid = client.post('/api/conversations').json()['id']
+    base = '/api/plus/blockchain-supervision/tasks'
+    tid = client.post(base, json={'conversation_id': cid, 'title': 'synthetic', 'scope_a1': True}).json()['task_id']
+    client.post('/api/login', json={'username': 'bob', 'password': 'Bob-password-456'})
+    assert client.delete(f'/api/conversations/{cid}').status_code == 404
+    client.post('/api/login', json={'username': 'alice', 'password': 'Alice-pass-123'})
+    assert client.delete(f'/api/conversations/{cid}').status_code == 204
+    assert client.get('/api/conversations').json() == []
+    assert client.get(f'{base}/{tid}').status_code == 404
+    assert client.delete(f'/api/conversations/{cid}').status_code == 404
+    with Session(engine) as db:
+        assert db.get(ConversationMapping, cid).is_deleted
+        assert db.get(BsTask, tid) is not None
+
+
+def test_delete_conversation_rejects_processing_material_and_ai(monkeypatch):
+    from app.plus.blockchain_supervision import service
+    client, engine = client_and_engine()
+    client.post('/api/login', json={'username': 'alice', 'password': 'Alice-pass-123'})
+    cid = client.post('/api/conversations').json()['id']
+    base = '/api/plus/blockchain-supervision/tasks'
+    tid = client.post(base, json={'conversation_id': cid, 'title': 'synthetic', 'scope_a1': True}).json()['task_id']
+    with Session(engine) as db:
+        db.add(BsMaterial(task_id=tid, file_name='x.pdf', parse_state='parsing'))
+        db.commit()
+    assert client.delete(f'/api/conversations/{cid}').status_code == 409
+    with Session(engine) as db:
+        db.query(BsMaterial).filter_by(task_id=tid).update({'parse_state': 'done'})
+        db.commit()
+    monkeypatch.setattr(service, 'current_ai_advisory_pending', lambda db, task: True)
+    assert client.delete(f'/api/conversations/{cid}').status_code == 409
+    assert client.get(f'/api/conversations/{cid}').status_code == 200
+
+
 def test_existing_bs_guard_accepts_only_owner():
     client, engine = client_and_engine()
     client.post('/api/login', json={'username': 'alice', 'password': 'Alice-pass-123'})
