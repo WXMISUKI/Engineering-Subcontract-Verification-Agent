@@ -20,7 +20,7 @@
 - 后端镜像实际运行时报告 PyMuPDF 1.28.0、MuPDF 1.29.0。下载的 [PyPI 官方 Linux wheel](https://pypi.org/project/PyMuPDF/1.28.0/#files) SHA-256 为 `44f0973f5e5edbaec95bc34b64e71d1959d4ee90b1328de1b4f4f5b4fa78673f`，与官方页面一致；其中 `__init__.py`、MuPDF 两个共享库及一个静态库的摘要与候选镜像逐项一致。官方 wheel 本身含 `libmupdf.so.29.0`，因此该版本差异不单独证明镜像被替换。
 - 已下载 [PyPI 官方 PyMuPDF 1.28.0 源码分发包](https://pypi.org/project/PyMuPDF/1.28.0/#files)，SHA-256 `e53f3567403a92da15caa9e7ae0164327fff48817e9f40175367fb9de524258d` 与官方页面一致，放入候选包 `third-party-sources/`。该包的 `setup.py` 默认版本为 MuPDF 1.28.0，并说明 MuPDF 单独下载与构建；包中没有 MuPDF 原始源码目录。其与上述 wheel 报告的 1.29.0 存在差异，尚未确认 wheel 的完整构建输入、MuPDF 1.29.0 对应源码及补丁，因此此源码包只能作为部分准备，不能声称已提供完整对应源码。[PyMuPDF 许可说明](https://pymupdf.io/licensing)列出 AGPL 与商业路径，适用义务仍须核查。
 - [ParadeDB v0.25.11 许可证](https://github.com/paradedb/paradedb/blob/v0.25.11/LICENSE)为 AGPL；须核实该镜像的实际构建源码、其他组件、版本与适用义务，不假定仅有上游标签就满足对应源码要求。
-- [MySQL 8.0.46 官方下载页面](https://dev.mysql.com/downloads/mysql/8.0.html?os=src)列出源码包；仍需确认 Docker 镜像实际来源、构建差异、其他组件及 GPL 分发要求。
+- 已保存 [MySQL 8.0.46 官方源码包](https://dev.mysql.com/downloads/mysql/8.0.html?os=src)，MD5 与官网一致，并使用与 [MySQL 官方文档](https://dev.mysql.com/doc/refman/8.0/en/checking-gpg-signature.html)所列指纹一致的发布公钥验证签名；该包不含 Boost，仍需确认 Docker 镜像实际构建差异、其他组件及 GPL 分发要求，见 `third-party-source-notes.md`。
 - [WeKnora v0.9.0 许可证](https://github.com/Tencent/WeKnora/blob/v0.9.0/LICENSE)和 [Redis 7.0.15 许可证](https://github.com/redis/redis/blob/7.0.15/COPYING)是主项目线索，不能代替各自镜像内传递依赖与系统包核查。WeKnora 两个镜像的 revision 与上游标签一致；已保存对应快照。ParadeDB 镜像无 revision 标签，已保存上游标签指向提交的参考快照，不能当作已验证对应源码；参见 `third-party-source-notes.md`。
 
 优先核实 PyMuPDF/MuPDF、ParadeDB 的对应源码与许可证路径，再处理镜像内大批重复依赖和系统包；确认权利人、产品分发方式和需提供的材料后才能形成正式结论。以上不是法律意见，也没有宣称源代码链接或 SPDX 自动清单已完成合规。
