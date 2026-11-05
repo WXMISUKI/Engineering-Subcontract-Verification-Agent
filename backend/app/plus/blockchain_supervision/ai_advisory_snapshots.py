@@ -8,7 +8,7 @@ from ...models.models import ConversationMapping, KnowledgeBaseBinding, Knowledg
 from ...services.knowledge.context import OWNER_SR_CONVERSATION
 from ...services.knowledge.reference_access import authorized_reference_provider
 from ...services.billing.bindings import effective_model_code_or_default
-from . import ai_evidence, ai_review_batch, knowledge_runs
+from . import ai_evidence, ai_review_batch, knowledge_runs, negative_candidate_plan
 from .ai_current_guard import AiContextChanged, assert_ai_context_current
 from .models import BsFinding, BsMaterial, BsTaskEvent
 from .rules import ATTACHMENT_SEAL_ITEM, negative_list_rules
@@ -215,7 +215,7 @@ def timeout_reviewable_ids(db, task, runs, reviewable_predicate):
     return allowed
 
 
-def summarize_coverage(snapshot, runs, events, *, timeout_reviewable_ids=None):
+def summarize_coverage(snapshot, runs, events, *, timeout_reviewable_ids=None, scope_reviewable_ids=None):
     """仅描述本次自动核查范围；历史未标记的任务不推测覆盖情况。"""
     if not snapshot or snapshot.get("ai_auto_enabled") is not True:
         return None
@@ -238,6 +238,7 @@ def summarize_coverage(snapshot, runs, events, *, timeout_reviewable_ids=None):
         latest = {}
         reviewable_partial = 0
         reviewable_not_run = 0
+        unlocated_scope_reviewable = 0
         reviewable_failed_ids = []
         failure_categories = set()
         version_changed = False
@@ -306,6 +307,10 @@ def summarize_coverage(snapshot, runs, events, *, timeout_reviewable_ids=None):
                         counts[state] += 1
                         if state == "partial" and row.get("reviewable_partial") is True:
                             reviewable_partial += 1
+                        if (state == "not_run" and row.get("unavailable_reason") == "contract_scope_unlocated"
+                                and row.get("candidate_id") in (scope_reviewable_ids or set())):
+                            reviewable_not_run += 1
+                            unlocated_scope_reviewable += 1
                     if result.get("no_confirmed_subjects") or result.get("unresolved_subject_ids"):
                         counts["not_run"] += 1
         if version_changed:
@@ -313,8 +318,69 @@ def summarize_coverage(snapshot, runs, events, *, timeout_reviewable_ids=None):
             # 避免页面恢复把版本升级变成隐式模型调用。
             counts["failed"] += counts["not_started"]
             counts["not_started"] = 0
-        output.append({"group_id": group, "label": CHECK_GROUPS[group]["label"], "state": "available", "counts": counts, "skipped": len(ids - linked), "reviewable_partial": reviewable_partial, "reviewable_not_run": reviewable_not_run, "reviewable_failed": len(reviewable_failed_ids), "reviewable_timeout_finding_ids": sorted(reviewable_failed_ids), "failure_categories": sorted(failure_categories)})
+        output.append({"group_id": group, "label": CHECK_GROUPS[group]["label"], "state": "available", "counts": counts, "skipped": len(ids - linked), "reviewable_partial": reviewable_partial, "reviewable_not_run": reviewable_not_run, "unlocated_scope_reviewable": unlocated_scope_reviewable, "reviewable_failed": len(reviewable_failed_ids), "reviewable_timeout_finding_ids": sorted(reviewable_failed_ids), "failure_categories": sorted(failure_categories)})
     return {"state": "available", "groups": output}
+
+
+def unlocated_scope_reviewable_ids(db, task, user, run, events):
+    """只有当前授权下实际存在且身份一致的人工记录才允许继续。"""
+    if not run or run.get('group_id') != 'a1':
+        return set()
+    event = next((event for event in events if event.event_type in {
+        'check.negative_candidates_started', 'check.negative_candidates_finished', 'check.negative_candidates_failed'
+    } and (event.payload_json or {}).get('run_id') == run.get('run_id')), None)
+    if not event or event.event_type != 'check.negative_candidates_finished' or not advisory_validation_current(event):
+        return set()
+    payload = event.payload_json or {}
+    result_payload = payload.get('result')
+    if not isinstance(result_payload, dict):
+        return set()
+    candidates = result_payload.get('candidates')
+    records = payload.get('finding_records')
+    if not isinstance(candidates, list) or not isinstance(records, list):
+        return set()
+    if (any(not isinstance(row, dict) or not isinstance(row.get('candidate_id'), str) for row in candidates)
+            or len({row['candidate_id'] for row in candidates}) != len(candidates)):
+        return set()
+    active = active_candidate_finding_ids(db, task, user)
+    records_by_key = {row.get('key'): row for row in records if isinstance(row, dict)}
+    if len(records_by_key) != len(records):
+        return set()
+    result = set()
+    for candidate in candidates:
+        if not isinstance(candidate, dict) or candidate.get('execution_status') != 'not_run' or candidate.get('unavailable_reason') != 'contract_scope_unlocated':
+            continue
+        candidate_id = candidate.get('candidate_id')
+        if not isinstance(candidate_id, str) or not candidate_id.startswith('nc-'):
+            continue
+        contracts = candidate.get('contract_ids')
+        if (not isinstance(contracts, list) or not contracts
+                or any(type(value) is not int or value < 1 for value in contracts)
+                or candidate.get('material_pages') != [] or candidate.get('incomplete_material_scope') is not True
+                or candidate.get('batches_total') != 0 or candidate.get('batches_completed') != 0
+                or candidate.get('proposals') != []):
+            continue
+        if any(candidate.get(key) != run.get(key) or not run.get(key) for key in
+               ('task_id', 'run_id', 'review_run_id', 'material_fingerprint', 'rule_fingerprint')):
+            continue
+        record = records_by_key.get(negative_candidate_plan.unlocated_scope_key(candidate_id))
+        if not record or record.get('finding_id') not in active:
+            continue
+        refs = record.get('rule_evidence') or []
+        ids = candidate.get('reference_ids')
+        if (not isinstance(ids, list) or not ids or any(not isinstance(value, str) or not value for value in ids)
+                or not isinstance(refs, list)
+                or any(not isinstance(ref, dict) or not isinstance(ref.get('reference_id'), str) for ref in refs)
+                or sorted(ids) != sorted(ref.get('reference_id') for ref in refs)):
+            continue
+        finding = db.get(BsFinding, record['finding_id'])
+        if (finding is None or finding.task_id != task.id or finding.subject_id != candidate.get('subject_id')
+                or finding.item_id != candidate.get('item_id') or finding.kind != 'negative_candidate'
+                or finding.status != 'undecidable' or finding.source != '分包范围待核实'
+                or finding.material_id is not None or finding.page is not None or finding.quote or finding.evidence_json):
+            continue
+        result.add(candidate_id)
+    return result
 
 
 def collect_current_coverage(db, task, snapshot, reviewable_predicate=None):
@@ -336,8 +402,10 @@ def collect_current_coverage(db, task, snapshot, reviewable_predicate=None):
                                     "check.negative_candidates_started", "check.negative_candidates_finished",
                                     "check.negative_candidates_failed")))
         .order_by(BsTaskEvent.sequence.desc()).all())
+    a1_run = next((run for run in runs if run.get('group_id') == 'a1'), None)
     return summarize_coverage(snapshot, runs, events,
-        timeout_reviewable_ids=timeout_reviewable_ids(db, task, runs, reviewable_predicate))
+        timeout_reviewable_ids=timeout_reviewable_ids(db, task, runs, reviewable_predicate),
+        scope_reviewable_ids=unlocated_scope_reviewable_ids(db, task, user, a1_run, events))
 
 
 def collect_current_advisories(db, task):

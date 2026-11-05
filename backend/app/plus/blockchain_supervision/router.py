@@ -1054,10 +1054,13 @@ def get_group_ai_advisory_status(task_id: int, group_id: str, db: Session = Depe
     coverage = ai_advisory_snapshots.summarize_coverage(
         {"ai_auto_enabled": True, "ai_auto_groups": [group_id]}, [run], events,
         timeout_reviewable_ids=ai_advisory_snapshots.timeout_reviewable_ids(
-            db, task, [run], reporting.report_review_blocking))["groups"][0]
+            db, task, [run], reporting.report_review_blocking),
+        scope_reviewable_ids=ai_advisory_snapshots.unlocated_scope_reviewable_ids(
+            db, task, user, run, events))["groups"][0]
     return {"task_id": task_id, "group_id": group_id, "run_id": run["run_id"],
             "counts": coverage["counts"], "skipped": coverage["skipped"],
             "reviewable_partial": coverage["reviewable_partial"], "reviewable_not_run": coverage["reviewable_not_run"],
+            "unlocated_scope_reviewable": coverage["unlocated_scope_reviewable"],
             "reviewable_failed": coverage["reviewable_failed"],
             "failure_categories": coverage["failure_categories"]}
 

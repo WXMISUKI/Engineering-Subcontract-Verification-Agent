@@ -3088,7 +3088,7 @@ def _latest_negative_candidate_event(db, task_id: int, run_id: str):
 
 
 def sync_candidate_review_records(db: Session, task: BsTask, reviewable: list, previous_records: list,
-                                  materials: list) -> list[dict]:
+                                  materials: list, *, unlocated: list = ()) -> list[dict]:
     """在调用方事务内同步当前代候选；调用方负责锁、授权与事件同事务提交。"""
     if not isinstance(previous_records, list):
         raise AiContextChanged("候选复核记录不完整")
@@ -3104,6 +3104,9 @@ def sync_candidate_review_records(db: Session, task: BsTask, reviewable: list, p
     material_map = {material.id: material for material in materials
                     if getattr(material, "task_id", None) == task.id}
     prepared = negative_candidate_plan.make_candidate_review_findings(task_id=task.id, reviewable=reviewable)
+    prepared.extend(unlocated)
+    if len({key for key, _, _ in prepared}) != len(prepared):
+        raise AiContextChanged("候选复核记录身份不唯一")
     for _, finding, _ in prepared:
         for ref in finding.evidence_json or []:
             material = material_map.get(ref["material_id"])
@@ -3201,8 +3204,11 @@ async def run_negative_candidate_ai_advisory(db: Session, task: BsTask, user, *,
                 cached_result = deepcopy(data["result"])
                 cached_result["reviewable_proposals"] = negative_candidate_plan.reviewable_candidate_proposals(
                     prepared, cached_result)
+                unlocated = negative_candidate_plan.make_unlocated_scope_findings(
+                    task_id=current.id, prepared=prepared, result=cached_result, run=run)
                 records = sync_candidate_review_records(reservation_db, current,
-                    cached_result["reviewable_proposals"], previous_records, _rule_materials(reservation_db, current))
+                    cached_result["reviewable_proposals"], previous_records, _rule_materials(reservation_db, current),
+                    unlocated=unlocated)
                 cached_result["finding_records"] = records
                 if "finding_records" not in data or records != data["finding_records"]:
                     add_event(reservation_db, task_id, "check.negative_candidates_finished", stage="check",
@@ -3265,8 +3271,11 @@ async def run_negative_candidate_ai_advisory(db: Session, task: BsTask, user, *,
             for candidate in result["candidates"]:
                 _mark_ai_usage_failure(candidate)
         result["reviewable_proposals"] = negative_candidate_plan.reviewable_candidate_proposals(prepared, result)
+        unlocated = negative_candidate_plan.make_unlocated_scope_findings(
+            task_id=current.id, prepared=prepared, result=result, run=current_run)
         saved_records = sync_candidate_review_records(save_db, current, result["reviewable_proposals"],
-                                                       previous_records, _rule_materials(save_db, current))
+                                                       previous_records, _rule_materials(save_db, current),
+                                                       unlocated=unlocated)
         result["finding_records"] = deepcopy(saved_records)
         add_event(save_db, current.id, "check.negative_candidates_finished", stage="check", payload={
             "run_id": current_run["run_id"], "review_run_id": current_run.get("review_run_id"),

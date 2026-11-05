@@ -13,6 +13,8 @@ function validateStatus(status, runId) {
       status.reviewable_not_run < 0 || status.reviewable_not_run > status.counts.not_run)) throw new Error('AI 核查状态不完整，请刷新后重试')
   if (status.reviewable_failed != null && (!Number.isInteger(status.reviewable_failed) ||
       status.reviewable_failed < 0 || status.reviewable_failed > status.counts.failed)) throw new Error('AI 核查状态不完整，请刷新后重试')
+  if (status.unlocated_scope_reviewable != null && (!Number.isInteger(status.unlocated_scope_reviewable) ||
+      status.unlocated_scope_reviewable < 0 || status.unlocated_scope_reviewable > (status.reviewable_not_run ?? 0))) throw new Error('AI 核查状态不完整，请刷新后重试')
   return status
 }
 
@@ -23,6 +25,7 @@ export async function runAutoAiReview({ taskId, runs, groups, getStatus, runBatc
   let warning = false
   let pending = false
   let failed = false
+  let unlocatedScopeCount = 0
   const failureCategories = new Set()
   for (let index = 0; index < selected.length; index += 1) {
     const run = selected[index]
@@ -37,6 +40,7 @@ export async function runAutoAiReview({ taskId, runs, groups, getStatus, runBatc
       status = validateStatus(await getStatus(taskId, run.group_id), run.run_id)
     }
     if (status.counts.pending > 0) { pending = true; continue }
+    unlocatedScopeCount += status.unlocated_scope_reviewable ?? 0
     if (status.counts.not_started > 0 || status.counts.failed > (status.reviewable_failed ?? 0) || status.counts.not_run > (status.reviewable_not_run ?? 0) || status.counts.partial > (status.reviewable_partial ?? 0)) {
       failed = true
       if (Array.isArray(status.failure_categories)) status.failure_categories.forEach((category) => failureCategories.add(category))
@@ -44,7 +48,7 @@ export async function runAutoAiReview({ taskId, runs, groups, getStatus, runBatc
     }
     warning ||= status.skipped > 0 || status.counts.partial > 0 || status.counts.not_run > 0 || status.counts.failed > 0
   }
-  const result = { state: pending ? 'pending' : failed ? 'failed' : 'completed', warning: warning || pending || failed }
+  const result = { state: pending ? 'pending' : failed ? 'failed' : 'completed', warning: warning || pending || failed, unlocatedScopeCount }
   if (failed && failureCategories.size) result.failureCategories = [...failureCategories]
   return result
 }

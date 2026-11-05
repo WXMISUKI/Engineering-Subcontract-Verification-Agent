@@ -195,6 +195,63 @@ def reviewable_candidate_proposals(prepared: dict, result: dict) -> list[dict]:
     return output
 
 
+def unlocated_scope_key(candidate_id: str) -> str:
+    return 'ncf-' + hashlib.sha256(('unlocated-scope:' + candidate_id).encode('utf-8')).hexdigest()
+
+
+def make_unlocated_scope_findings(*, task_id: int, prepared: dict, result: dict, run: dict) -> list[tuple[str, BsFinding, list[dict]]]:
+    """范围不可定位时只生成可追溯的人工核实项，不编造材料证据。"""
+    planned, returned = prepared.get('candidates'), result.get('candidates')
+    if not isinstance(planned, list) or not isinstance(returned, list):
+        return []
+    identity_fields = ('candidate_id', 'task_id', 'run_id', 'review_run_id', 'material_fingerprint',
+                       'rule_fingerprint', 'subject_id', 'item_id', 'contract_ids', 'reference_ids',
+                       'material_pages', 'unavailable_reason', 'incomplete_material_scope')
+    indexed = {row.get('candidate_id'): row for row in planned if isinstance(row, dict)}
+    if (len(indexed) != len(planned) or any(not isinstance(key, str) or not key.startswith('nc-') for key in indexed)
+            or len(returned) != len(planned) or any(not isinstance(row, dict) for row in returned)
+            or len({row.get('candidate_id') for row in returned}) != len(returned)):
+        return []
+    references = run.get('references') or []
+    if not isinstance(references, list) or any(not isinstance(ref, dict) for ref in references):
+        return []
+    by_id = {ref.get('reference_id'): ref for ref in references}
+    if len(by_id) != len(references):
+        return []
+    output = []
+    for row in returned:
+        candidate = indexed.get(row.get('candidate_id'))
+        if not candidate or any(row.get(key) != candidate.get(key) for key in identity_fields):
+            return []
+        if candidate.get('unavailable_reason') != 'contract_scope_unlocated' or row.get('execution_status') != 'not_run':
+            continue
+        if (type(task_id) is not int or task_id < 1 or candidate.get('task_id') != task_id
+                or any(candidate.get(key) != run.get(key) or not run.get(key) for key in
+                       ('task_id', 'run_id', 'review_run_id', 'material_fingerprint', 'rule_fingerprint'))
+                or type(candidate.get('subject_id')) is not int or candidate['subject_id'] < 1
+                or not isinstance(candidate.get('item_id'), str) or not candidate['item_id']
+                or not isinstance(candidate.get('contract_ids'), list) or not candidate['contract_ids']
+                or any(type(value) is not int or value < 1 for value in candidate['contract_ids'])
+                or candidate.get('material_pages') != []
+                or candidate.get('incomplete_material_scope') is not True
+                or row.get('batches_total') != 0 or row.get('batches_completed') != 0 or row.get('proposals') != []):
+            continue
+        ids = candidate.get('reference_ids')
+        if (not isinstance(ids, list) or not ids or any(not isinstance(ref_id, str) or not ref_id for ref_id in ids)
+                or len(set(ids)) != len(ids)):
+            continue
+        refs = [by_id.get(ref_id) for ref_id in ids]
+        if any(not ref or not isinstance(ref.get('quote'), str) or not ref['quote'].strip() for ref in refs):
+            continue
+        finding = BsFinding(task_id=task_id, subject_id=candidate['subject_id'], item_id=candidate['item_id'],
+                            kind='negative_candidate', status=STATUS_UNDECIDABLE,
+                            message='未定位合同分包范围，无法开展本项辅助核查，请补充材料或人工核实。',
+                            material_id=None, page=None, quote=None, source='分包范围待核实', evidence_json=[])
+        output.append((unlocated_scope_key(candidate['candidate_id']), finding,
+                       [{'reference_id': ref['reference_id'], 'quote': ref['quote']} for ref in refs]))
+    return output
+
+
 def make_candidate_review_findings(*, task_id: int, reviewable: list[dict]) -> list[tuple[str, BsFinding, list[dict]]]:
     """为已通过二次校验的建议构建待复核记录；不分配 ID、不持久化。"""
     if type(task_id) is not int or task_id < 1 or not isinstance(reviewable, list):
