@@ -7,6 +7,10 @@
 backend/app/**/__pycache__/
 backend/app/**/.env
 backend/app/uploads/
+!delivery-data/
+!delivery-data/build-input/
+!delivery-data/build-input/pymupdf-1.28.0.tar.gz
+!delivery-data/build-input/mupdf-1.28.0-source.tar.gz
 !frontend/
 !frontend/package.json
 !frontend/pnpm-lock.yaml

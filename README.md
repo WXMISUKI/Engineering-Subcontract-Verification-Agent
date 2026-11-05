@@ -10,6 +10,8 @@
 
 从 `.env.example` 创建本地 `.env`，不要将真实密钥提交到仓库；知识原件与初始化输出分别放入 `delivery-data/knowledge-source/` 和 `delivery-data/knowledge-config/`，均不纳入 Git。初始化、单实例限制、HTTPS 和恢复边界见 [运维说明](openspec/changes/standalone-docker-delivery/operator-guide-draft.md)及[冷备与恢复草案](openspec/changes/standalone-docker-delivery/cold-backup-recovery-draft.md)。
 
+从源码重建后端镜像需要预先准备固定版本的 PyMuPDF 和 MuPDF 源码包，构建依赖需联网获取；输入位置、摘要及验证范围见 [PDF 源码构建记录](openspec/changes/standalone-docker-delivery/pdf-source-build.md)。离线安装使用已导出的镜像，不需要重新编译。
+
 ## 许可证与材料
 
 第三方组件和知识资料的权利范围应在对外分发前确认。[许可证核查记录](openspec/changes/standalone-docker-delivery/license-review.md)列出了已识别的 AGPL、GPL 和其他许可及未完成事项；公开仓库本身不代表许可核查已通过。知识资料原件不放在本仓库。

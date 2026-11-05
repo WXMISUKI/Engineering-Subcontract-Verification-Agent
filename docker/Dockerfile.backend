@@ -1,10 +1,26 @@
+# 固定官方源码构建 PDF 扩展；构建输入不包含业务数据和密钥。
+FROM python:3.13-slim@sha256:ae14d4ce8771606477a81446e7ef429edd6762305fc50c84507c1041fa8285d1 AS pdf-build
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends pkg-config && rm -rf /var/lib/apt/lists/*
+RUN python -m pip install --no-cache-dir pipcl==13 swig==4.4.1 libclang==18.1.1 packaging==26.3
+WORKDIR /src
+COPY delivery-data/build-input/pymupdf-1.28.0.tar.gz delivery-data/build-input/mupdf-1.28.0-source.tar.gz ./
+RUN echo 'e53f3567403a92da15caa9e7ae0164327fff48817e9f40175367fb9de524258d  pymupdf-1.28.0.tar.gz' | sha256sum -c - && echo '21c7f064903154f1c3a7458bee81f130fc36f9b5147ea13328f9980e02d2dea2  mupdf-1.28.0-source.tar.gz' | sha256sum -c - && tar xzf pymupdf-1.28.0.tar.gz && tar xzf mupdf-1.28.0-source.tar.gz
+ENV PYMUPDF_SETUP_MUPDF_BUILD=/src/mupdf-1.28.0-source
+RUN mkdir /output && python -m pip wheel --no-deps --no-build-isolation --wheel-dir /output /src/pymupdf-1.28.0
+
 # 独立分包后端；当前仍需完成知识初始化和业务验收。
 FROM python:3.13-slim@sha256:ae14d4ce8771606477a81446e7ef429edd6762305fc50c84507c1041fa8285d1
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 COPY backend/requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
+RUN --mount=type=bind,from=pdf-build,source=/output,target=/pdf-wheel \
+    test "$(grep -cx 'pymupdf==1.28.0' /app/requirements.txt)" = 1 && \
+    sed '/^pymupdf==1\.28\.0$/d' /app/requirements.txt > /tmp/requirements-no-pdf.txt && \
+    pip install --no-cache-dir -r /tmp/requirements-no-pdf.txt && \
+    pip install --no-cache-dir --no-deps /pdf-wheel/pymupdf-1.28.0-*.whl && \
+    rm /tmp/requirements-no-pdf.txt
 COPY backend/app /app/app
 COPY knowledge/seed-manifest.json /app/knowledge/seed-manifest.json
 RUN useradd --create-home --uid 10001 bsapp && mkdir -p /data /app/app/uploads \

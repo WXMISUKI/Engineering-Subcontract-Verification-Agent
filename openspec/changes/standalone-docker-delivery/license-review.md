@@ -6,7 +6,7 @@
 
 另用 Syft 1.56.0 扫描七个候选镜像，生成 SPDX JSON 清单并放入候选包 `sbom/`。扫描结果分别识别后端 209、前端 73、MySQL 142、ParadeDB 330、Redis 22、WeKnora 3778、DocReader 2353 个组件条目；其中许可证声明为 NOASSERTION 或 NONE 的分别为 45、1、4、57、6、1546、1544 条。条目数可能包含重复或工具识别结果，声明缺失也不等于没有许可证；必须逐项核对来源、版本及对应许可证。镜像扫描不能保证发现所有模型、字体、静态打包依赖或其他非包文件，不能代替人工合规审查。
 
-已导出 3203 条待核记录及来源到候选包 `license-unresolved.json`，按类型和重复线索整理在 `license-triage.md`。其中知识镜像的 2128 条 Rust 记录来自四处 `uv` / `uvx` 检测，purl 集合相同、为 532 个不同 purl；这只是排查去重线索，不代表许可证已核实。后端实际运行时报告 MuPDF 1.29.0，已核对官方 PyMuPDF 1.28.0 wheel 与镜像内相关文件一致，并放入校验过的 PyMuPDF 1.28.0 源码包；该源码包默认的 MuPDF 版本为 1.28.0，仍须核查实际 wheel 的完整对应 MuPDF 源码与构建方式。
+已导出 3203 条待核记录及来源到候选包 `license-unresolved.json`，按类型和重复线索整理在 `license-triage.md`。其中知识镜像的 2128 条 Rust 记录来自四处 `uv` / `uvx` 检测，purl 集合相同、为 532 个不同 purl；这只是排查去重线索，不代表许可证已核实。原后端 wheel 的 MuPDF 对应源码不明；新候选后端改用经摘要核验的 PyMuPDF 1.28.0 和 MuPDF 1.28.0 源码构建，源码包、构建方法和验证记录见 `third-party-sources/README.md` 和 `pdf-source-build.md`。尚需核查源码包所含第三方组件、构建依赖和适用分发义务，不能因此认定完整合规。
 
 对候选 ParadeDB 镜像作离线只读核查：安装的软件包 `postgresql-17-pg-search` 为 0.25.11，扩展控制文件默认版本亦为 0.25.11；另有 PostgreSQL 17.11 和 pgvector 0.8.4。镜像内软件包版权文件声明 `AGPL-3.0-or-later`，其原文已收录为 `third-party-licenses/ParadeDB-pg-search-0.25.11-copyright.txt`。但该版权文件所指的同目录 `LICENSE` 实际缺失，尽管 `dpkg -L` 仍列出此路径；候选包另行收录了上游 0.25.11 的许可证文本。包版本与上游标签一致只支持版本识别，尚不能证明该标签快照包含构建此二进制的完整对应源码、补丁和依赖，也不能据此认定分发义务已满足。
 
