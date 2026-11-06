@@ -14,7 +14,8 @@ from .semantic_review import InputBudgetExceeded, InvalidModelResponse, MAX_REQU
 
 _MAX_SEGMENT_CHARS = 16000
 _MAX_BATCH_MATERIALS = 12
-_MAX_BATCH_ENTRIES = 64
+# 真实材料的 64 条批次出现多次 120 秒超时；减小批次，仍由超时拆批兜底。
+_MAX_BATCH_ENTRIES = 32
 _TABLE_NOISE = re.compile(r"(?<![A-Za-z])(?:\\{0,2}hline[\s]*){5,}")
 CHECKPOINT_SCHEMA_VERSION = "bs-ai-batch-v18"
 logger = logging.getLogger(__name__)

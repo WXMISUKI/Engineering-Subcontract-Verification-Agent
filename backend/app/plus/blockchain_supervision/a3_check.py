@@ -19,7 +19,7 @@ from .material_versions import subject_assessment_issue
 from .personnel_evidence import (contract_roster_evidence, extract_management_roster,
                                  extract_person_relation_evidence, extract_special_trade_roster)
 from .models import STATUS_HIT, STATUS_MISS, STATUS_UNDECIDABLE, BsFinding, BsMaterial
-from .parsing import describe_reading_gap, material_page_readable, material_reading_gap
+from .parsing import material_page_readable, material_reading_gap
 from .rules import load_report_checklist
 
 
@@ -33,17 +33,10 @@ def _material_text(material) -> str:
 
 
 def _reading_limit(materials: list) -> str:
-    """限制随finding进入页面和导出，不能仅留在解析日志。"""
-    limits = []
-    for material in materials:
-        unread = material_reading_gap(material)
-        if unread is None:
-            continue
-        pages = describe_reading_gap(material, unread)
-        limits.append("「%s」%s" % (material.file_name, pages))
-    if not limits:
-        return ""
-    return "；".join(limits) + "，涉及内容暂时无法确认，需人工翻看原件或补充清晰材料"
+    """材料整体缺口不能作为每个具体核查项的关联页。"""
+    if any(material_reading_gap(material) is not None for material in materials):
+        return "部分材料内容尚未确认，请查看材料状态并人工核对原件"
+    return ""
 
 
 _WS_RE = re.compile(r"\s+")
@@ -234,7 +227,7 @@ def _required_all_message(item, status, missing, unknown, materials, packet_type
         return msg
     if status == STATUS_UNDECIDABLE:
         if unknown:
-            return ("「%s」暂时无法判断：%s 的材料内容未读完整（可能为扫描件）；%s"
+            return ("「%s」暂时无法判断：%s 的材料内容尚不能确认；%s"
                     % (label, "、".join(unknown), _reading_limit(materials)))
         return "「%s」不可判定：未识别专业/劳务报审表类型（缺：未识别专业/劳务报审表类型）" % label
     return "「%s」已随报审资料上传（%d/%d 项齐全）" % (label, total, total)
@@ -450,7 +443,7 @@ def _document_message(item: dict, status: str, materials: list) -> str:
     if status == STATUS_UNDECIDABLE:
         if item.get("id") in {"RC-A02", "RC-A03", "RC-A04"} and not _reading_limit(materials):
             return "「%s」暂时无法判断：已见相关名称，但未能定位足够明确的证照原件，请人工核对" % item["label"]
-        return ("「%s」暂时无法判断：报审资料未读完整（可能为扫描件）；%s"
+        return ("「%s」暂时无法确认，请人工核对对应材料；%s"
                 % (item["label"], _reading_limit(materials)))
     return "「%s」已随报审资料上传" % item["label"]
 
@@ -950,7 +943,7 @@ def run_completeness_check(task, materials: list, *, subject_types=None, items=N
                         mat_id, page = uncertain_clues[0]
                         quote = None
                         location_mode = "page"
-                        message += "；第%d页存在相关文字线索，但识别质量待核，请核对原件" % page
+                        message += "；第%d页有相关材料线索，请核对原件是否满足本项要求" % page
                 if item["id"] == "RC-A09" and status != STATUS_MISS:
                     contract_evidence = contract_roster_evidence(materials)
                     if contract_evidence:

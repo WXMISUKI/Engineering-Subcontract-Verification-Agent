@@ -29,7 +29,7 @@ from .personnel_evidence import (
     extract_management_roster, extract_person_relation_evidence,
     extract_roster_names, extract_social_names, social_evidence_materials,
 )
-from .parsing import describe_reading_gap, material_page_readable, material_reading_gap
+from .parsing import material_page_readable, material_reading_gap
 from .rules import load_config, load_extract_matchers, load_qualification_matchers
 
 # 结论「依据」字段＝条款坐标（纪律 2：结论回源码坐标，不引用内部需求稿）。
@@ -128,11 +128,9 @@ def _certificate_reading_limit(material) -> str:
     unread = material_reading_gap(material)
     if unread is None:
         return ""
-    pages = describe_reading_gap(material, unread)
-    if not any((p.get("text") or "").strip() for p in material.pages_json or []):
-        pages = "没有文字内容（疑似扫描件）；" + pages
-    return "「%s」%s，涉及证照内容需人工翻看原件，不能据已读部分认定全部有效或一致" % (
-        material.file_name, pages)
+    reason = ("部分内容尚未确认" if any((p.get("text") or "").strip() for p in material.pages_json or [])
+              else "没有文字内容")
+    return "「%s」%s，涉及证照请人工核对原件，不能据已读部分认定全部有效或一致" % (material.file_name, reason)
 
 # 只识别原记录摘录里明确标注的起止范围；日期合法性和到期判定仍复用 OC 公共函数。
 _VALIDITY_DATE_TEXT_RE = re.compile(
@@ -692,15 +690,11 @@ def run_person_consistency_check(task, materials: list, *, expected_company=None
     roster_gaps = [(m, material_reading_gap(m)) for m in materials if m.id in roster_ids]
     roster_gaps = [(m, pages) for m, pages in roster_gaps if pages is not None]
     if roster_gaps:
-        details = "；".join("「%s」%s" % (m.file_name, describe_reading_gap(m, pages, limit=10))
-                           for m, pages in roster_gaps)
-        gaps.append("含名单的材料%s，已提取人员不代表完整范围，需人工翻看原件并重核" % details)
+        gaps.append("名单所在材料部分内容尚未确认，已提取人员不代表完整范围，需人工核对原件")
     unread = [(m, material_reading_gap(m)) for m in candidates]
     unread = [(m, pages) for m, pages in unread if pages is not None]
     if unread:
-        details = "；".join("「%s」%s" % (m.file_name, describe_reading_gap(m, pages, limit=10))
-                           for m, pages in unread)
-        gaps.append("社保候选材料%s，缺名不能认定未参保，需人工翻看原件并重核" % details)
+        gaps.append("社保候选材料部分内容尚未确认，未确认姓名不能认定未参保，需人工核对原件")
     companies = subcontractor_names(materials)
     expected = norm_company(expected_company) if expected_company else (
         next(iter(companies)) if len(companies) == 1 else None)

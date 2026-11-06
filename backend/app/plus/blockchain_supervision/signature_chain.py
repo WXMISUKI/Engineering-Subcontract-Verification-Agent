@@ -201,6 +201,8 @@ def _seal_note(mat: BsMaterial) -> str:
                     if isinstance(b, dict) and b.get("page_idx")})
     if not pages:
         return ""
+    if len(pages) > 3:
+        return "；材料多页存在盖章线索，请人工核对相关签署页、签名与落款"
     return "；图像检测在%s检出盖章痕迹，请人工核对签名与落款" % "、".join("第%d页" % p for p in pages)
 
 
@@ -270,6 +272,9 @@ def _group_seal_detail(members: list) -> str:
         pages = sorted({int(b["page_idx"]) for b in (getattr(m, "seal_json", None) or [])
                         if isinstance(b, dict) and b.get("page_idx")})
         if pages:
+            if len(pages) > 3:
+                parts.append("%s（多页存在盖章线索）" % _row_source(m))
+                continue
             parts.append("%s（%s）" % (_row_source(m),
                                       "、".join("第%d页" % p for p in pages)))
     return "；图像检测在%s检出盖章痕迹，请人工核对签名与落款" % "、".join(parts) if parts else ""

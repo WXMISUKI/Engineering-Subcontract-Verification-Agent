@@ -109,3 +109,18 @@ def test_suspect_identity_page_is_presented_for_manual_review():
     assert all(value in finding.message for value in ('张三', '19', '身份证'))
     assert {ref['page'] for ref in finding.evidence_json} == {16, 19}
     assert '遮挡' not in finding.message and '模糊' not in finding.message
+
+
+def test_certificate_clue_excludes_unrelated_unread_pages():
+    item = next(item for item in load_report_checklist() if item['id'] == 'RC-A02')
+    material = SimpleNamespace(
+        id=1, role='packet', file_name='报审.pdf', parse_state='done',
+        degradations_json=[{'kind': 'parse_incomplete', 'ocr_suspect_pages': [2, 3]}],
+        pages_json=[{'page': 1, 'text': '专业分包报审表'},
+                    {'page': 2, 'text': '工程量表'},
+                    {'page': 3, 'text': '营业执照\n统一社会信用代码\n登记机关'}],
+    )
+    finding = run_completeness_check(SimpleNamespace(id=1), [material], items=[item])[0]
+    assert finding.status == 'undecidable' and finding.page == 3
+    assert '第3页' in finding.message and '第2' not in finding.message
+    assert '识别质量' not in finding.message
