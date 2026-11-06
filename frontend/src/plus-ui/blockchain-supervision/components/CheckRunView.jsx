@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { buildFlowState } from '../lib/flowModel'
 import { buildFiveSteps } from '../lib/fiveStepModel'
 import { bsEtaLabel, updateBsEta } from '../lib/bsEtaPlan'
+import { formatEventTime } from '../lib/eventTime'
 
 function stepStatus(step) {
   if (step.state === 'out_of_scope') return '本次不适用'
@@ -244,7 +245,7 @@ export default function CheckRunView({
 
         <div data-testid="check-run-timeline" className="mt-3 rounded-[8px] border border-[#DCE5EE] bg-white px-3.5 py-3">
           <div className="mb-2 flex items-center justify-between"><strong className="text-[14px] text-[#17283D]">事件时间线</strong><span className="text-[12px] text-[#8291A1]">{visibleTimeline.length ? `共 ${visibleTimeline.length} 条` : '等待事件'}</span></div>
-          {visibleTimeline.length ? <ol className="max-h-[170px] space-y-1.5 overflow-y-auto text-[12px] text-[#587089]">{visibleTimeline.map((event) => <li key={event.sequence || `${event.created_at}-${eventText(event)}`} className="flex gap-2"><span className="shrink-0 tabular-nums text-[#8291A1]">{event.created_at ? String(event.created_at).slice(11, 19) : '—'}</span><span><b className="text-[#385A77]">{eventText(event)}</b>{event.message ? ` · ${event.message}` : ''}</span></li>)}</ol> : <p className="text-[12px] text-[#8291A1]">后台事件到达后将在这里显示材料读取、核查和收口进度。</p>}
+          {visibleTimeline.length ? <ol className="max-h-[170px] space-y-1.5 overflow-y-auto text-[12px] text-[#587089]">{visibleTimeline.map((event) => <li key={event.sequence || `${event.created_at}-${eventText(event)}`} className="flex gap-2"><span className="shrink-0 tabular-nums text-[#8291A1]">{formatEventTime(event.created_at)}</span><span><b className="text-[#385A77]">{eventText(event)}</b>{event.message ? ` · ${event.message}` : ''}</span></li>)}</ol> : <p className="text-[12px] text-[#8291A1]">后台事件到达后将在这里显示材料读取、核查和收口进度。</p>}
         </div>
 
         <ol data-testid="check-run-steps" className="mt-4 flex list-none flex-col gap-2 p-0">

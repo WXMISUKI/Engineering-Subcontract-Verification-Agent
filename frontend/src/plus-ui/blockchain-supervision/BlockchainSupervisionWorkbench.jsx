@@ -45,6 +45,7 @@ import { buildStepOverview } from './lib/stepOverviewModel'
 import { buildTaskHeader } from './lib/taskHeaderModel'
 import { buildMissingPlan, supplementUploadCategoryOf, matchingSupplementGeneration, supplementItemsForSubject } from './lib/todoPlan'
 import { bsEtaLabel, updateBsEta } from './lib/bsEtaPlan'
+import { formatEventTime } from './lib/eventTime'
 import { buildMaterialsById, buildSubjectsById, groupFindings } from './lib/reviewWorkbenchModel'
 import { statusLabelOf } from './lib/statusDisplay'
 import { isUnreviewedFinding, reviewBucket } from './lib/reviewDecision'
@@ -113,7 +114,7 @@ function todayInChina() {
 }
 
 function timelineTime(iso) {
-  return iso ? iso.slice(5, 16).replace('T', ' ') : ''
+  return formatEventTime(iso, { date: true })
 }
 
 function currentActivity(events, state, autoPhase, index = 0, total = 0, stage = null) {
