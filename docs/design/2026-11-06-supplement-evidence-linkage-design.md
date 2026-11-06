@@ -37,7 +37,7 @@
 | D-3 | 删除与保留 | 本阶段保留 `ON DELETE CASCADE`，任务删除视为用户授权的合法清除；永久审计留存另立变更 |
 | D-4 | 并发幂等 | `page` 改为 `NOT NULL DEFAULT 0`（0 表示材料级/无页码），增加 `(material_id, parse_batch_id, field_path, page)` 唯一约束，并捕获 `IntegrityError` 视为重复 |
 
-D-4 尚未在代码中实施；当前 `page` 仍可空且没有唯一约束，属 S1 范围。
+D-4 已在 S1 实施（2026-11-06）：`page` 为非空列且默认 0，四列唯一索引 `uq_bs_material_fact_batch_field_page` 兜底并发；写入层逐行 savepoint，仅在确认冲突键已存在时把 `IntegrityError` 视为重复。验证记录见 `openspec/changes/bs-supplement-evidence-linkage/verification.md`。
 
 ## 方案选择
 
@@ -68,7 +68,7 @@ D-4 尚未在代码中实施；当前 `page` 仍可空且没有唯一约束，�
 
 ```text
 BsMaterialFact（已落地）
-  material_id, task_id, generation_id, page, field_path, quote
+  material_id, task_id, generation_id, page(0=无页码), field_path, quote
   raw_value, normalized_value, confidence, quality, source_kind
   parse_batch_id, schema_version, extractor_version
   content_sha256, material_version

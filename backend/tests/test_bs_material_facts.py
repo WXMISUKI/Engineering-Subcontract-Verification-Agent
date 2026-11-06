@@ -1,10 +1,12 @@
 from types import SimpleNamespace
 
-from sqlalchemy import create_engine
+import pytest
+from sqlalchemy import create_engine, delete, event
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import Base
-from app.plus.blockchain_supervision.models import BsMaterial, BsMaterialFact
+from app.plus.blockchain_supervision.models import BsMaterial, BsMaterialFact, BsTask
 
 
 def _material(text, *, file_name="交安B证.pdf", degradations=None, ocr_source=None):
@@ -171,3 +173,173 @@ def test_persist_material_facts_is_idempotent_by_content_and_extractor():
         assert first
         assert again == []
         assert db.query(BsMaterialFact).count() == len(first)
+
+
+def _fact_row(*, material_id=7, task_id=3, field_path="person.name", page=1,
+              batch="b1", raw="陶瑜", **kwargs):
+    return BsMaterialFact(
+        task_id=task_id,
+        material_id=material_id,
+        field_path=field_path,
+        raw_value=raw,
+        normalized_value=raw,
+        page=page,
+        quote=raw,
+        quality="readable",
+        source_kind="embedded_text_layer",
+        parse_batch_id=batch,
+        schema_version="material-facts.v1",
+        extractor_version="material-facts.v1",
+        **kwargs,
+    )
+
+
+def test_extract_material_facts_records_missing_page_as_zero():
+    from app.plus.blockchain_supervision.material_facts import extract_material_facts
+
+    material = SimpleNamespace(
+        id=7,
+        task_id=3,
+        pages_json=[{"text": "姓名：陶瑜"}, {"page": None, "text": "证书编号：沪交安B25G00206"}],
+        degradations_json=[],
+    )
+
+    facts = extract_material_facts(material)
+
+    assert facts
+    assert {fact["page"] for fact in facts} == {0}
+
+
+def test_material_fact_page_column_is_not_null_with_zero_default():
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+
+    column = BsMaterialFact.__table__.c.page
+    assert column.nullable is False
+    assert column.server_default is not None
+
+    with Session(engine) as db:
+        _seed_materials(db)
+        row = BsMaterialFact(
+            task_id=3,
+            material_id=7,
+            field_path="person.name",
+            raw_value="陶瑜",
+            quote="陶瑜",
+            quality="readable",
+            source_kind="embedded_text_layer",
+            parse_batch_id="b1",
+            schema_version="material-facts.v1",
+            extractor_version="material-facts.v1",
+        )
+        db.add(row)
+        db.commit()
+        assert row.page == 0
+
+
+def test_material_fact_unique_index_rejects_duplicate_batch_key():
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        _seed_materials(db)
+        db.add(_fact_row())
+        db.commit()
+
+        db.add(_fact_row())
+        with pytest.raises(IntegrityError):
+            db.commit()
+        db.rollback()
+        assert db.query(BsMaterialFact).count() == 1
+
+
+def test_material_fact_same_field_and_page_allowed_across_batches():
+    from app.plus.blockchain_supervision.material_facts import persist_material_facts
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        material = _seed_materials(db)
+        first = persist_material_facts(db, material, parse_batch_id="b1")
+        db.commit()
+        second = persist_material_facts(db, material, parse_batch_id="b2")
+        db.commit()
+
+        assert first and second
+        assert (db.query(BsMaterialFact)
+                .filter(BsMaterialFact.field_path == "person.name",
+                        BsMaterialFact.page == 1)
+                .count()) == 2
+
+
+def test_persist_material_facts_treats_unique_conflict_as_duplicate_without_poisoning_session():
+    from app.plus.blockchain_supervision.material_facts import (
+        default_parse_batch_id, material_content_sha256, persist_material_facts,
+    )
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        material = _seed_materials(db)
+        content_sha256 = material_content_sha256(material)
+        batch_id = default_parse_batch_id(content_sha256)
+        # 模拟并发写入方已抢先落库同名键，persist 的写入前查重会漏掉这条。
+        db.add(_fact_row(field_path="person.name", page=1, batch=batch_id))
+        db.commit()
+
+        inserted = persist_material_facts(db, material, parse_batch_id=batch_id)
+        db.commit()  # 唯一冲突按重复处理，Session 不应被标记为失败
+
+        assert all(row.field_path != "person.name" for row in inserted)
+        assert (db.query(BsMaterialFact)
+                .filter(BsMaterialFact.field_path == "person.name")
+                .count()) == 1
+        assert db.query(BsMaterial).count() == 2
+
+
+def test_deleting_task_cascades_material_facts():
+    from app.plus.blockchain_supervision.material_facts import persist_material_facts
+
+    engine = create_engine("sqlite://")
+
+    @event.listens_for(engine, "connect")
+    def _enable_foreign_keys(dbapi_conn, _record):
+        dbapi_conn.execute("PRAGMA foreign_keys=ON")
+
+    Base.metadata.create_all(engine)
+    with engine.begin() as conn:
+        # bs_task 的父链（账号/代理/会话）先满足外键，才能验证级联本身。
+        conn.exec_driver_sql("INSERT INTO agents (id, slug) VALUES (1, 'bs-test')")
+        conn.exec_driver_sql(
+            "INSERT INTO standalone_users (id, username, password_hash, is_active, token_version) "
+            "VALUES (1, 'cascade-test', 'x', 1, 0)"
+        )
+        conn.exec_driver_sql(
+            "INSERT INTO conversation_mappings (id, user_id, user_type, agent_id, is_deleted) "
+            "VALUES (1, 1, 'web', 1, 0)"
+        )
+
+    with Session(engine) as db:
+        db.add(BsTask(id=1, conversation_id=1, title="级联验证", created_by=1,
+                      created_by_type="web"))
+        db.commit()
+        material = BsMaterial(
+            id=7,
+            task_id=1,
+            file_name="交安B证.pdf",
+            role="packet",
+            path="uploads/cert.pdf",
+            pages_json=[{"page": 1, "text": "姓名：陶瑜\n证书编号：沪交安B25G00206"}],
+            parse_state="done",
+        )
+        db.add(material)
+        db.commit()
+
+        rows = persist_material_facts(db, material)
+        db.commit()
+        assert rows
+
+        db.execute(delete(BsTask).where(BsTask.id == 1))
+        db.commit()
+        # D-3：任务删除视为授权清除，事实随任务/材料级联消失。
+        assert db.query(BsMaterialFact).count() == 0
+        assert db.query(BsMaterial).count() == 0

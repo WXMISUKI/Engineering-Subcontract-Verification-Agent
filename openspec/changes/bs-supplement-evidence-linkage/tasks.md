@@ -3,7 +3,12 @@
   - [x] 基线回归：后端 43 passed、前端 4 passed、OpenSpec strict 8 passed
   - [x] 冻结四项契约：同事务写入、质量页候选事实、任务删除级联、`page=0` + 唯一约束
   - [x] 更新交接书、归属表、设计状态和基线记录
-  - [ ] S1 实施：页号非空 + 唯一约束 + 并发幂等 + 级联验证
+- [x] S1 事实层硬化（2026-11-06）
+  - [x] `page` 收紧为 `NOT NULL DEFAULT 0`，`0` 表示无页码/材料级证据
+  - [x] 增加四列唯一索引 `uq_bs_material_fact_batch_field_page` 作为并发幂等兜底
+  - [x] 写入层逐行 savepoint，仅在确认键已存在时把 `IntegrityError` 当重复，其他约束错误冒泡
+  - [x] 定向测试 12 passed：页号默认、唯一冲突、跨批次允许、Session 不被污染、任务删除级联
+  - [x] 隔离 MySQL 8.0 一次性 schema 验证（临时库建表/索引/冲突/默认值/级联，验证后删除）
 - [ ] 固化材料事实、字段原值/规范化值、质量和页级定位结构
   - [x] 事实表与抽取器：append-only 批次、内容指纹、材料版本、来源/质量白名单（`backend/tests/test_bs_material_facts.py`）
   - [ ] 接入解析完成链路并按批次读取事实（当前仅提供 `persist_material_facts`/`latest_material_facts`，未接业务路径）

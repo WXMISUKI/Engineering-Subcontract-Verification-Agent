@@ -11,6 +11,8 @@ import hashlib
 import re
 from datetime import date
 
+from sqlalchemy.exc import IntegrityError
+
 from .models import FACT_SCHEMA_VERSION, BsMaterialFact
 
 EXTRACTOR_VERSION = "material-facts.v1"
@@ -70,13 +72,17 @@ def _quality(material, page: dict) -> str:
 def _fact(material, page, field_path: str, raw_value: str, *, quote: str | None = None,
           quality: str, confidence=None, normalized_value: str | None = None,
           source_kind: str | None = None) -> dict:
+    page_no = page.get("page")
+    # 「无页码」统一记 0：唯一索引不允许 NULL（NULL 之间互不相等，会让幂等失效）。
+    if page_no is None:
+        page_no = 0
     return {
         "material_id": material.id,
         "task_id": getattr(material, "task_id", None),
         "field_path": field_path,
         "raw_value": raw_value,
         "normalized_value": _normalize(raw_value) if normalized_value is None else normalized_value,
-        "page": page.get("page"),
+        "page": page_no,
         "quote": quote or raw_value,
         "quality": quality,
         "confidence": confidence,
@@ -155,11 +161,23 @@ def default_parse_batch_id(content_sha256: str) -> str:
     return f"{content_sha256[:32]}-{EXTRACTOR_VERSION}"[:64]
 
 
+def _fact_exists(db, material_id, batch_id: str, field_path: str, page: int) -> bool:
+    """同一批次键是否已存在；常规去重与并发冲突判定共用同一查询。"""
+    return (db.query(BsMaterialFact.id)
+            .filter(BsMaterialFact.material_id == material_id,
+                    BsMaterialFact.parse_batch_id == batch_id,
+                    BsMaterialFact.field_path == field_path,
+                    BsMaterialFact.page == page)
+            .first()) is not None
+
+
 def persist_material_facts(db, material, *, generation_id: str | None = None,
                            parse_batch_id: str | None = None) -> list:
     """把抽取结果追加为不可变事实行，返回本次真正新增的行。
 
-    同批次重放不重复插入；已有批次的行不会被更新或删除。
+    同批次重放不重复插入；已有批次的行不会被更新或删除。写入前查重负责常规
+    路径，数据库唯一约束负责并发兜底：冲突按重复处理，但只在确认冲突键已存在
+    时吞掉 ``IntegrityError``，其他约束错误照常抛出。
     """
     content_sha256 = material_content_sha256(material)
     batch_id = parse_batch_id or default_parse_batch_id(content_sha256)
@@ -172,13 +190,8 @@ def persist_material_facts(db, material, *, generation_id: str | None = None,
             raise ValueError(f"未登记的 source_kind: {fact.get('source_kind')!r}")
         if fact.get("quality") not in QUALITY_STATES:
             raise ValueError(f"未登记的 quality: {fact.get('quality')!r}")
-        exists = (db.query(BsMaterialFact.id)
-                  .filter(BsMaterialFact.material_id == fact["material_id"],
-                          BsMaterialFact.parse_batch_id == batch_id,
-                          BsMaterialFact.field_path == fact["field_path"],
-                          BsMaterialFact.page == fact["page"])
-                  .first())
-        if exists is not None:
+        if _fact_exists(db, fact["material_id"], batch_id,
+                        fact["field_path"], fact["page"]):
             continue
         row = BsMaterialFact(
             task_id=fact["task_id"],
@@ -198,7 +211,18 @@ def persist_material_facts(db, material, *, generation_id: str | None = None,
             content_sha256=content_sha256,
             material_version=getattr(material, "revision_no", None),
         )
-        db.add(row)
+        try:
+            # 逐行 savepoint：并发写入撞唯一索引时只回滚本行插入，不把外层
+            # 事务（材料解析结果）标记为失败。
+            with db.begin_nested():
+                db.add(row)
+                db.flush()
+        except IntegrityError:
+            # 只把「确认键已存在」的冲突当重复；其他约束错误必须冒泡。
+            if not _fact_exists(db, fact["material_id"], batch_id,
+                                fact["field_path"], fact["page"]):
+                raise
+            continue
         inserted.append(row)
     return inserted
 

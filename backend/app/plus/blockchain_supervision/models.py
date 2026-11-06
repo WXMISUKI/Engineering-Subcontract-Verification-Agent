@@ -6,7 +6,7 @@
 - BsTaskEvent：事件流（SSE 取数源，取号走加锁读，见 service.add_event）
 """
 from sqlalchemy import Boolean, Column, Date, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text
-from sqlalchemy.sql import func
+from sqlalchemy.sql import func, text
 
 from ...database import Base
 
@@ -163,11 +163,12 @@ class BsMaterialFact(Base):
     """已落库的材料字段事实；append-only，不等同于业务结论。
 
     写入即不可变：同一材料重新解析产生新的 ``parse_batch_id``，旧批次事实保持
-    可读，用于回答“当时依据的是哪一版文本”。因此本表**不做更新和删除**。
-    同一批次重放按 ``(material_id, parse_batch_id, field_path, page)`` 幂等，
-    由 ``material_facts.persist_material_facts`` 在写入前查重保证；不在数据库层
-    加唯一索引，是因为 ``page`` 可为 NULL，而 MySQL/SQLite 的唯一索引允许多行
-    NULL，加了会得到“部分生效”的假约束。
+    可读，用于回答“当时依据的是哪一版文本”。因此本表不做业务更新；任务删除时
+    的级联清除（D-3）属于授权清除，不是对结论的改写。
+    同一批次重放按 ``(material_id, parse_batch_id, field_path, page)`` 幂等：
+    写入前查重覆盖常规路径，``uq_bs_material_fact_batch_field_page`` 唯一索引
+    兜住并发写入。``page`` 因此收紧为 NOT NULL DEFAULT 0——MySQL/SQLite 的唯一
+    索引允许多行 NULL，保留可空列会得到“部分生效”的假约束；「无页码」统一记 0。
     """
 
     __tablename__ = "bs_material_fact"
@@ -175,6 +176,13 @@ class BsMaterialFact(Base):
         Index("ix_bs_material_fact_material", "material_id"),
         Index("ix_bs_material_fact_task_field", "task_id", "field_path"),
         Index("ix_bs_material_fact_batch", "material_id", "parse_batch_id"),
+        # 并发幂等兜底：同一批次内同字段同页只能有一行。索引列宽按 utf8mb4 计
+        # 约 752 字节（64+120 字符），低于 MySQL 8 InnoDB 3072 字节上限。
+        Index(
+            "uq_bs_material_fact_batch_field_page",
+            "material_id", "parse_batch_id", "field_path", "page",
+            unique=True,
+        ),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -184,7 +192,8 @@ class BsMaterialFact(Base):
     field_path = Column(String(120), nullable=False)
     raw_value = Column(Text, nullable=False)
     normalized_value = Column(Text, nullable=True)
-    page = Column(Integer, nullable=True)
+    # 页号 1 起；0 表示该字段无法定位到具体页（无页码/整册级证据）。
+    page = Column(Integer, nullable=False, default=0, server_default=text("0"))
     quote = Column(Text, nullable=True)
     quality = Column(String(30), nullable=False, default="readable")
     confidence = Column(Float, nullable=True)
