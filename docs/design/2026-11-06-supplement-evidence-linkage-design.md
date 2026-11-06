@@ -1,7 +1,7 @@
 # 补件材料跨文档证据关联设计
 
 日期：2026-11-06
-状态：待用户确认后实施
+状态：阶段一事实层已实施；D0 基线已确认，S1 事实层硬化待开始
 范围：工程分包独立版补件、人员证件关联、问题证据投影和人工复核
 
 ## 意图
@@ -27,6 +27,17 @@
 - 本阶段不把任务附件写入公共知识库。
 - 本阶段不训练专用 OCR 或证件模型。
 - 本阶段不修改生产服务、原任务或原知识库。
+
+## 已确认的基线决策（2026-11-06）
+
+| 编号 | 决策 | 结论 |
+| --- | --- | --- |
+| D-1 | 事实写入事务点 | 在 `_finish_ingest` 内，材料解析成功字段赋值后、`material.parsed` 事件前，用同一 session 写入；抽取失败记录 `facts_failed` 降级并继续提交解析，事实可幂等重放 |
+| D-2 | 失败页和质量可疑页 | 解析成功的质量可疑页可产生候选事实并标记 `review_required` / `unreadable`；解析失败的材料不生成事实；任何情况都不自动重跑 OCR |
+| D-3 | 删除与保留 | 本阶段保留 `ON DELETE CASCADE`，任务删除视为用户授权的合法清除；永久审计留存另立变更 |
+| D-4 | 并发幂等 | `page` 改为 `NOT NULL DEFAULT 0`（0 表示材料级/无页码），增加 `(material_id, parse_batch_id, field_path, page)` 唯一约束，并捕获 `IntegrityError` 视为重复 |
+
+D-4 尚未在代码中实施；当前 `page` 仍可空且没有唯一约束，属 S1 范围。
 
 ## 方案选择
 
@@ -56,9 +67,11 @@
 第一阶段优先复用现有 `BsMaterial`、`BsFinding.evidence_json` 和审查版本，不立即引入大范围迁移；新增结构应保持向后兼容：
 
 ```text
-MaterialFact
-  material_id, page, field_path, raw_value, normalized_value
-  confidence, quality, quote, bbox/span, extractor_version
+BsMaterialFact（已落地）
+  material_id, task_id, generation_id, page, field_path, quote
+  raw_value, normalized_value, confidence, quality, source_kind
+  parse_batch_id, schema_version, extractor_version
+  content_sha256, material_version
 
 EvidenceRelation
   subject_id, person_key, role, relation_type

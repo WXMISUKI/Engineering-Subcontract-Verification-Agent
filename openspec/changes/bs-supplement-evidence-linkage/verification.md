@@ -31,3 +31,25 @@
 - 未部署、未重启服务、未修改生产数据或历史任务结论。
 
 结论：阶段一事实层可提交；业务接入须在单独确认事务点、失败页处理、级联删除策略和并发幂等方案后再实施。
+
+## D0 基线确认（2026-11-06）
+
+实际执行：
+
+- 后端基线回归（9 个测试文件）：43 passed。
+- 前端定向回归（`PreviousSupplementReview.test.jsx`、`CheckRunTime.test.jsx`）：2 files / 4 tests passed。
+- `openspec validate --all --strict`：8 passed / 0 failed。
+- `python -m py_compile`（事实层相关文件）：通过。
+- `git diff --check`：通过。
+
+已冻结：
+
+- 代码基线 `main` / `7b04fde` / ahead 6（D0 提交后） / 未推送。
+- 四项契约：`_finish_ingest` 同事务写入；质量可疑页可产生候选事实；任务删除级联事实；`page NOT NULL DEFAULT 0` + 四列唯一约束。
+
+未覆盖：
+
+- S1 代码硬化尚未开始，当前 `page` 仍可空且无唯一约束。
+- 未做隔离 MySQL 建表/索引验证。
+- 未接入解析链路、关系解析、A2-05 投影、复核 UI 或报告门槛。
+- 未做真实材料正负向验收。

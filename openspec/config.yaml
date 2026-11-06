@@ -1,5 +1,11 @@
 schema: spec-driven
 
+context: |
+  项目：工程分包独立版审查智能体（Python/FastAPI + SQLAlchemy 后端，React/Vite 前端）。
+  领域：工程分包材料核查、补件证据链、人员证件关系、人工复核与报告门槛。
+  约定：中文沟通；OpenSpec 变更驱动；Conventional Commits；保留历史材料、审查快照和人工决定；材料事实层 append-only。
+  边界：测试、真实材料与业务验收分层；未经确认不推送、不部署、不修改生产数据或历史任务结论。
+
 # Project context (optional)
 # This is shown to AI when creating artifacts.
 # Add your tech stack, conventions, style guides, domain knowledge, etc.

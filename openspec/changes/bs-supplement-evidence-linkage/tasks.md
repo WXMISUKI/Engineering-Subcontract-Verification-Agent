@@ -1,3 +1,9 @@
+- [x] D0 基线确认（2026-11-06）
+  - [x] 代码基线：`main` / `7b04fde` / ahead 6（D0 提交后） / 工作区干净
+  - [x] 基线回归：后端 43 passed、前端 4 passed、OpenSpec strict 8 passed
+  - [x] 冻结四项契约：同事务写入、质量页候选事实、任务删除级联、`page=0` + 唯一约束
+  - [x] 更新交接书、归属表、设计状态和基线记录
+  - [ ] S1 实施：页号非空 + 唯一约束 + 并发幂等 + 级联验证
 - [ ] 固化材料事实、字段原值/规范化值、质量和页级定位结构
   - [x] 事实表与抽取器：append-only 批次、内容指纹、材料版本、来源/质量白名单（`backend/tests/test_bs_material_facts.py`）
   - [ ] 接入解析完成链路并按批次读取事实（当前仅提供 `persist_material_facts`/`latest_material_facts`，未接业务路径）
