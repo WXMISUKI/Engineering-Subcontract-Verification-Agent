@@ -13,7 +13,7 @@
 import re
 from html import unescape
 
-from . import pinning
+from . import identity_observation, pinning
 from .attachment_source import is_attachment_source
 from .material_versions import subject_assessment_issue
 from .personnel_evidence import (contract_roster_evidence, extract_management_roster,
@@ -482,6 +482,41 @@ def _personnel_page_clue(item: dict, materials: list):
     return candidates[0] if len(candidates) == 1 else None
 
 
+def _enterprise_identity_clue(task, materials: list, anchor):
+    """任职页与同材料两处号码存在明确线索时，仅提示人工核实。"""
+    if not anchor:
+        return None
+    material_id, quote, page_no = anchor
+    material = next((m for m in materials if m.id == material_id), None)
+    page = next((p for p in material.pages_json or [] if p.get("page") == page_no), None) if material else None
+    text = (page or {}).get("text") or ""
+    names = set(re.findall(r"关于([\u4e00-\u9fa5]{2,4})同志任职", text))
+    if len(names) != 1:
+        return None
+    name = next(iter(names))
+    if not re.search(re.escape(name) + r"同志任[^。\n]{1,100}总经理", text):
+        return None
+    candidates = [finding for finding in identity_observation.run_identity_observations(task, [material])
+                  if finding.message.startswith("同名人员%s在" % name)]
+    role_ref = {"material_id": material_id, "page": page_no, "quote": quote,
+                "location_mode": "page", "evidence_kind": "personnel_role_clue"}
+    if len(candidates) == 1:
+        return name, [role_ref, *candidates[0].evidence_json], "difference"
+    if candidates:
+        return None
+    suspect = []
+    for candidate_page in material.pages_json or []:
+        no, content = candidate_page.get("page"), candidate_page.get("text") or ""
+        names_on_page = identity_observation._NAME.findall(content)
+        if (type(no) is int and no > 0 and not material_page_readable(material, no)
+                and "居民身份证" in content and "身份证号码" in content and names_on_page == [name]):
+            suspect.append({"material_id": material_id, "page": no, "quote": None,
+                            "location_mode": "page", "evidence_kind": "personnel_identity_clue"})
+    if len(suspect) == 1:
+        return name, [role_ref, suspect[0]], "unread"
+    return None
+
+
 def _personnel_degree_name_clue(item: dict, materials: list, anchor) -> dict | None:
     """定位岗位资料附近唯一毕业证页的姓名识别缺口，不推断其持有人。"""
     role = {"RC-P11": "项目经理", "RC-P12": "项目总工", "RC-P13": "安全员",
@@ -532,7 +567,7 @@ def _personnel_degree_name_clue(item: dict, materials: list, anchor) -> dict | N
             "location_mode": "page", "evidence_kind": "personnel_degree_clue"}
 
 
-def _personnel_certificate_clues(item: dict, materials: list) -> list[str] | None:
+def _personnel_certificate_clues(item: dict, materials: list) -> dict | None:
     """仅返回同一唯一岗位人员的证件文字线索，不把线索提升为证件有效性证明。"""
     role, safety = {"RC-P12": ("项目总工", "B"), "RC-L11": ("安全员", "C")}.get(item.get("id"), (None, None))
     if not role:
@@ -540,7 +575,8 @@ def _personnel_certificate_clues(item: dict, materials: list) -> list[str] | Non
     by_id = {material.id: material for material in materials}
     roster = [fact for fact in extract_management_roster(materials)
               if fact.get('material_id') in by_id and material_page_readable(by_id[fact['material_id']], fact.get('page'))]
-    role_rows = [fact for fact in roster if fact.get('post') == role]
+    role_rows = [fact for fact in roster if fact.get('post') == role
+                 and type(fact.get('page')) is int and fact['page'] > 0]
     names = {fact['name'] for fact in role_rows}
     if len(names) != 1 or len(role_rows) != 1:
         return None
@@ -582,7 +618,8 @@ def _personnel_certificate_clues(item: dict, materials: list) -> list[str] | Non
             if ('考核' in text and '证书' in text
                     and re.search(r"交安\s*" + safety + r"\s*\d", text, flags=re.I)):
                 seen.add('交安' + safety + '证')
-    return [sub['label'] for sub in item.get('required_all') or [] if sub['label'] not in seen]
+    missing = [sub['label'] for sub in item.get('required_all') or [] if sub['label'] not in seen]
+    return {"name": name, "role": role, "missing": missing, "roster": role_rows[0]} if missing else None
 
 
 def _confirmed_personnel_certificate_refs(item: dict, materials: list) -> list[dict] | None:
@@ -856,14 +893,29 @@ def run_completeness_check(task, materials: list, *, subject_types=None, items=N
                     message = "「%s」尚不能确认人员、岗位与各证件对应，请人工核对" % item["label"]
                     if missing:
                         message += "；未找到明确线索：%s" % "、".join(missing)
-                    limit = _reading_limit(eval_packets)
-                    if limit:
-                        message += "；" + limit
                 if status == STATUS_UNDECIDABLE:
+                    if item["id"] in {"RC-A07", "RC-P11", "RC-P12", "RC-P13", "RC-L11"}:
+                        # 整册读取缺口不等于当前人员证件所在页，不能将无关页码归到此项。
+                        message = "「%s」尚不能确认人员、岗位与各证件对应，请人工核对" % item["label"]
+                        if missing:
+                            message += "；未找到明确线索：%s" % "、".join(missing)
+                        if unknown:
+                            message += "；尚不能确认的材料：%s" % "、".join(unknown)
                     clue = _personnel_page_clue(item, eval_packets)
                     if clue:
                         mat_id, quote, page = clue
                         message += "；已定位岗位资料线索，证件与人员对应仍需核实"
+                    if item["id"] == "RC-A07":
+                        identity_clue = _enterprise_identity_clue(task, eval_packets, clue)
+                        if identity_clue:
+                            person, evidence_refs, clue_kind = identity_clue
+                            if clue_kind == "difference":
+                                first, second = evidence_refs[1:]
+                                message = ("企业负责人资料中的%s：第%s页和第%s页身份证号码存在差异线索；"
+                                           "请核对人员、证件和号码原件" % (person, first["page"], second["page"]))
+                            else:
+                                message = ("企业负责人资料中的%s：第%s页身份证号码尚不能确认；请核对原件"
+                                           % (person, evidence_refs[1]["page"]))
                     degree_clue = _personnel_degree_name_clue(item, eval_packets, clue)
                     if degree_clue:
                         message += "；第%d页有可能相关的毕业证书，姓名未能确认，请核对原件" % degree_clue["page"]
@@ -872,8 +924,15 @@ def run_completeness_check(task, materials: list, *, subject_types=None, items=N
                                          degree_clue]
                     unconfirmed = _personnel_certificate_clues(item, eval_packets)
                     if unconfirmed:
-                        # 读取缺口可能包含大量页码，落库限长前先保留具体待核证件。
-                        message = "该岗位人员尚未确认的证件：" + "、".join(unconfirmed) + "；" + message
+                        roster = unconfirmed["roster"]
+                        message = ("名单第%d页中的%s%s，尚不能确认以下证件与其对应：%s；请核对原件"
+                                   % (roster["page"], unconfirmed["role"], unconfirmed["name"],
+                                      "、".join(unconfirmed["missing"])))
+                        roster_ref = {"material_id": roster["material_id"], "page": roster["page"],
+                                      "quote": roster["quote"], "location_mode": "page",
+                                      "evidence_kind": "personnel_roster"}
+                        evidence_refs = [roster_ref, *(evidence_refs or [])]
+                        mat_id, quote, page = roster["material_id"], roster["quote"], roster["page"]
                     confirmed = _confirmed_personnel_certificate_refs(item, eval_packets)
                     if confirmed:
                         evidence_refs = confirmed

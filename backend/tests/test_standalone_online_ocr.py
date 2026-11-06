@@ -84,7 +84,7 @@ def test_rotated_and_targeted_retries_use_online_service(monkeypatch, tmp_path):
     assert all(call.get('use_cloud', True) is True and call['use_cache'] is False for call in calls)
 
 
-def test_low_quality_page_retries_online_without_cache(monkeypatch, tmp_path):
+def test_low_quality_page_remains_for_human_review_without_retry(monkeypatch, tmp_path):
     path = tmp_path / 'quality.pdf'
     doc = fitz.open()
     doc.new_page().draw_rect(fitz.Rect(30, 30, 90, 90), fill=(0, 0, 0))
@@ -96,10 +96,35 @@ def test_low_quality_page_retries_online_without_cache(monkeypatch, tmp_path):
         text = '短' if len(calls) == 1 else '工程分包材料内容用于审查主体名称和施工合同信息' * 3
         return [{'page': 1, 'text': text, 'ocr_meta': {'source': 'cloud'}}], {'engine': 'cloud:synthetic'}
     monkeypatch.setattr(parsing, 'ocr_text_pages', fake_ocr)
-    pages, _ = parsing.parse_material_pages(str(path))
-    assert len(calls) == 2
-    assert calls[1]['use_cloud'] is True and calls[1]['use_cache'] is False
-    assert pages[0]['text'].startswith('工程分包材料')
+    pages, degradations = parsing.parse_material_pages(str(path))
+    assert len(calls) == 1
+    assert pages[0]['text'] == '短'
+    incomplete = next(row for row in degradations if row['kind'] == 'parse_incomplete')
+    assert incomplete['ocr_suspect_pages'] == [1]
+    assert incomplete['ocr_retry_pages'] == []
+    assert incomplete['rotation_retry_pages'] == []
+
+
+def test_missing_identity_fields_go_to_review_without_second_ocr(monkeypatch, tmp_path):
+    path = tmp_path / 'identity.pdf'
+    doc = fitz.open()
+    for _ in range(2):
+        doc.new_page().draw_rect(fitz.Rect(30, 30, 90, 90), fill=(0, 0, 0))
+    doc.save(path)
+    doc.close()
+    calls = []
+    def fake_ocr(path, **kwargs):
+        calls.append(kwargs)
+        return [
+            {'page': 1, 'text': '安全生产考核合格证书\n姓名：张三\n身份证号码：110101199001010011'},
+            {'page': 2, 'text': '居民身份证\n签发机关：上海市公安局\n有效期限：2020.01.01-2040.01.01'},
+        ], {'engine': 'cloud:synthetic'}
+    monkeypatch.setattr(parsing, 'ocr_text_pages', fake_ocr)
+    pages, degradations = parsing.parse_material_pages(str(path))
+    assert len(calls) == 1
+    incomplete = next(row for row in degradations if row['kind'] == 'parse_incomplete')
+    assert 2 in incomplete['ocr_suspect_pages']
+    assert pages[1]['text'].startswith('居民身份证')
 
 
 def test_real_online_adapter_handles_normal_and_rotated_pages(monkeypatch, tmp_path):

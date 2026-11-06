@@ -6,6 +6,7 @@ from . import pinning
 from .attachment_source import is_attachment_source
 from .models import BsFinding, STATUS_HIT, STATUS_UNDECIDABLE
 from .parsing import material_reading_gap, reading_coverage
+from .personnel_evidence import extract_management_roster
 
 ITEM_ID = "A2-05"
 SOURCE = "对照报审材料中的人员名单与交安 B 证编号原文"
@@ -93,11 +94,85 @@ def _roster_candidates(material):
     return rows
 
 
+def _roster_text_numbers(page, fact):
+    numbers = _numbers(fact.get("quote") or "")
+    if numbers:
+        return numbers
+    # 识别表格可能把持证信息拆成空姓名续行，且列发生偏移；只能作为人工线索。
+    lines = (page.get("text") or "").splitlines()
+    starts = []
+    for index, line in enumerate(lines):
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) >= 3 and cells[1:3] == [fact["name"], fact["post"]]:
+            starts.append(index)
+    if len(starts) != 1:
+        return []
+    continuation = []
+    for line in lines[starts[0] + 1:]:
+        if "|" not in line:
+            break
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) < 3 or cells[0] or cells[1]:
+            break
+        continuation.append(line)
+    text = "\n".join(continuation)
+    return _numbers(text) if re.search(r"交安\s*B\s*证", text, re.I) else []
+
+
+def _text_roster_comparison(task, materials):
+    """布局不可用时保留可定位的候选差异，不以同名代替身份核实。"""
+    by_id = {material.id: material for material in materials}
+    rows = []
+    for fact in extract_management_roster(materials):
+        if fact.get("post") != "项目经理":
+            continue
+        material = by_id.get(fact.get("material_id"))
+        page = next((p for p in material.pages_json or [] if p.get("page") == fact.get("page")), None) if material else None
+        numbers = _roster_text_numbers(page, fact) if page else []
+        if page and _page_readable(material, page) and len(numbers) == 1:
+            rows.append({**fact, "number": numbers[0][0], "raw": numbers[0][1]})
+    if len(rows) != 1:
+        return None
+    row = rows[0]
+    certs = []
+    for material in materials:
+        for page in material.pages_json or []:
+            if not _page_readable(material, page) or (material.id == row["material_id"] and page.get("page") == row["page"]):
+                continue
+            text = page.get("text") or ""
+            holders = re.findall(r"姓\s*名\s*[:：]\s*([\u4e00-\u9fa5]{2,4})", text)
+            numbers = _numbers(text)
+            if "考核" in text and "证书" in text and holders == [row["name"]] and len(numbers) == 1:
+                certs.append({"material_id": material.id, "page": page.get("page"),
+                              "number": numbers[0][0], "raw": numbers[0][1]})
+    if len(certs) != 1 or row["number"] == certs[0]["number"]:
+        return None
+    cert = certs[0]
+    refs = []
+    for side in (row, cert):
+        ref = {"material_id": side["material_id"], "page": side["page"], "quote": side["raw"]}
+        probe = BsFinding(task_id=task.id, material_id=ref["material_id"], page=ref["page"],
+                          quote=ref["quote"], evidence_json=[ref])
+        pinning.pin_findings([probe], materials)
+        if probe.location_mode != "precise" or probe.page != ref["page"]:
+            return None
+        pinned = probe.evidence_json[0]
+        refs.append({**pinned, "location_mode": pinning.reference_location_mode(pinned)})
+    return BsFinding(task_id=task.id, item_id=ITEM_ID, kind="cert_validity", status=STATUS_UNDECIDABLE,
+                     source=SOURCE, material_id=row["material_id"], page=row["page"], quote=row["raw"],
+                     evidence_json=refs,
+                     message="项目经理%s的人员名单第%s页有编号线索%s，同名证书第%s页编号为%s；请核实名单对应关系及正确编号"
+                     % (row["name"], row["page"], row["raw"], cert["page"], cert["raw"]))
+
+
 def run_b_certificate_number_check(task, materials):
     """独立证据不足时不推断一致或冲突；仅比较同页能唯一识别持有人的证书。"""
     materials = [m for m in materials if is_attachment_source(m) and m.parse_state == "done"]
     roster = [row for material in materials for row in _roster_candidates(material)]
     if not roster:
+        candidate = _text_roster_comparison(task, materials)
+        if candidate:
+            return [candidate]
         if any("项目经理" in (page.get("text") or "") and _numbers(page.get("text") or "")
                for material in materials for page in material.pages_json or []):
             return [BsFinding(task_id=task.id, item_id=ITEM_ID, kind="cert_validity", status=STATUS_UNDECIDABLE, source=SOURCE,
@@ -138,7 +213,8 @@ def run_b_certificate_number_check(task, materials):
         if probe.location_mode != "precise" or probe.page != ref["page"]:
             return [BsFinding(task_id=task.id, item_id=ITEM_ID, kind="cert_validity", status=STATUS_UNDECIDABLE,
                               source=SOURCE, message="名单或证书编号原文无法在对应页核实，请人工核对")]
-        refs.append(probe.evidence_json[0])
+        pinned = probe.evidence_json[0]
+        refs.append({**pinned, "location_mode": pinning.reference_location_mode(pinned)})
     return [BsFinding(task_id=task.id, item_id=ITEM_ID, kind="cert_validity", status=STATUS_HIT, source=SOURCE,
                       message="项目经理交安 B 证编号不一致：名单 %s，证书 %s，请核对原件" % (row["number"], cert["number"]),
                       material_id=row["material_id"], page=row["page"], quote=row["quote"],

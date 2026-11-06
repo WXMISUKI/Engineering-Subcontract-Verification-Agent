@@ -835,10 +835,10 @@ def _ocr_parallel_certificate_columns(page: dict) -> bool:
     return False
 
 
-def _id_back_retry_candidates(pages: dict, readable: set, requested: list) -> dict:
-    """只选择需要补读的扫描页，不据相邻关系认定证件持有人。"""
+def _id_back_manual_review_candidates(pages: dict, readable: set, requested: list) -> set:
+    """选择需人工核对的身份证页，不据相邻关系认定证件持有人。"""
     ids = re.compile(r"(?<![0-9A-Za-z])\d{17}[0-9Xx](?![0-9A-Za-z])")
-    result = {}
+    result = set()
     for no in requested:
         if no not in readable or no - 1 not in readable or no not in pages or no - 1 not in pages:
             continue
@@ -850,20 +850,8 @@ def _id_back_retry_candidates(pages: dict, readable: set, requested: list) -> di
                 and re.search(r"证书|合格证", previous)
                 and not re.search(r"附件目录|报审表|填写示例|空白模板", previous[:200])
                 and len(holders) == 1 and len(previous_ids) == 1):
-            result[no] = previous_ids[0].upper()
+            result.add(no)
     return result
-
-
-def _id_back_retry_preserves(original: str, retry: str, expected_id: str) -> bool:
-    numbers = re.findall(r"(?<![0-9A-Za-z])\d{17}[0-9Xx](?![0-9A-Za-z])", retry)
-    dates = lambda text: {tuple(map(int, match)) for match in re.findall(
-        r"(\d{4})[-./年](\d{1,2})[-./月](\d{1,2})日?", text)}
-    retry_compact = re.sub(r"\s+", "", retry)
-    issuer_lines = [re.sub(r"\s+", "", line) for line in original.splitlines() if "签发机关" in line]
-    return (len(numbers) == 1 and numbers[0].upper() == expected_id
-            and all(marker not in original or marker in retry for marker in ("身份证", "签发机关", "有效期限"))
-            and all(line in retry_compact for line in issuer_lines)
-            and dates(original).issubset(dates(retry)))
 
 
 def parse_material_pages(abs_path: str, *, progress=None) -> tuple:
@@ -937,74 +925,22 @@ def parse_material_pages(abs_path: str, *, progress=None) -> tuple:
                     page["ocr_meta"]["quality"] = "ocr_suspect"
                 suspect.add(no)
 
-    # P8-01：重复空表、旋转表格和签署页容易命中缓存中的低质量结果。只对本轮
-    # 明确标为 suspect 的页绕过缓存重试一次；重试仍可疑则保留人工核验，不把
-    # 「模型返回了文字」误当成「正文已可靠读取」。
-    field_candidates = _id_back_retry_candidates(native, readable - suspect, requested)
-    retry_pages = sorted(suspect | set(field_candidates))
+    # 质量存疑或字段不足直接转人工，保留首次结果与页码，不重复调用线上识别。
+    # 历史响应中的统计字段继续返回空集合，避免破坏既有消费者。
+    field_candidates = _id_back_manual_review_candidates(native, readable - suspect, requested)
+    for no in field_candidates:
+        suspect.add(no)
+        readable.discard(no)
+        meta = native[no].get("ocr_meta")
+        if isinstance(meta, dict):
+            meta["quality"] = "ocr_suspect"
+    retry_pages = []
     retry_recovered = []
     field_retry_recovered = []
     retry_info = None
     sideways_retry_pages = []
     rotation_recovered = []
     rotated_info = None
-    if retry_pages:
-        retry_kwargs = {"page_nos": retry_pages, "use_cache": False, "use_cloud": True}
-        if progress is not None:
-            progress(0, total, "retry", len(retry_pages))
-            def retry_progress(page, page_total, source, work_total):
-                progress(page, page_total, "retry_failed" if source == "failed" else "retry", work_total)
-            retry_kwargs["progress"] = retry_progress
-        retried, retry_info = ocr_text_pages(abs_path, **retry_kwargs)
-        for page in retried:
-            no = page["page"]
-            if no not in retry_pages:
-                continue
-            body_count = _body_char_count(page["text"])
-            sparse = _ocr_sparse_signature(page["text"])
-            repeated = (_ocr_quality_suspect(page["text"]) or _ocr_sideways_layout(page)
-                        or _ocr_single_short_fragment(page) or _ocr_parallel_certificate_columns(page))
-            if no in field_candidates and not _id_back_retry_preserves(
-                    native[no].get("text") or "", page["text"], field_candidates[no]):
-                continue
-            if body_count >= _MIN_TEXT_CHARS and not sparse and not repeated:
-                if isinstance(page.get("ocr_meta"), dict):
-                    page["ocr_meta"]["quality"] = "ocr_ok"
-                    page["ocr_meta"]["retry_count"] = 1
-                native[no] = page
-                readable.add(no)
-                suspect.discard(no)
-                sparse_signatures.discard(no)
-                retry_recovered.append(no)
-                if no in field_candidates:
-                    field_retry_recovered.append(no)
-            elif sparse:
-                sparse_signatures.add(no)
-            elif _ocr_sideways_layout(page):
-                sideways_retry_pages.append(no)
-    if sideways_retry_pages:
-        if progress is not None:
-            progress(0, total, "rotation", len(set(sideways_retry_pages)))
-        rotated, rotated_info = ocr_rotated_text_pages(abs_path, sorted(set(sideways_retry_pages)))
-        for page in rotated:
-            no, text = page.get("page"), page.get("text") or ""
-            original = native.get(no)
-            if no in sideways_retry_pages and isinstance(original, dict):
-                native[no] = _merge_rotation_roster_clues(original, page)
-            # 方向无法单凭框的长宽确定，不能因任意旋转后字符变多就认定成功。
-            # 仅接受能独立读到证书标题、姓名和完整交安编号的明确证件页。
-            if (no not in sideways_retry_pages or _ocr_quality_suspect(text)
-                    or _body_char_count(text) < _MIN_TEXT_CHARS
-                    or text.count("安全生产考核合格证书") != 1
-                    or len(re.findall(r"姓\s*名\s*[:：]?\s*[\u4e00-\u9fa5]{2,4}", text)) != 1
-                    or len(re.findall(r"交安\s*[ABC]\s*\d{2}G\d{5}(?!\d)", text, re.I)) != 1
-                    or len(re.findall(r"\d{4}[-./年]\d{1,2}[-./月]\d{1,2}日?", text)) < 2):
-                continue
-            native[no] = page
-            readable.add(no)
-            suspect.discard(no)
-            retry_recovered.append(no)
-            rotation_recovered.append(no)
     unread = sorted(set(range(1, total + 1)) - readable)
     degradations = [d for d in degradations if d.get("kind") != "no_text_layer"]
     recovered_count = len(readable.intersection(requested))
@@ -1080,7 +1016,8 @@ def parse_material_pages(abs_path: str, *, progress=None) -> tuple:
             "layout_pages": (info or {}).get("layout_pages", 0),
             "page_states": page_states,
             "page_state_history": page_state_history,
-            "ocr_field_retry_pages": sorted(field_candidates),
+            "ocr_field_retry_pages": [],
+            "ocr_field_manual_review_pages": sorted(field_candidates),
             "ocr_field_retry_recovered_pages": sorted(field_retry_recovered),
             "rotation_retry_pages": sorted(set(sideways_retry_pages)),
             "rotation_retry_recovered_pages": sorted(rotation_recovered),
@@ -1124,6 +1061,7 @@ def parse_material_pages(abs_path: str, *, progress=None) -> tuple:
             "read_pages": sorted(readable), "unread_pages": unread,
             "ocr_requested_pages": requested, "ocr_failed_pages": failed,
             "ocr_skipped_pages": skipped, "ocr_suspect_pages": sorted(suspect),
+            "ocr_field_manual_review_pages": sorted(field_candidates),
             "ocr_sparse_signature_pages": sorted(sparse_signatures),
             "ocr_blank_pages": blank,
             "ocr_retry_pages": retry_pages,

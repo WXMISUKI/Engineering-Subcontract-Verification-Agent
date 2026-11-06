@@ -21,6 +21,15 @@ from .coordinates import normalize_ocr_bbox_to_pdf
 from ..structural_check.page_pinning import normalize_pin_text
 
 
+def reference_location_mode(ref: dict) -> str:
+    """文本匹配不代表有 PDF 坐标；没有可信坐标时明确保留页级入口。"""
+    anchor = ref.get("anchor") or {}
+    if (anchor.get("status") == "precise" and anchor.get("coordinate_space") == "pdf_page"
+            and anchor.get("coordinate_frame") == "rendered_page" and anchor.get("bbox")):
+        return "precise"
+    return "page"
+
+
 def _page_pool(material: BsMaterial) -> list:
     """材料 → [(page, normalized_text, raw_page)]；无文本层返回空表。"""
     out = []

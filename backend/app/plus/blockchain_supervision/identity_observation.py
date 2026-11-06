@@ -8,8 +8,8 @@ from .parsing import material_page_readable
 
 ITEM_ID = "A2-06"
 SOURCE = "对照同名人员身份证资料中的姓名和号码原文"
-_NAME = re.compile(r"姓\s*名\s*[:：]?\s*([\u4e00-\u9fa5]{2,4})(?=\s|[，,;；]|$)")
-_NUMBER = re.compile(r"(?:公民身份号码|身份证号码|身份证号)\s*[:：]?\s*([0-9]{17}[0-9Xx])(?![0-9A-Za-z])")
+_NAME = re.compile(r"姓\s*名(?:[ \t]*\|[ \t]*|\s*[:：]?\s*)([\u4e00-\u9fa5]{2,4})(?=\s|[|，,;；]|$)")
+_NUMBER = re.compile(r"(?:公民身份号码|身份证号码|身份证号)(?:[ \t]*\|[ \t]*|\s*[:：]?\s*)([0-9]{17}[0-9Xx])(?![0-9A-Za-z])")
 
 
 def run_identity_observations(task, materials):
@@ -45,11 +45,12 @@ def run_identity_observations(task, materials):
             pinning.pin_findings([probe], materials)
             if probe.location_mode != "precise" or probe.page != ref["page"]:
                 break
-            pinned.append(probe.evidence_json[0])
+            ref = probe.evidence_json[0]
+            pinned.append({**ref, "location_mode": pinning.reference_location_mode(ref)})
         if len(pinned) != 2:
             continue
         findings.append(BsFinding(
             task_id=task.id, item_id=ITEM_ID, kind="cert_validity", status=STATUS_UNDECIDABLE, source=SOURCE,
-            message="同名人员%s的两处身份证号码识别结果不同，可能受遮挡或识别误差影响，无法确认；请对照原文" % name,
+            message="同名人员%s在第%s页与第%s页资料中的身份证号码存在差异线索；请对照原件核实人员及号码" % (name, pinned[0]["page"], pinned[1]["page"]),
             material_id=pinned[0]["material_id"], page=pinned[0]["page"], quote=pinned[0]["quote"], evidence_json=pinned))
     return findings
