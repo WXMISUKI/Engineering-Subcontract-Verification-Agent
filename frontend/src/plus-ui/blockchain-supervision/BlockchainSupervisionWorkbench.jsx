@@ -9,6 +9,7 @@ import ReferenceSnapshot from './components/ReferenceSnapshot'
 import MaterialPreviewModal from './components/MaterialPreviewModal'
 import AiAdvisorySummary from './components/AiAdvisorySummary'
 import ReviewVersionDiff from './components/ReviewVersionDiff'
+import PreviousSupplementReview from './components/PreviousSupplementReview'
 import ReviewPrototypeLeftRail from './components/ReviewPrototypeLeftRail'
 import ReviewStepDetailPanel from './components/ReviewStepDetailPanel'
 import StepOverviewPanel from './components/StepOverviewPanel'
@@ -978,6 +979,7 @@ export default function BlockchainSupervisionWorkbench({ conversationId, onExitP
         onStageSelect={readOnly ? onStageSelect : undefined}
       />
       <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+          <PreviousSupplementReview key={`${taskId}-${detail?.options_snapshot?.supplement_edit?.previous_version_no}`} taskId={taskId} versionNo={detail?.options_snapshot?.supplement_edit?.previous_version_no} />
           {taskId && !detail ? (
             <p role={detailError ? 'alert' : 'status'} className="p-4 text-sm text-[#6B7280]">
               {detailError ? `材料加载失败：${detailError}` : '正在加载材料…'}
@@ -1098,6 +1100,9 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
     onError, onEditMaterials, onReset, resetting = false, onOpenReviewNotes }) {
   const [detail, setDetail] = useState(null)
   const [findings, setFindings] = useState([])
+  const [publication, setPublication] = useState(null)
+  const publicationPending = detail?.supplement_plan?.status === 'running'
+    && (publication?.generationId !== detail.supplement_plan.generation_id || publication?.status !== 'ready')
   const [referenceSnapshot, setReferenceSnapshot] = useState(null)
   // 初值 true：挂载即拉 findings，若默认 false 会先渲染一帧「暂无核查结论」再被数据替换（假空态闪现）
   const [findingsLoading, setFindingsLoading] = useState(true)
@@ -1181,6 +1186,9 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
       window.history.replaceState({}, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`)
     } catch { /* non-browser test host */ }
   }, [materialsOrigin])
+  useEffect(() => {
+    if (publicationPending && ['overview', 'review', 'report'].includes(activeView)) setActiveView('run')
+  }, [publicationPending, activeView, setActiveView])
   const [completing, setCompleting] = useState(false)
   const [runVersion, setRunVersion] = useState(0)
   const events = useBsEventStream(taskId, runVersion)
@@ -1251,6 +1259,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
     try {
       const data = await listBsFindings(taskId)
       setFindings(data?.findings || [])
+      setPublication({ status: data?.publication_status, generationId: data?.publication_generation_id })
       setReferenceSnapshot(data?.reference_snapshot ?? null)
       setFindingsError('')
       // 缺件聚合与结论列表同源（同一任务、同一审查代），随结论一起刷新。
@@ -1999,12 +2008,14 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
       stage={flowStage}
       reachedIndex={reachedIndex}
       onStageSelect={(stage) => {
+        if (publicationPending && ['review', 'report'].includes(stage)) return
         if (stage === 'upload') onStageSelect?.(stage)
         else setActiveView(stage)
       }}
     >
       <div data-testid="workbench-stage" className="flex h-full min-h-0 flex-1 flex-col">
       <div className="flex min-h-0 w-full flex-1 flex-col overflow-y-auto px-6 pb-6 pt-5 [scrollbar-gutter:stable]">
+        {activeView === 'run' && detail?.supplement_plan?.status === 'running' && <PreviousSupplementReview key={`${taskId}-${detail?.supplement_plan?.superseded_version_no}`} taskId={taskId} versionNo={detail?.supplement_plan?.superseded_version_no} />}
         <header data-testid="workbench-header" className={activeView === 'run' ? 'sr-only' : 'sticky top-0 z-20 shrink-0 mb-[14px] bg-transparent'}>
         <div className="flex flex-wrap items-start gap-3">
           <div className="min-w-0 flex-1">
@@ -2296,6 +2307,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
             materials={detail?.materials || []}
             zipPreparation={detail?.zip_preparation || null}
             supplementPlan={detail?.supplement_plan || null}
+          publicationPending={publicationPending}
           onRetry={retryAutoChecks}
           onRecheck={() => rerunTask()}
           onEnterReview={() => setActiveView('review')}

@@ -629,6 +629,9 @@ def diff_review_versions(task_id: int, a: str = Query(...), b: str = Query(...),
     非法 ref → 400；a==b 合法（结果全为仍存在）。
     """
     task = _get_task(db, task_id, user)
+    if ("current" in {a, b} and service.supplement_active(task)
+            and not service.report_output_readiness(db, task).get("ok")):
+        raise HTTPException(status_code=409, detail="补件核查尚未完成，当前结果暂不能对比")
     try:
         return service.version_diff(db, task, a, b, user=user)
     except AiContextChanged as exc:
@@ -1429,7 +1432,11 @@ def list_findings(task_id: int, kind: str = None,
     coverage = ai_advisory_snapshots.collect_current_coverage(db, task, snapshot, reporting.report_review_blocking)
     timeout_ids = {value for group in (coverage or {}).get("groups", [])
                    for value in group.get("reviewable_timeout_finding_ids", [])}
+    publication_status = ("preparing" if service.supplement_active(task)
+                          and not service.report_output_readiness(db, task).get("ok") else "ready")
     return {**_findings_payload(db, findings, as_of=task.baseline_date, negative_coverage=negative_coverage, timeout_ids=timeout_ids),
+            "publication_status": publication_status,
+            "publication_generation_id": ((task.options_snapshot_json or {}).get("supplement_plan") or {}).get("generation_id") if service.supplement_active(task) else None,
             "reference_snapshot": reference_visibility.visible_snapshot(
                 db, task, reference_snapshots.get_reference_snapshot(db, task), user),
             "reference_run": reference_visibility.visible_run(db, task, knowledge_runs.get_reference_run(db, task), user)}
@@ -1594,6 +1601,16 @@ def review_finding(finding_id: int, body: ReviewIn,
     """
     # BS-1B：先反查 finding 归属（不存在 → 404，越权 → 403），再做既有门禁。
     finding = access.require_bs_finding(db, finding_id, user.id, user.user_type)
+    # Serialize with supplement activation; a historical or partial finding must
+    # not accept a new human decision while the replacement run is incomplete.
+    task = (db.query(BsTask).filter_by(id=finding.task_id).with_for_update().populate_existing().one())
+    options = task.options_snapshot_json or {}
+    plan, edit = options.get("supplement_plan") or {}, options.get("supplement_edit") or {}
+    if (isinstance(plan, dict) and isinstance(edit, dict) and plan.get("generation_id")
+            and plan.get("generation_id") == edit.get("generation_id")
+            and plan.get("status") in {"planned", "running"}
+            and not service.report_output_readiness(db, task).get("ok")):
+        raise HTTPException(status_code=409, detail="补件核查尚未完成，上次结果仅供查看")
     if finding.kind == "negative_candidate":
         task = _get_task(db, finding.task_id, user)
         if finding.id not in ai_advisory_snapshots.active_candidate_finding_ids(db, task, user):
@@ -1769,11 +1786,11 @@ def _attach_generation_identity(payload: dict, *, task: BsTask,
     options = (snapshot or {}).get("task", {}).get("options_snapshot") if snapshot else None
     if not isinstance(options, dict):
         options = task.options_snapshot_json or {}
-    plan = options.get("supplement_plan") if isinstance(options, dict) else None
+    plan = supplement_generation.output_generation_plan(options)
     versions = service.list_review_versions(db, task)
     latest_version = max(versions, key=lambda row: row.get("version_no", 0)) if versions else None
     meta["review_version_no"] = version_no if version_no is not None else (
-        latest_version.get("version_no") if latest_version else None
+        None if service.supplement_active(task) else latest_version.get("version_no") if latest_version else None
     )
     meta.update(supplement_generation.generation_metadata(plan))
     payload["meta"] = meta

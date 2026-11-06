@@ -75,6 +75,20 @@ def project_generation_findings(findings: list[dict], *, plan: dict,
     return projected
 
 
+def output_generation_plan(options: dict | None) -> dict | None:
+    """A planned but unentered supplement has not changed the current output."""
+    options = options if isinstance(options, dict) else {}
+    plan = options.get("supplement_plan")
+    edit = options.get("supplement_edit") or {}
+    if not isinstance(plan, dict):
+        return None
+    if (plan.get("status") == "planned" and
+            (not isinstance(edit, dict) or edit.get("generation_id") != plan.get("generation_id"))):
+        previous = plan.get("previous_supplement_plan")
+        return previous if isinstance(previous, dict) else None
+    return plan
+
+
 def generation_metadata(plan: dict | None) -> dict:
     """当前或冻结计划的报告元数据；报告和证据包使用同一投影。"""
     if not isinstance(plan, dict) or not plan.get("generation_id"):

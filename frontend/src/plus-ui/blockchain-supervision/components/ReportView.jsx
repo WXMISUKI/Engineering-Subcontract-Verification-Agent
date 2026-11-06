@@ -313,7 +313,7 @@ export default function ReportView({
                   解析运行 {Array.isArray(runLineage.material_runs) ? runLineage.material_runs.length : 0} 次；
                   参考核查 {Array.isArray(runLineage.reference_runs) ? runLineage.reference_runs.length : 0} 次；
                   重核查 {Array.isArray(runLineage.reruns) ? runLineage.reruns.length : 0} 次。
-                  {runLineage.latest_review_version_no != null ? ` 当前版本 ${runLineage.latest_review_version_no}` : ''}
+                  {runLineage.latest_review_version_no != null ? ` 最新历史快照 ${runLineage.latest_review_version_no}` : ''}
                 </p>
               </section>
             )}

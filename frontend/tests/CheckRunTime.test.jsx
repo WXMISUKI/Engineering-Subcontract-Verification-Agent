@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, within } from '@testing-library/react'
 import CheckRunView from '../src/plus-ui/blockchain-supervision/components/CheckRunView'
 
@@ -22,4 +22,11 @@ it('工作台时间线展示材料识别和 AI 核查的限流信息', () => {
   const timeline = within(screen.getByTestId('check-run-timeline'))
   expect(timeline.getByText(/材料识别第2页服务请求受限（HTTP 429）/u)).toBeTruthy()
   expect(timeline.getByText(/第 3\/12 批 · 服务请求受限（HTTP 429）/u)).toBeTruthy()
+})
+
+it('补件候选结果未生效时不能提前进入人工复核', () => {
+  const onReviewReady = vi.fn()
+  render(<CheckRunView taskState="done" publicationPending onReviewReady={onReviewReady} onEnterReview={() => {}} />)
+  expect(onReviewReady).not.toHaveBeenCalled()
+  expect(screen.queryByRole('button', { name: '进入人工复核' })).toBeNull()
 })

@@ -133,6 +133,53 @@ def test_http_submit_is_nonblocking_deduplicated_and_owner_scoped(tmp_path, monk
         assert state == 'completed'
 
 
+def test_interrupted_job_requires_retry_and_respects_existing_lease(tmp_path, monkeypatch):
+    engine = create_engine('sqlite:///' + (tmp_path / 'restart.sqlite').as_posix(), connect_args={'check_same_thread': False})
+    Base.metadata.create_all(engine)
+    create_account(engine, 'alice', 'Alice-password-123')
+    snapshot = {'state': 'completed', 'review_run_id': 'review-1', 'ai_auto_enabled': True,
+                'ai_auto_groups': ['a1'], 'runs': [{'group_id': 'a1', 'run_id': 'a1-1', 'state': 'completed'}]}
+    monkeypatch.setattr(reference_snapshots, 'get_reference_snapshot', lambda *_: snapshot)
+    monkeypatch.setattr(jobs, '_completed_coverage_valid', lambda *_: True)
+    lease = {'pending': True}
+    monkeypatch.setattr(service, 'current_ai_advisory_pending', lambda *_: lease['pending'])
+    release = threading.Event()
+    async def worker(bind, task_id, user_id, user_type, review_run_id, job_id, groups, retry):
+        assert retry is True
+        while not release.is_set():
+            await asyncio.sleep(.01)
+        with Session(bind) as db:
+            service.add_event(db, task_id, jobs.COMPLETED, stage='check', payload={
+                'job_id': job_id, 'review_run_id': review_run_id, 'instance_id': jobs.INSTANCE_ID})
+    monkeypatch.setattr(jobs, '_run_background', worker)
+    with TestClient(create_app(engine, 's' * 64, cookie_secure=False)) as client:
+        assert client.post('/api/login', json={'username': 'alice', 'password': 'Alice-password-123'}).status_code == 200
+        conversation = client.post('/api/conversations').json()['id']
+        base = '/api/plus/blockchain-supervision'
+        task_id = client.post(base + '/tasks', json={'conversation_id': conversation, 'title': 'synthetic', 'scope_a1': True}).json()['task_id']
+        with Session(engine) as db:
+            task = db.get(BsTask, task_id)
+            task.state = 'running'
+            task.options_snapshot_json = {reference_snapshots.REVIEW_POINTER: 'review-1'}
+            service.add_event(db, task_id, jobs.STARTED, stage='check', payload={
+                'job_id': 'old-job', 'review_run_id': 'review-1', 'instance_id': 'previous-process'})
+            db.commit()
+        url = f'{base}/tasks/{task_id}/ai-review'
+        assert client.get(url, params={'review_run_id': 'review-1'}).json()['state'] == 'interrupted'
+        assert client.post(url, json={'review_run_id': 'review-1'}).json()['state'] == 'interrupted'
+        assert client.post(url, json={'review_run_id': 'review-1', 'retry': True}).status_code == 409
+        lease['pending'] = False
+        response = client.post(url, json={'review_run_id': 'review-1', 'retry': True})
+        assert response.status_code == 202 and response.json()['job_id'] != 'old-job'
+        release.set()
+        for _ in range(100):
+            state = client.get(url, params={'review_run_id': 'review-1'}).json()['state']
+            if state == 'completed':
+                break
+            time.sleep(.01)
+        assert state == 'completed'
+
+
 def test_worker_processes_all_groups_and_preserves_completed_partial(tmp_path, monkeypatch):
     engine = create_engine('sqlite:///' + (tmp_path / 'worker.sqlite').as_posix(), connect_args={'check_same_thread': False})
     Base.metadata.create_all(engine)

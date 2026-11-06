@@ -75,6 +75,7 @@ export default function CheckRunView({
   onRecheck,
   onEnterReview,
   onReviewReady,
+  publicationPending = false,
 }) {
   const flow = buildFlowState({ taskState, snapshot, findings })
   const visibleTimeline = timelineEvents(events)
@@ -86,7 +87,7 @@ export default function CheckRunView({
   const aiIncomplete = (autoCheck?.stage === 'ai' && ['running', 'waiting', 'failed'].includes(autoCheck?.phase)) || progress?.phase === 'ai_checking'
   const serverFailed = progress?.phase === 'failed'
   const aiWorking = autoCheck?.phase !== 'failed' && ((autoCheck?.stage === 'ai' && ['running', 'waiting'].includes(autoCheck?.phase)) || progress?.phase === 'ai_checking')
-  const completed = !aiIncomplete && !serverFailed && (completedFromTask || (total > 0 && completedCount === total))
+  const completed = !publicationPending && !aiIncomplete && !serverFailed && (completedFromTask || (total > 0 && completedCount === total))
   useEffect(() => {
     if (completed) onReviewReady?.()
   }, [completed, onReviewReady])

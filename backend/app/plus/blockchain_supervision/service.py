@@ -4375,12 +4375,20 @@ def plan_supplement_generation(db: Session, task: BsTask, *, generation_id: str,
     """
     if not generation_id or len(str(generation_id)) > 120:
         raise ValueError("补件审查代 generation_id 无效")
+    db.rollback()
+    db.refresh(task, with_for_update=True)
     if task.state == TASK_STATE_PREPARING:
         return {"status": "blocked", "blocked_reason": "task_preparing"}
 
     existing = dict(task.options_snapshot_json or {}).get("supplement_plan")
     if isinstance(existing, dict) and existing.get("generation_id") == generation_id:
         return deepcopy(existing)
+    edit = (task.options_snapshot_json or {}).get("supplement_edit") or {}
+    if (isinstance(existing, dict) and isinstance(edit, dict) and existing.get("generation_id")
+            and existing.get("generation_id") == edit.get("generation_id")
+            and existing.get("status") in {"planned", "running"}
+            and not report_output_readiness(db, task).get("ok")):
+        return {"status": "blocked", "blocked_reason": "supplement_in_progress"}
 
     impact = supplement_impact.build_supplement_impact_plan(
         category=category,
@@ -4401,6 +4409,10 @@ def plan_supplement_generation(db: Session, task: BsTask, *, generation_id: str,
         subject_ids=subject_ids,
         material_status=material_status,
     )
+    if isinstance(existing, dict) and existing.get("status") in {"running", "completed"}:
+        prior_plan = deepcopy(existing)
+        prior_plan.pop("previous_supplement_plan", None)
+        plan["previous_supplement_plan"] = prior_plan
     plan["impact"] = impact
     findings = db.query(BsFinding).filter(BsFinding.task_id == task.id).all()
     subjects = db.query(BsSubject).filter(BsSubject.task_id == task.id).all()
@@ -4844,6 +4856,14 @@ def review_output_readiness(db: Session, task: BsTask) -> dict:
             "reading_coverage": reading}
 
 
+def supplement_active(task: BsTask) -> bool:
+    options = task.options_snapshot_json or {}
+    plan, edit = options.get("supplement_plan") or {}, options.get("supplement_edit") or {}
+    return bool(isinstance(plan, dict) and isinstance(edit, dict) and plan.get("generation_id")
+                and plan.get("generation_id") == edit.get("generation_id")
+                and plan.get("status") in {"planned", "running"})
+
+
 def report_output_readiness(db: Session, task: BsTask, *, require_reading_complete: bool = False) -> dict:
     """报告读取的只读判据：允许已启动任务先查看中间结果。
 
@@ -4852,6 +4872,40 @@ def report_output_readiness(db: Session, task: BsTask, *, require_reading_comple
     足够的运行痕迹。材料或依据指纹变化、当前代快照缺失等完整性问题仍返回
     409，防止把旧结果伪装成当前结果。
     """
+    options = task.options_snapshot_json or {}
+    plan = options.get("supplement_plan") or {}
+    edit = options.get("supplement_edit") or {}
+    if supplement_active(task):
+        if plan.get("status") != "running" or task.state in {TASK_STATE_SETUP, TASK_STATE_PREPARING}:
+            return {"ok": False, "code": "supplement_in_progress", "missing_groups": [],
+                    "pending_groups": [], "detail": "补件尚未完成，本轮报告暂不可用；可查看上次结果"}
+        readiness = review_output_readiness(db, task)
+        if not readiness["ok"]:
+            return readiness
+        snapshot = reference_snapshots.get_reference_snapshot(db, task)
+        if not snapshot:
+            return {"ok": False, "code": "review_incomplete", "missing_groups": [],
+                    "pending_groups": [], "detail": "本轮核查记录不可用，请刷新或重试"}
+        if snapshot.get("ai_auto_enabled") is True:
+            if current_ai_advisory_pending(db, task):
+                return {"ok": False, "code": "supplement_in_progress", "missing_groups": [],
+                        "pending_groups": [], "detail": "本轮 AI 辅助核查尚在执行，请等待完成"}
+            from . import background_ai_review
+            if background_ai_review.job_status(db, task, snapshot.get("review_run_id"))["state"] != "completed":
+                return {"ok": False, "code": "supplement_in_progress", "missing_groups": [],
+                        "pending_groups": [], "detail": "本轮 AI 辅助核查尚未完成，请等待或重试"}
+            coverage = ai_advisory_snapshots.collect_current_coverage(db, task, snapshot, reporting.report_review_blocking)
+            groups = (coverage or {}).get("groups") or []
+            if (not coverage or coverage.get("state") != "available"
+                    or {group.get("group_id") for group in groups} != set(snapshot.get("ai_auto_groups") or [])
+                    or any(group.get("state") != "available" or
+                           any((group.get("counts") or {}).get(name, 0) for name in ("not_started", "pending")) or
+                           (group.get("counts") or {}).get("failed", 0) > group.get("reviewable_failed", 0) or
+                           (group.get("counts") or {}).get("partial", 0) > group.get("reviewable_partial", 0) or
+                           (group.get("counts") or {}).get("not_run", 0) > group.get("reviewable_not_run", 0)
+                           for group in groups)):
+                return {"ok": False, "code": "supplement_in_progress", "missing_groups": [],
+                        "pending_groups": [], "detail": "本轮 AI 辅助核查尚未完成，请等待或重试"}
     reading = task_reading_coverage(db, task)
     if require_reading_complete and any(row.get("parse_state") == "failed" for row in reading["materials"]):
         return {"ok": False, "code": "reading_incomplete", "missing_groups": [],
@@ -5775,7 +5829,14 @@ def rerun_task(db: Session, task: BsTask, *, scope: str = "all", item_ids=None,
     task.options_snapshot_json = options
     frozen_pages = ({candidate_material.id: changed_pages} if candidate_material else None)
     try:
-        version = create_review_version(db, task, trigger=version_trigger, frozen_material_pages=frozen_pages)
+        previous_version_no = ((task.options_snapshot_json or {}).get("supplement_edit") or {}).get("previous_version_no") if version_trigger == "supplement" else None
+        if previous_version_no is not None:
+            version = (db.query(BsReviewVersion).filter_by(task_id=task.id, version_no=previous_version_no,
+                                                          trigger="supplement").one_or_none())
+            if version is None:
+                raise ValueError("补件前审查快照不存在，不能启动重核")
+        else:
+            version = create_review_version(db, task, trigger=version_trigger, frozen_material_pages=frozen_pages)
         task.baseline_date = next_baseline
         _apply_section_suggestions(task, section_sources)
         if candidate_material is not None:
@@ -5791,8 +5852,9 @@ def rerun_task(db: Session, task: BsTask, *, scope: str = "all", item_ids=None,
         raise
     # ③-b 收集回执携带表：只带有回执的条目（没回执的结论无需继承）。
     carry = []
-    for finding in (db.query(BsFinding).filter(BsFinding.task_id == task.id)
-                    .order_by(BsFinding.id).all()):
+    prior_findings = [] if version_trigger == "supplement" else (
+        db.query(BsFinding).filter(BsFinding.task_id == task.id).order_by(BsFinding.id).all())
+    for finding in prior_findings:
         if not finding.review_json:
             continue
         carry.append({
@@ -5922,7 +5984,9 @@ def enter_supplement_edit(db: Session, task: BsTask) -> dict:
         return {"ok": False, "reason": "supplement_plan_required",
                 "detail": "请先生成补件局部核查计划，再进入补件编辑"}
     if task.state == TASK_STATE_SETUP:
-        return {"ok": True, "state": TASK_STATE_SETUP, "already_setup": True}
+        edit = (task.options_snapshot_json or {}).get("supplement_edit") or {}
+        return {"ok": True, "state": TASK_STATE_SETUP, "already_setup": True,
+                "previous_version_no": edit.get("previous_version_no")}
     if task.state == TASK_STATE_PREPARING:
         return {"ok": False, "reason": "preparing",
                 "detail": "材料仍在准备中，请等待准备完成后再补件"}
@@ -5933,6 +5997,16 @@ def enter_supplement_edit(db: Session, task: BsTask) -> dict:
         return {"ok": False, "reason": "parsing_pending",
                 "detail": "已有材料仍在解析，请等待解析完成后再补件"}
     previous_state = task.state
+    # Freeze before clearing the reference pointer and before new uploads.
+    previous_version = create_review_version(db, task, trigger="supplement")
+    frozen = deepcopy(previous_version.snapshot_json)
+    frozen_options = frozen["task"]["options_snapshot"]
+    previous_plan = plan.get("previous_supplement_plan")
+    if previous_plan is None:
+        frozen_options.pop("supplement_plan", None)
+    else:
+        frozen_options["supplement_plan"] = deepcopy(previous_plan)
+    previous_version.snapshot_json = frozen
     options = dict(task.options_snapshot_json or {})
     # 保留父代只读指针。当前代指针会在进入 setup 后清空，但补件代际仍需
     # 严格校验父代各组终态，才能安全决定哪些组可以 carried-forward。
@@ -5949,6 +6023,7 @@ def enter_supplement_edit(db: Session, task: BsTask) -> dict:
         "entered_at": datetime.now().isoformat(timespec="seconds"),
         "previous_state": previous_state,
         "generation_id": plan.get("generation_id"),
+        "previous_version_no": previous_version.version_no,
         "preserve_findings": True,
         "previous_parent_reference_present": old_parent_present,
         "previous_parent_reference": old_parent,
@@ -5962,10 +6037,11 @@ def enter_supplement_edit(db: Session, task: BsTask) -> dict:
         "state": task.state,
         "previous_state": previous_state,
         "generation_id": plan.get("generation_id"),
+        "previous_version_no": previous_version.version_no,
         "findings_preserved": True,
     })
     return {"ok": True, "state": task.state, "already_setup": False,
-            "findings_preserved": True}
+            "findings_preserved": True, "previous_version_no": previous_version.version_no}
 
 
 def activate_supplement_plan(db: Session, task: BsTask, *, allow_preparing: bool = False,

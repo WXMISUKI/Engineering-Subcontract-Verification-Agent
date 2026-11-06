@@ -1,5 +1,6 @@
 """独立入口的合成材料业务流；不连接外部模型或知识服务。"""
 import json
+import asyncio
 import time
 from pathlib import Path
 
@@ -97,8 +98,34 @@ def test_uploaded_pdf_starts_and_runs_checks_with_unavailable_knowledge(tmp_path
     })
     assert plan.status_code == 200, plan.text
     assert plan.json()['supplement_plan']['status'] == 'planned'
+    prior_report = client.get(f'{base}/tasks/{task_id}/report?stage=draft')
+    assert prior_report.status_code == 200
+    assert prior_report.json()['meta'].get('generation_id') != 'synthetic-supplement'
     edit = client.post(f'{base}/tasks/{task_id}/supplement-edit')
     assert edit.status_code == 200 and edit.json()['findings_preserved'] is True, edit.text
+    # The published baseline must be frozen before the supplemental file exists.
+    previous_version = edit.json()['previous_version_no']
+    previous = client.get(f'{base}/tasks/{task_id}/versions/{previous_version}').json()['snapshot']
+    assert [m['file_name'] for m in previous['materials']] == ['synthetic.pdf']
+    assert previous['task']['options_snapshot'].get('supplement_plan') is None
+    assert any(f.get('review', {}).get('note') == 'synthetic review' for f in previous['findings'] if f.get('review'))
+    create_account(engine, 'bob', 'Bob-password-12345')
+    assert client.post('/api/login', json={'username': 'bob', 'password': 'Bob-password-12345'}).status_code == 200
+    assert client.get(f'{base}/tasks/{task_id}/versions/{previous_version}').status_code == 403
+    assert client.post('/api/login', json={'username': 'alice', 'password': 'Alice-pass-123'}).status_code == 200
+    repeated = client.post(f'{base}/tasks/{task_id}/supplement-edit')
+    assert repeated.status_code == 200 and repeated.json()['previous_version_no'] == previous_version
+    assert len(client.get(f'{base}/tasks/{task_id}/versions').json()['versions']) == 1
+    competing = client.post(f'{base}/tasks/{task_id}/supplement-plan', json={
+        'generation_id': 'competing-supplement', 'category': 'submission_packet',
+        'item_ids': ['RC-A01'], 'subject_ids': [subjects[0]['subject_id']],
+    })
+    assert competing.status_code == 409
+    # Old findings are historical during supplement preparation, not a new report.
+    assert client.get(f'{base}/tasks/{task_id}/report?stage=draft').status_code == 409
+    assert client.get(f'{base}/tasks/{task_id}/versions/diff', params={'a': previous_version, 'b': 'current'}).status_code == 409
+    assert client.patch(f"{base}/findings/{candidate['id']}/review",
+                        json={'decision': 'accepted', 'note': 'should not replace baseline'}).status_code == 409
     supplement = client.post(f'{base}/tasks/{task_id}/materials/upload',
                              files={'file': ('supplement.pdf', pdf, 'application/pdf')},
                              data={'role': 'packet', 'subject_id': str(subjects[0]['subject_id']),
@@ -117,6 +144,13 @@ def test_uploaded_pdf_starts_and_runs_checks_with_unavailable_knowledge(tmp_path
     assert all(material[2] == 'done' for material in materials), str(materials)
     current_plan = client.get(f'{base}/tasks/{task_id}/supplement-plan')
     assert current_plan.json()['supplement_plan']['status'] == 'running'
+    assert current_plan.json()['supplement_plan']['superseded_version_no'] == previous_version
+    current = client.get(f'{base}/tasks/{task_id}').json()
+    assert current['options_snapshot']['rerun']['carry'] == []
+    assert client.get(f'{base}/tasks/{task_id}/report?stage=draft').status_code == 409
+    assert client.get(f'{base}/tasks/{task_id}/findings').json()['publication_status'] == 'preparing'
+    frozen = client.get(f'{base}/tasks/{task_id}/versions/{previous_version}').json()['snapshot']
+    assert [m['file_name'] for m in frozen['materials']] == ['synthetic.pdf']
     groups = current_plan.json()['supplement_plan'].get('execution_groups')
     assert groups, current_plan.json()
     for suffix in (endpoints[group] for group in groups):
@@ -141,6 +175,23 @@ def test_uploaded_pdf_starts_and_runs_checks_with_unavailable_knowledge(tmp_path
         if status.json()['counts']['not_started']:
             response = client.post(url, json={'run_id': status.json()['run_id']})
             assert response.status_code == 200, response.text
+    with monkeypatch.context() as pending:
+        pending.setattr(service, 'current_ai_advisory_pending', lambda *_: True)
+        assert client.get(f'{base}/tasks/{task_id}/findings').json()['publication_status'] == 'preparing'
+    from app.plus.blockchain_supervision import background_ai_review
+    with monkeypatch.context() as pending:
+        pending.setattr(background_ai_review, 'job_status', lambda *_: {'state': 'not_started'})
+        assert client.get(f'{base}/tasks/{task_id}/findings').json()['publication_status'] == 'preparing'
+    asyncio.run(background_ai_review._run_background(engine, task_id, 1, 'web', snapshot['review_run_id'],
+                                                     'synthetic-background-job', snapshot['ai_auto_groups'], False))
+    published = client.get(f'{base}/tasks/{task_id}/findings').json()
+    assert published['publication_status'] == 'ready'
+    assert published['publication_generation_id'] == 'synthetic-supplement'
+    diff = client.get(f'{base}/tasks/{task_id}/versions/diff', params={'a': previous_version, 'b': 'current'})
+    assert diff.status_code == 200, diff.text
+    draft_after_supplement = client.get(f'{base}/tasks/{task_id}/report?stage=draft')
+    assert draft_after_supplement.status_code == 200
+    assert draft_after_supplement.json()['meta']['review_version_no'] is None
     for row in rows:
         if row['status'] in ('hit', 'undecidable'):
             response = client.patch(f"{base}/findings/{row['id']}/review",
@@ -153,3 +204,32 @@ def test_uploaded_pdf_starts_and_runs_checks_with_unavailable_knowledge(tmp_path
     confirmed = client.get(f'{base}/tasks/{task_id}/report/export?fmt=docx&stage=confirmed')
     assert confirmed.status_code == 200, confirmed.text
     assert confirmed.content.startswith(b'PK')
+    second = client.post(f'{base}/tasks/{task_id}/supplement-plan', json={
+        'generation_id': 'second-supplement', 'category': 'submission_packet',
+        'item_ids': ['RC-A01'], 'subject_ids': [subjects[0]['subject_id']],
+    })
+    assert second.status_code == 200
+    second_edit = client.post(f'{base}/tasks/{task_id}/supplement-edit')
+    assert second_edit.status_code == 200
+    prior = client.get(f"{base}/tasks/{task_id}/versions/{second_edit.json()['previous_version_no']}").json()['snapshot']
+    assert prior['task']['options_snapshot']['supplement_plan']['generation_id'] == 'synthetic-supplement'
+    old_supplement_id = supplement.json()['material_id']
+    broken = client.post(f'{base}/tasks/{task_id}/materials/upload',
+                         files={'file': ('broken.pdf', b'%PDF-broken', 'application/pdf')},
+                         data={'role': 'packet', 'replaces_material_id': str(old_supplement_id),
+                               'supplement_generation_id': 'second-supplement'})
+    assert broken.status_code == 200, broken.text
+    attempted = client.post(f'{base}/tasks/{task_id}/supplement-rerun')
+    assert attempted.status_code in (202, 409), attempted.text
+    for _ in range(200):
+        detail = client.get(f'{base}/tasks/{task_id}').json()
+        if detail['state'] != 'preparing':
+            break
+        time.sleep(.05)
+    with Session(engine) as db:
+        old = db.get(BsMaterial, old_supplement_id)
+        replacement = db.get(BsMaterial, broken.json()['material_id'])
+        assert replacement.parse_state == 'failed'
+        assert old.superseded_by_id is None
+    assert detail['state'] == 'setup'
+    assert client.get(f'{base}/tasks/{task_id}/report?stage=draft').status_code == 409

@@ -596,7 +596,8 @@ def evidence_bundle_bytes(db: Session, task: BsTask, stage: str = "draft", *, us
                       if review_versions else None)
     meta = report.setdefault("meta", {})
     meta["review_version_no"] = latest_version.get("version_no") if latest_version else None
-    meta.update(generation_metadata((task.options_snapshot_json or {}).get("supplement_plan")))
+    from .supplement_generation import output_generation_plan
+    meta.update(generation_metadata(output_generation_plan(task.options_snapshot_json)))
     exported_at = datetime.now().isoformat(timespec="seconds")
     digest = report_digest(report)
 
