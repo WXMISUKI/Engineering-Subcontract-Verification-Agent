@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.database import Base
 from app.plus.blockchain_supervision.models import BsEvidenceRelation, BsTask
+from app.plus.blockchain_supervision.certificate_number_check import roster_b_entries
 from app.plus.blockchain_supervision.relation_resolution import (
     STATUS_CONFLICT, STATUS_MATCHED, STATUS_UNRESOLVED,
     build_person_certificate_relations, latest_relations, persist_relations,
@@ -152,15 +153,67 @@ def test_multiple_pages_of_same_certificate_merge_into_one_relation():
     assert len(relation["fact_ids"]) == 8
 
 
-def test_unresolved_when_roster_has_no_comparable_certificate_number():
-    # 无 OCR 布局 ⇒ 取不到名单侧证号，只能给人工核对线索，不得判 matched
-    roster = _material(1, file_name="管理人员名单.pdf", pages=[_roster_page(with_layout=False)])
+ROSTER_TEXT_NO_NUMBER = (
+    "管理人员名单\n"
+    "| 序号 | 姓名 | 岗位 | 联系方式 | 持证以及证号 |\n"
+    "| --- | --- | --- | --- | --- |\n"
+    "| 1 | 陶瑜 | 项目经理 | 13800138000 | 交安 B 证 |\n"
+)
+
+# 真实材料 m2 p22 的写法：证号落在姓名续行，且列位置发生偏移。
+ROSTER_TEXT_CONTINUATION = (
+    "附件九：主要管理人员名单及联络方式\n"
+    "| 序号 | 姓名 | 职务 | 持证以及证号 | 电话 | 备注 |\n"
+    "| --- | --- | --- | --- | --- | --- |\n"
+    "| 1 | 陶瑜 | 项目经理 | 一级建造师 360124199901027518 | 13397917308 |  |\n"
+    "|  |  |  | 交安 B 证 |  |  |\n"
+    "|  |  | 沪交安 B（25）G00206 |  |  |  |\n"
+)
+
+
+def _text_page(text, page=1):
+    return {"page": page, "text": text, "ocr_meta": {"quality": "ocr_ok"}}
+
+
+def test_unresolved_when_roster_page_has_no_certificate_number():
+    # 名单只有「交安 B 证」字样、无编号 ⇒ 不得判 matched
+    roster = _material(1, file_name="管理人员名单.pdf", pages=[_text_page(ROSTER_TEXT_NO_NUMBER)])
     cert = _material(2, pages=[{"page": 1, "text": CERT_TEXT}])
     relations = _build([roster, cert], {1: [], 2: _cert_facts(2)})
     relation = relations[0]
     assert relation["status"] == STATUS_UNRESOLVED
     number_dim = next(d for d in relation["dimensions"] if d["field"] == "certificate.number")
     assert number_dim["result"] == "unresolved"
+
+
+def test_text_table_continuation_number_is_used_as_roster_evidence():
+    roster = _material(1, file_name="管理人员名单.pdf", pages=[_text_page(ROSTER_TEXT_CONTINUATION)])
+    rows = roster_b_entries([roster])
+    assert len(rows) == 1
+    assert rows[0]["name"] == "陶瑜"
+    assert rows[0]["number"] == "沪交安B25G00206"
+    assert rows[0]["number_source"] == "text_table"
+
+    cert = _material(2, pages=[{"page": 1, "text": CERT_TEXT}])
+    relations = _build([roster, cert], {1: [], 2: _cert_facts(2, number="沪交安B25G00683")})
+    relation = relations[0]
+    assert relation["status"] == STATUS_CONFLICT
+    number_dim = next(d for d in relation["dimensions"] if d["field"] == "certificate.number")
+    assert number_dim["expected"] == "沪交安B25G00206"
+    assert number_dim["actual"] == "沪交安B25G00683"
+
+
+def test_roster_b_entries_returns_empty_when_continuation_is_ambiguous():
+    text = (
+        "附件九：主要管理人员名单及联络方式\n"
+        "| 序号 | 姓名 | 职务 | 持证以及证号 | 电话 | 备注 |\n"
+        "| --- | --- | --- | --- | --- | --- |\n"
+        "| 1 | 陶瑜 | 项目经理 | 交安 B 证 | 13397917308 |  |\n"
+        "|  |  | 沪交安 B（25）G00206 |  |  |  |\n"
+        "|  |  | 沪交安 B（25）G00207 |  |  |  |\n"
+    )
+    roster = _material(1, file_name="管理人员名单.pdf", pages=[_text_page(text)])
+    assert roster_b_entries([roster]) == []
 
 
 def test_conflict_when_certificate_material_belongs_to_another_subject():
@@ -291,3 +344,63 @@ def test_latest_relations_returns_last_row_per_person(tmp_path):
         db.commit()
         latest = {row.person_key: row.status for row in latest_relations(db, 1)}
         assert latest == {"陶瑜": STATUS_CONFLICT, "李四": STATUS_MATCHED}
+
+
+def test_latest_relations_keeps_same_name_in_different_subjects(tmp_path):
+    """同名人员分属不同主体时不能互相覆盖，否则 A2-05 会漏报一条待核关系。"""
+    engine = _engine(tmp_path)
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        db.add(BsTask(id=1, conversation_id=1, title="同名主体任务", state="running",
+                      created_by=1, created_by_type="web"))
+        db.commit()
+        persist_relations(db, [
+            _relation_dict(subject_id=7, status=STATUS_CONFLICT),
+            _relation_dict(subject_id=8, status=STATUS_UNRESOLVED, fact_ids=[901]),
+        ])
+        db.commit()
+        latest = {(row.subject_id, row.person_key): row.status
+                  for row in latest_relations(db, 1)}
+        assert latest == {(7, "陶瑜"): STATUS_CONFLICT, (8, "陶瑜"): STATUS_UNRESOLVED}
+def test_superseded_certificate_material_is_not_used_as_evidence():
+    # 已被替代的旧证书仍是 append-only 历史事实，但不得继续作为当前证据。
+    roster = _material(1, file_name="管理人员名单.pdf", pages=[_roster_page()])
+    old_cert = _material(2, pages=[{"page": 1, "text": CERT_TEXT}])
+    old_cert.superseded_by_id = 9
+    relations = _build([roster, old_cert], {1: [], 2: _cert_facts(2)})
+    assert relations[0]["status"] == STATUS_UNRESOLVED
+    assert relations[0]["right"] == {}
+
+
+def test_replacement_candidate_material_is_not_used_as_evidence():
+    # 尚未生效的替换候选也不能提前参与关系判定。
+    roster = _material(1, file_name="管理人员名单.pdf", pages=[_roster_page()])
+    candidate = _material(2, pages=[{"page": 1, "text": CERT_TEXT}])
+    candidate.replacement_target_id = 1
+    relations = _build([roster, candidate], {1: [], 2: _cert_facts(2)})
+    assert relations[0]["status"] == STATUS_UNRESOLVED
+    assert relations[0]["right"] == {}
+
+
+def test_unresolved_when_same_certificate_number_has_conflicting_companies():
+    # 同证号多页但企业名称互相矛盾：不择一采信，转人工。
+    roster = _material(1, file_name="管理人员名单.pdf", pages=[_roster_page()])
+    other_company = "上海某某建设工程有限公司"
+    cert = _material(2, pages=[{"page": 1, "text": CERT_TEXT},
+                               {"page": 2, "text": CERT_TEXT.replace(COMPANY, other_company)}])
+    facts = (_cert_facts(2, page=1)
+             + _cert_facts(2, page=2, base_id=200, company=other_company))
+    relation = _build([roster, cert], {1: [], 2: facts})[0]
+    assert relation["status"] == STATUS_UNRESOLVED
+    identity_dim = next(d for d in relation["dimensions"] if d["field"] == "certificate.identity")
+    assert "企业名称不一致" in identity_dim["reason"]
+
+
+def test_unresolved_when_certificate_material_has_no_subject_attribution():
+    # 主体未确认的证书材料即使企业名一致，也不能直接贡献通过证据。
+    roster = _material(1, subject_id=7, file_name="管理人员名单.pdf", pages=[_roster_page()])
+    cert = _material(2, subject_id=None, pages=[{"page": 1, "text": CERT_TEXT}])
+    relation = _build([roster, cert], {1: [], 2: _cert_facts(2)})[0]
+    assert relation["status"] == STATUS_UNRESOLVED
+    subject_dim = next(d for d in relation["dimensions"] if d["field"] == "subject")
+    assert subject_dim["result"] == "unresolved"

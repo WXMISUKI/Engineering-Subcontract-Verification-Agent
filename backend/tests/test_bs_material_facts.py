@@ -41,7 +41,79 @@ def test_extract_material_facts_preserves_raw_normalized_and_grounding():
     assert by_field["certificate.number"]["quote"]
     # 无 ocr_meta 的页面是文本层，不能一律记成线上 OCR
     assert by_field["certificate.number"]["source_kind"] == "embedded_text_layer"
-    assert by_field["certificate.number"]["extractor_version"] == "material-facts.v1"
+    assert by_field["certificate.number"]["extractor_version"] == "material-facts.v2"
+
+
+def _facts(text):
+    from app.plus.blockchain_supervision.material_facts import extract_material_facts
+
+    return {fact["field_path"]: fact for fact in extract_material_facts(_material(text))}
+
+
+def test_extract_person_name_accepts_spaced_label():
+    # 真实证照原文写作「姓 名: 陶瑜」（扫描件 p28），标签中间有空格。
+    facts = _facts("姓 名: 陶瑜\n身份证号：360124199901027518")
+    assert facts["person.name"]["raw_value"] == "陶瑜"
+
+
+def test_extract_person_name_stops_at_inline_field_label():
+    # 「姓名:鄢明志性别:男」连排时不能把「性别」并入姓名。
+    facts = _facts("姓名:鄢明志性别:男\n证书编号: 沪交安C(22)G00822")
+    assert facts["person.name"]["raw_value"] == "鄢明志"
+
+
+def test_extract_person_name_stops_at_series_label():
+    facts = _facts("姓名陶瑜系列工程系列\n性别 男")
+    assert facts["person.name"]["raw_value"] == "陶瑜"
+
+
+def test_extract_person_name_ignores_roster_table_header():
+    # 名单表头「| 序号 | 姓名 | 岗位 |」的下一列不是姓名，不得臆造 person.name。
+    facts = _facts("| 序号 | 姓名 | 岗位 | 证书 |\n| 1 | 陶瑜 | 项目经理 | 一级建造师 |")
+    assert "person.name" not in facts
+
+
+def test_extract_certificate_number_ignores_id_card_label():
+    # 身份证号排在证书编号之前，不能被「证号」子串命中。
+    facts = _facts("姓 名: 陶瑜\n身份证号：360124199901027518\n证书编号：沪交安B25G00683")
+    number = facts["certificate.number"]["raw_value"]
+    assert number == "沪交安B25G00683"
+    assert "360124199901027518" not in number
+
+
+def test_extract_certificate_number_requires_colon():
+    # 名单表头「持证以及证号」不是编号标签，无冒号不得产出证书编号。
+    facts = _facts("持证以及证号\n交安 B 证\n沪交安 B（25）G00206")
+    assert "certificate.number" not in facts
+    assert facts["certificate.type"]["raw_value"] == "B"
+
+
+def test_extract_company_from_employment_unit_label():
+    facts = _facts("受聘单位：中铁二十四局集团上海铁建工程有限公司\n证书编号：沪交安B25G00683")
+    assert facts["company.name"]["raw_value"] == "中铁二十四局集团上海铁建工程有限公司"
+
+
+def test_extract_company_does_not_swallow_following_certificate_number():
+    facts = _facts("企业名称: 武汉龙辰建设有限公司 证书编号: 鄂交安A25G01398")
+    assert facts["company.name"]["raw_value"] == "武汉龙辰建设有限公司"
+    assert facts["certificate.number"]["raw_value"] == "鄂交安A25G01398"
+
+
+def test_extract_company_strips_latex_page_decoration():
+    # 扫描件文本层是 LaTeX 包裹：$\text { 单位名称:武汉龙辰建设有限公司 }$
+    facts = _facts("$\\text { 单位名称:武汉龙辰建设有限公司 }$")
+    assert facts["company.name"]["raw_value"] == "武汉龙辰建设有限公司"
+
+
+def test_extract_certificate_number_strips_latex_page_decoration():
+    facts = _facts("$\\text { 证书编号: } 0311811293118000239$")
+    assert facts["certificate.number"]["raw_value"] == "0311811293118000239"
+
+
+def test_extract_certificate_number_drops_trailing_date_column():
+    # 表格里编号后面紧跟日期列，日期不是编号的一部分。
+    facts = _facts("证书编号:102591202105000857 2021 06 21")
+    assert facts["certificate.number"]["raw_value"] == "102591202105000857"
 
 
 def test_extract_material_facts_records_actual_page_source():

@@ -97,9 +97,38 @@ def _roster_candidates(material):
 def roster_b_entries(materials: list) -> list[dict]:
     """名单中可唯一对应到本人的 B 证编号证据（关系层复用，不代替本模块判定）。
 
-    只返回布局线索完整、姓名/岗位/证号同行的记录；取不到就返回空，不猜。
+    优先取 OCR 布局线索（姓名/岗位/证号同行且唯一）；布局不可用时退回文本表格
+    续行，仍要求姓名+岗位唯一对应且只命中一个 B 证编号。取不到就返回空，不猜。
+    ``number_source`` 标明编号来自布局还是文本表格，便于复核。
     """
-    return [row for material in materials for row in _roster_candidates(material)]
+    rows = [{**row, "number_source": "layout"}
+            for material in materials for row in _roster_candidates(material)]
+    by_material = {material.id: material for material in materials}
+    for fact in extract_management_roster(materials):
+        material = by_material.get(fact.get("material_id"))
+        if material is None:
+            continue
+        page = next((p for p in material.pages_json or []
+                     if isinstance(p, dict) and p.get("page") == fact.get("page")), None)
+        if page is None or not _page_readable(material, page):
+            continue
+        numbers = {}
+        for number, raw in _roster_text_numbers(page, fact):
+            numbers.setdefault(number, raw)
+        if len(numbers) != 1:
+            continue
+        number, raw = next(iter(numbers.items()))
+        rows.append({"name": fact.get("name"), "number": number, "quote": raw,
+                     "material_id": fact.get("material_id"), "page": fact.get("page"),
+                     "number_source": "text_table"})
+    # 同一材料同一人若出现多个互斥编号，宁可判无法核实，也不择一采信。
+    grouped: dict = {}
+    for row in rows:
+        key = (row.get("material_id"),
+               re.sub(r"\s+", "", unicodedata.normalize("NFKC", str(row.get("name") or ""))))
+        grouped.setdefault(key, []).append(row)
+    return [items[0] for items in grouped.values()
+            if items[0].get("number") and len({item.get("number") for item in items}) == 1]
 
 def _roster_text_numbers(page, fact):
     numbers = _numbers(fact.get("quote") or "")

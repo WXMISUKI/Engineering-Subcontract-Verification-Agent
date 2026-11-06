@@ -15,20 +15,76 @@ from sqlalchemy.exc import IntegrityError
 
 from .models import FACT_SCHEMA_VERSION, BsMaterialFact
 
-EXTRACTOR_VERSION = "material-facts.v1"
+EXTRACTOR_VERSION = "material-facts.v2"
 
 # 白名单：写入数据库前校验，避免把来源或质量写成无法复现的自由文本。
 SOURCE_KINDS = frozenset({"online_ocr_text", "local_ocr_text", "embedded_text_layer"})
 QUALITY_STATES = frozenset({"readable", "review_required", "unreadable"})
 
-_NAME_RE = re.compile(r"姓名[^\S\r\n]*[:：]?[^\S\r\n]*([\u4e00-\u9fff]{2,4})")
-_COMPANY_RE = re.compile(r"企业名称[^\S\r\n]*[:：]?([^\n|]{2,80})")
+# 姓名标签允许「姓 名」夹同行空格；刻意不接受表格竖线，避免把表头「| 姓名 | 岗位 |」的下一列当成姓名。
+_NAME_RE = re.compile(
+    r"姓[^\S\r\n]*名[^\S\r\n]*[:：]?[^\S\r\n]*([\u4e00-\u9fff]{2,10})")
+# OCR 常把姓名与后续字段连排（「鄢明志性别」「陶瑜系列」），按首个字段边界截断。
+_NAME_BOUNDARIES = (
+    "性别", "职务", "岗位", "专业", "系列", "身份", "证件", "号码", "年龄", "出生",
+    "电话", "备注", "工作单位", "民族", "住址", "签发", "有效期", "等级", "类别",
+    "职称", "学历", "证号", "编号", "日期", "籍贯", "状态", "参保", "缴费", "姓名",
+)
+# 企业标签不止「企业名称」：交安证书原文写作「受聘单位」「单位名称」。
+_COMPANY_RE = re.compile(
+    r"(?:企业名称|受聘单位|单位名称)[^\S\r\n]*[:：][^\S\r\n]*([^\n|]{2,80})")
+_COMPANY_BOUNDARIES = (
+    "证书编号", "证号", "有效期", "考核部门", "发证机关", "详细地址", "统一社会信用代码",
+    "法定代表人", "身份证", "性别", "出生日期", "民族", "住址", "签发机关", "企业名称", "受聘单位",
+)
 _CERT_TYPE_RE = re.compile(r"交安\s*([ABC])", re.I)
-_CERT_NUMBER_RE = re.compile(r"(?:证书编号|证号)\s*[:：]?\s*([^\n|]{3,80})")
+# 「证号」必须带冒号且前面不是「身份」：身份证号不是证书编号。
+_CERT_NUMBER_RE = re.compile(
+    r"(?<!身份)(?:证书编号|证号)[^\S\r\n]*[:：][^\S\r\n]*([^\n|]{3,80})")
+_CERT_NUMBER_BOUNDARIES = (
+    "有效期", "考核部门", "发证机关", "受聘单位", "企业名称", "身份证", "证书编号",
+)
 _VALIDITY_RE = re.compile(
     r"有效期\s*[:：]?\s*(20\d{2}[年./-]\d{1,2}[月./-]\d{1,2}日?)"
     r"\s*(?:至|到|—|–|-|~|～)\s*(20\d{2}[年./-]\d{1,2}[月./-]\d{1,2}日?)"
 )
+
+
+# 页文本常带 LaTeX/OCR 装饰（``$\text { 证书编号: } 0311...$``），只清边界符号不改正文。
+_DECORATION = " ：:;；，,。、·<>《》{}[]【】\"'`$￥¥|"
+
+
+def _trim_at_boundaries(value: str, boundaries) -> str:
+    """按字段边界截断连排文本；只做截断和去边界装饰，不改写原值。"""
+    text = re.sub(r"<[^>]*>.*$", "", value or "")
+    cuts = [text.find(word) for word in boundaries if word and word in text]
+    if cuts:
+        text = text[:min(cuts)]
+    return text.strip(_DECORATION)
+
+
+def _clean_person_name(raw: str) -> str | None:
+    """截断连排字段后仍须是 2-4 字中文姓名，否则视为未识别。"""
+    name = _trim_at_boundaries(raw, _NAME_BOUNDARIES)
+    return name if 2 <= len(name) <= 4 else None
+
+
+def _clean_company(raw: str) -> str | None:
+    """企业名称只取标签后的主体，不吞掉同行紧邻的证号等字段。"""
+    value = _trim_at_boundaries(raw, _COMPANY_BOUNDARIES)
+    if len(value) < 2 or value.startswith(("<", "{", '"')):
+        return None
+    return value
+
+
+def _clean_certificate_number(raw: str) -> str | None:
+    """证书编号保留原始书写（含空格括号），仅去掉相邻字段与 OCR 装饰。"""
+    value = _trim_at_boundaries(raw, _CERT_NUMBER_BOUNDARIES)
+    # 「证书编号:102591202105000857 2021 06 21」尾随日期是独立字段，不是编号的一部分。
+    value = re.sub(r"\s+20\d{2}\s*[-./年]?\s*\d{1,2}\s*[-./月]?\s*\d{1,2}\s*日?\s*$", "", value)
+    if len(value) < 3 or re.search(r"[\\$￥{}\"]", value):
+        return None
+    return value
 
 
 def _normalize(value: str) -> str:
@@ -115,18 +171,25 @@ def extract_material_facts(material) -> list[dict]:
                                normalized_value=type_match.group(1).upper()))
         name_match = _NAME_RE.search(text)
         if name_match:
-            facts.append(_fact(material, page, "person.name", name_match.group(1),
-                               quote=name_match.group(0), quality=quality, confidence=confidence))
+            name = _clean_person_name(name_match.group(1))
+            if name:
+                facts.append(_fact(material, page, "person.name", name,
+                                   quote=name_match.group(0), quality=quality,
+                                   confidence=confidence))
         company_match = _COMPANY_RE.search(text)
         if company_match:
-            raw = company_match.group(1).strip(" ：:;；，,")
-            facts.append(_fact(material, page, "company.name", raw,
-                               quote=company_match.group(0), quality=quality, confidence=confidence))
+            company = _clean_company(company_match.group(1))
+            if company:
+                facts.append(_fact(material, page, "company.name", company,
+                                   quote=company_match.group(0), quality=quality,
+                                   confidence=confidence))
         number_match = _CERT_NUMBER_RE.search(text)
         if number_match:
-            raw = number_match.group(1).strip(" ：:;；，,")
-            facts.append(_fact(material, page, "certificate.number", raw,
-                               quote=number_match.group(0), quality=quality, confidence=confidence))
+            number = _clean_certificate_number(number_match.group(1))
+            if number:
+                facts.append(_fact(material, page, "certificate.number", number,
+                                   quote=number_match.group(0), quality=quality,
+                                   confidence=confidence))
         validity_match = _VALIDITY_RE.search(text)
         if validity_match:
             start, end = validity_match.groups()

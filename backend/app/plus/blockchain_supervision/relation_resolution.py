@@ -21,7 +21,7 @@ from .models import RELATION_SCHEMA_VERSION, BsEvidenceRelation, BsMaterial, BsS
 from .personnel_evidence import extract_management_roster
 
 RELATION_TYPE = "person_certificate"
-RESOLVER_VERSION = "person-cert-relation.v1"
+RESOLVER_VERSION = "person-cert-relation.v3"
 
 STATUS_MATCHED = "matched"
 STATUS_CONFLICT = "conflict"
@@ -60,6 +60,16 @@ def normalize_certificate_number(value) -> str | None:
 def _dimension(field, expected, actual, result, reason=None, expected_ref=None, actual_ref=None):
     return {"field": field, "expected": expected, "actual": actual, "result": result,
             "reason": reason, "expected_ref": expected_ref, "actual_ref": actual_ref}
+
+
+def _is_current_material(material) -> bool:
+    """只有生效材料参与关系判定：已替代旧版与待生效替换候选都排除。
+
+    历史事实仍按 append-only 保留，但它们证明的是旧版材料，不能继续产出
+    当前关系；否则替换后旧证书会绕过替代链再次成为通过证据。
+    """
+    return (getattr(material, "superseded_by_id", None) is None
+            and getattr(material, "replacement_target_id", None) is None)
 
 
 def _worst_quality(values) -> str:
@@ -189,6 +199,8 @@ def _relation_for(person_key, records, number_row, certs, *, material_index,
 
     identities = {(c.get("certificate_type"), normalize_certificate_number(c.get("certificate_number")))
                   for c in certs}
+    cert_companies = {a2_check.norm_company(c.get("company"))
+                      for c in certs if a2_check.norm_company(c.get("company"))}
     right = {
         "material_id": certs[0]["material_id"],
         "page": certs[0]["page"],
@@ -229,11 +241,20 @@ def _relation_for(person_key, records, number_row, certs, *, material_index,
                          "同名人员分属多个主体，需人工确认名单与证书的对应关系",
                          STATUS_UNRESOLVED, generation_id)
 
+    # 同证号也可能被贴到不同企业的页面上：编号相同不能抵消企业矛盾。
+    conflicting_cert = []
     if len(identities) > 1:
+        conflicting_cert.append("类别或编号不一致")
+    if len(cert_companies) > 1:
+        conflicting_cert.append("企业名称不一致")
+    if conflicting_cert:
         dimensions.append(_dimension(
             "certificate.identity", None,
-            sorted({(c.get("certificate_type"), c.get("certificate_number")) for c in certs}),
-            RESULT_UNRESOLVED, "同一人员存在多份互斥证书（类别或编号不一致），不能择一采信"))
+            {"identities": sorted({(c.get("certificate_type"), c.get("certificate_number"))
+                                   for c in certs}),
+             "companies": sorted(cert_companies)},
+            RESULT_UNRESOLVED,
+            "同一人员存在多份互斥证书（%s），不能择一采信" % "、".join(conflicting_cert)))
         return _relation(person_key, person_name, post, subject_id, left, right, dimensions,
                          "同一人员存在多份互斥证书，需人工确认哪一份为准", STATUS_UNRESOLVED,
                          generation_id)
@@ -248,7 +269,11 @@ def _relation_for(person_key, records, number_row, certs, *, material_index,
 
     # 主体：证书材料明确归属另一主体时直接冲突，不进入字段比较。
     cert_subject_id = certs[0].get("subject_id")
-    if subject_id is not None and cert_subject_id is not None:
+    if subject_id is not None and cert_subject_id is None:
+        dimensions.append(_dimension(
+            "subject", subject_names.get(subject_id), None, RESULT_UNRESOLVED,
+            "证书材料未归属主体，主体未确认时不能作为本主体的通过证据"))
+    elif subject_id is not None and cert_subject_id is not None:
         dimensions.append(_dimension(
             "subject", subject_names.get(subject_id), subject_names.get(cert_subject_id),
             RESULT_MATCHED if subject_id == cert_subject_id else RESULT_CONFLICT,
@@ -326,7 +351,7 @@ def build_person_certificate_relations(materials, facts_by_material, *,
                                        subject_names=None,
                                        generation_lookup=None) -> list[dict]:
     """把名单记录与证书事实对齐成三态关系；只对名单上的人员产出关系。"""
-    materials = list(materials)
+    materials = [m for m in materials if _is_current_material(m)]
     subject_names = subject_names or {}
     material_index = {m.id: m for m in materials}
     records = _roster_index(materials)
@@ -334,10 +359,20 @@ def build_person_certificate_relations(materials, facts_by_material, *,
                     extract_management_roster(materials)}
     observations = _page_observations(materials, facts_by_material, roster_pages)
     numbers = {}
+    conflicting = set()
     for row in roster_b_entries(materials):
         key = normalize_person_name(row.get("name"))
-        if key and key not in numbers:
-            numbers[key] = row
+        if not key:
+            continue
+        current = numbers.get(key)
+        if (current is not None
+                and normalize_certificate_number(current.get("number"))
+                != normalize_certificate_number(row.get("number"))):
+            conflicting.add(key)
+        numbers.setdefault(key, row)
+    # 同一人出现互斥名单编号时不择一采信，退回「名单未提供可核对编号」。
+    for key in conflicting:
+        numbers.pop(key, None)
     certs_by_name: dict = {}
     for observation in observations:
         key = normalize_person_name(observation.get("name"))
@@ -424,7 +459,9 @@ def resolve_task_relations(db, task, materials=None, *, generation_lookup=None) 
     """按任务重算关系并追加落库；facts 取每个材料的最新批次。"""
     if materials is None:
         materials = (db.query(BsMaterial)
-                     .filter(BsMaterial.task_id == task.id)
+                     .filter(BsMaterial.task_id == task.id,
+                             BsMaterial.superseded_by_id.is_(None),
+                             BsMaterial.replacement_target_id.is_(None))
                      .order_by(BsMaterial.id)
                      .all())
     else:
@@ -439,14 +476,18 @@ def resolve_task_relations(db, task, materials=None, *, generation_lookup=None) 
 
 
 def latest_relations(db, task_id: int) -> list:
-    """该任务最新一批关系行（按流水号取每个人员最后一版）。"""
+    """该任务最新一批关系行，按主体与人员取最后一版。
+
+    键必须带主体：同名人员分属不同分包主体时共用同一个 person_key，
+    只按姓名收敛会把其中一条关系整条吞掉，A2-05 因此少报一个待核人员。
+    """
     rows = (db.query(BsEvidenceRelation)
             .filter(BsEvidenceRelation.task_id == task_id)
             .order_by(BsEvidenceRelation.id)
             .all())
     latest: dict = {}
     for row in rows:
-        latest[row.person_key] = row
+        latest[(row.subject_id, row.person_key)] = row
     return list(latest.values())
 
 
