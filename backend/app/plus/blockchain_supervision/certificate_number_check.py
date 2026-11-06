@@ -94,6 +94,13 @@ def _roster_candidates(material):
     return rows
 
 
+def roster_b_entries(materials: list) -> list[dict]:
+    """名单中可唯一对应到本人的 B 证编号证据（关系层复用，不代替本模块判定）。
+
+    只返回布局线索完整、姓名/岗位/证号同行的记录；取不到就返回空，不猜。
+    """
+    return [row for material in materials for row in _roster_candidates(material)]
+
 def _roster_text_numbers(page, fact):
     numbers = _numbers(fact.get("quote") or "")
     if numbers:

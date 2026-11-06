@@ -35,6 +35,7 @@ from .finding_text import bounded_finding_message
 from .ai_current_guard import AiContextChanged, assert_ai_context_current
 from .identity_labels import subject_identity_label
 from .material_facts import persist_material_facts
+from .relation_resolution import resolve_task_relations
 from .models import (PARSE_STATE_STORED, STATUS_LABELS, BsFinding, BsMaterial, BsMaterialConfirmation, BsPacket,
                      BsReviewVersion, BsSubject, BsTask, BsTaskEvent)
 from .rules import load_config
@@ -1725,6 +1726,21 @@ def _finish_ingest(task_id: int, material_id: int, bind,
             # 同步写进局部 degradations：下游降级摘要与冲突分支都以它为准。
             degradations = list(degradations or []) + [degraded]
             mat.degradations_json = list(mat.degradations_json or []) + [degraded]
+        # S3：名单与证书事实对齐成三态关系（候选判定）。关系随材料收口一并提交；
+        # 解析异常只降级 relations_failed，不影响已读出的文本与事实。
+        relations_inserted = None
+        if owner is not None:
+            try:
+                relations_inserted = len(resolve_task_relations(
+                    session, owner,
+                    generation_lookup=lambda m: _material_supplement_generation(session, m),
+                ))
+            except Exception as e:
+                logger.warning("[bs] 人员证件关系解析失败 material=%s: %s", material_id, e,
+                               exc_info=True)
+                degraded = {"kind": "relations_failed", "message": str(e)[:200]}
+                degradations = list(degradations or []) + [degraded]
+                mat.degradations_json = list(mat.degradations_json or []) + [degraded]
         if owner is not None:
             conflict = material_subject_conflict(session, owner, mat)
             selected_subject = session.get(BsSubject, mat.subject_id) if mat.subject_id is not None else None
@@ -1801,6 +1817,7 @@ def _finish_ingest(task_id: int, material_id: int, bind,
             "input_sha256": input_sha256,
             "input_sha256_verified": True,
             "facts_inserted": facts_inserted,
+            "relations_inserted": relations_inserted,
             "layout_pages": sum(d.get("layout_pages", 0) for d in degradations
                                  if d.get("kind") == "ocr_fallback"),
         })

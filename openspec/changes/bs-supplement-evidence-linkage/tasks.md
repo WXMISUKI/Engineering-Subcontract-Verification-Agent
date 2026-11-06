@@ -15,7 +15,15 @@
   - [x] S2 代次归属（②A）：唯一 `material.supplement_linked` 代次才写入，取不到留空
   - [x] S2 冲突分支（③A）：主体冲突仍保留候选事实，但不构成有效通过证据
   - [x] S2 定向测试 8 passed（`backend/tests/test_bs_ingest_material_facts.py`）
-- [ ] 建立人员名单、岗位、证书类别、证书编号的跨材料关系解析
+- [x] S3 人员证件三态关系（2026-11-06）
+  - [x] 新增 append-only `bs_evidence_relation` 表与 `uq_bs_evidence_relation_key` 唯一索引
+  - [x] `relation_resolution.py`：姓名、主体、企业、岗位证书类别、证书编号逐项判定三态
+  - [x] 同名不推断同人：同名跨多个非空主体一律 `unresolved`，不择一
+  - [x] 质量存疑页（`review_required`/`unreadable`）只作人工复核线索，不得 `matched`
+  - [x] 名单侧复用 `extract_management_roster` 与 `roster_b_entries`，不重跑 OCR
+  - [x] `_finish_ingest` 收口接入：关系、事实、材料状态、`material.parsed` 同事务提交
+  - [x] 定向测试 16 passed（`backend/tests/test_bs_person_certificate_relations.py`）+ 收口 11 passed
+  - [x] BS 回归 478 passed / 106 deselected；OpenSpec strict 通过；`git diff --check` 通过
 - [ ] 将补件证据投影到 A2-05，分别表达支持、冲突和无法确认
 - [ ] 更新人工复核界面，展示补件影响、字段原因和多页依据
 - [ ] 将关键关系和未定位字段接入报告发布门槛

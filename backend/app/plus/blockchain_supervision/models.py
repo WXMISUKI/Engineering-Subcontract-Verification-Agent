@@ -212,6 +212,53 @@ class BsMaterialFact(Base):
     created_at = Column(DateTime, server_default=func.now())
 
 
+# 关系 schema 版本：三态关系落行时固化，读取侧据此判断维度语义；不就地升级历史行。
+RELATION_SCHEMA_VERSION = "evidence-relation.v1"
+
+
+class BsEvidenceRelation(Base):
+    """人员名单与证书的跨材料三态关系；append-only 候选判定，不是业务结论。
+
+    同一人员重新解析会产生新的关系行（指纹含事实行与解析器版本），旧行保留，
+    用于回答“当时依据的是哪一版文本”。``status`` 只有 matched / conflict /
+    unresolved 三值：字段缺失、遮挡或不可读一律 unresolved，不因同名推断同人。
+    任务删除时的级联清除属于授权清除，不是对结论的改写。
+    """
+
+    __tablename__ = "bs_evidence_relation"
+    __table_args__ = (
+        Index("ix_bs_evidence_relation_task_person", "task_id", "person_key"),
+        Index("ix_bs_evidence_relation_task_status", "task_id", "status"),
+        # 并发幂等兜底：同一任务同一关系指纹只能有一行。指纹 = sha256(任务 + 人员 +
+        # 两侧定位 + 事实行 + 状态 + 解析器版本)，因此重算不覆盖、不重复。
+        Index("uq_bs_evidence_relation_key", "task_id", "relation_key", unique=True),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(Integer, ForeignKey("bs_task.id", ondelete="CASCADE"), nullable=False)
+    subject_id = Column(Integer, ForeignKey("bs_subject.id", ondelete="SET NULL"), nullable=True)
+    # 补件代次：取自证书材料的 material.supplement_linked；取不到留空，不猜到具体代。
+    generation_id = Column(String(100), nullable=True)
+    relation_type = Column(String(40), nullable=False, default="person_certificate")
+    # 归一化姓名；同一任务同一人员共用一个键，不随岗位变化重命名。
+    person_key = Column(String(120), nullable=False)
+    person_name = Column(String(60), nullable=True)
+    post = Column(String(40), nullable=True)
+    # matched / conflict / unresolved
+    status = Column(String(20), nullable=False)
+    reason = Column(Text, nullable=True)
+    # 逐维比较：[{field, expected, actual, result, reason, expected_ref, actual_ref}]
+    dimensions_json = Column(JSON, nullable=True, default=list)
+    # 名单侧与证书侧的原文定位（material_id / page / quote / ...）
+    left_json = Column(JSON, nullable=True, default=dict)
+    right_json = Column(JSON, nullable=True, default=dict)
+    fact_ids_json = Column(JSON, nullable=True, default=list)
+    relation_key = Column(String(64), nullable=False)
+    resolver_version = Column(String(80), nullable=False)
+    schema_version = Column(String(20), nullable=False, default=RELATION_SCHEMA_VERSION)
+    created_at = Column(DateTime, server_default=func.now())
+
+
 class BsTaskEvent(Base):
     __tablename__ = "bs_task_event"
     __table_args__ = (Index("ix_bs_event_task_seq", "task_id", "sequence"),)

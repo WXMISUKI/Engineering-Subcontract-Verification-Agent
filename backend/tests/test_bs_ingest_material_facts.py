@@ -6,13 +6,14 @@
 """
 import os
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.database import Base
 from app.plus.blockchain_supervision import parsing, service
 from app.plus.blockchain_supervision.models import (
-    BsMaterial, BsMaterialFact, BsSubject, BsTask, BsTaskEvent,
+    BsEvidenceRelation, BsMaterial, BsMaterialFact, BsSubject, BsTask, BsTaskEvent,
 )
 
 APP_ROOT = os.path.abspath(os.path.join(os.path.dirname(parsing.__file__), "..", ".."))
@@ -20,6 +21,12 @@ CERT_TEXT = (
     "姓名：陶瑜\n企业名称：中铁二十四局集团上海铁建工程有限公司\n"
     "证书编号：沪交安B25G00206\n有效期：2025年1月1日至2028年1月1日"
 )
+
+
+@pytest.fixture(autouse=True)
+def _silence_page_progress(monkeypatch):
+    """进度事件走独立会话，SQLite 单写者下会与收口事务抢锁；本文件不验证进度。"""
+    monkeypatch.setattr(service, "_emit_material_page_progress", lambda *args, **kwargs: None)
 
 
 def _engine(tmp_path):
@@ -217,3 +224,93 @@ def test_subject_conflict_keeps_candidate_facts_but_blocks_clean_pass(tmp_path, 
         assert "material.subject_conflict" in _event_types(db)
         # ③A：读取成果保留为候选事实，但冲突记录使其不构成有效通过证据
         assert _facts(db, material_id)
+
+
+ROSTER_TEXT = (
+    "管理人员名单\n"
+    "| 序号 | 姓名 | 岗位 | 联系方式 | 持证以及证号 |\n"
+    "| --- | --- | --- | --- | --- |\n"
+    "| 1 | 陶瑜 | 项目经理 | 13800138000 | 沪交安B25G00206 |\n"
+)
+ROSTER_PAGE = {
+    "page": 1,
+    "text": ROSTER_TEXT,
+    "ocr_meta": {
+        "quality": "ocr_ok",
+        "layout": [
+            {"text": "姓名", "bbox": [10, 10, 60, 25]},
+            {"text": "职务", "bbox": [100, 10, 160, 25]},
+            {"text": "持证以及证号", "bbox": [200, 10, 330, 25]},
+            {"text": "陶瑜", "bbox": [15, 40, 55, 55]},
+            {"text": "项目经理", "bbox": [105, 40, 155, 55]},
+            {"text": "沪交安B25G00206", "bbox": [205, 40, 325, 55]},
+        ],
+    },
+}
+
+
+def _seed_roster(engine):
+    with Session(engine) as db:
+        subject_id = db.query(BsSubject).one().id
+        db.add(BsMaterial(task_id=1, file_name="管理人员名单.pdf", role="packet",
+                          subject_id=subject_id, parse_state="done",
+                          pages_json=[ROSTER_PAGE]))
+        db.commit()
+
+
+def test_ingest_appends_person_certificate_relation(tmp_path, monkeypatch):
+    engine, material_id = _seed(
+        tmp_path, subject_name="中铁二十四局集团上海铁建工程有限公司")
+    _seed_roster(engine)
+    _pages(monkeypatch)
+
+    service._finish_ingest(1, material_id, engine)
+
+    with Session(engine) as db:
+        relations = db.query(BsEvidenceRelation).filter_by(task_id=1).all()
+        assert len(relations) == 1
+        relation = relations[0]
+        assert relation.person_key == "陶瑜"
+        assert relation.status == "matched"
+        assert relation.generation_id == "g-2"
+        assert relation.left_json["page"] == 1 and relation.right_json["page"] == 1
+        assert relation.fact_ids_json
+        kinds = [item.get("kind") for item in db.get(BsMaterial, material_id).degradations_json or []]
+        assert "relations_failed" not in kinds
+
+
+def test_repeated_ingest_does_not_duplicate_relations(tmp_path, monkeypatch):
+    engine, material_id = _seed(
+        tmp_path, subject_name="中铁二十四局集团上海铁建工程有限公司")
+    _seed_roster(engine)
+    _pages(monkeypatch)
+
+    service._finish_ingest(1, material_id, engine)
+    service._finish_ingest(1, material_id, engine)
+
+    with Session(engine) as db:
+        assert db.query(BsEvidenceRelation).filter_by(task_id=1).count() == 1
+        payloads = [row.payload_json for row in db.query(BsTaskEvent)
+                    .filter_by(task_id=1, event_type="material.parsed").all()]
+        assert payloads[-1]["relations_inserted"] == 0
+
+
+def test_relation_failure_degrades_without_losing_parse(tmp_path, monkeypatch):
+    engine, material_id = _seed(
+        tmp_path, subject_name="中铁二十四局集团上海铁建工程有限公司")
+    _seed_roster(engine)
+    _pages(monkeypatch)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("关系解析崩了")
+
+    monkeypatch.setattr(service, "resolve_task_relations", boom)
+
+    service._finish_ingest(1, material_id, engine)
+
+    with Session(engine) as db:
+        material = db.get(BsMaterial, material_id)
+        assert material.parse_state == "done"
+        assert _facts(db, material_id)
+        assert "relations_failed" in [i.get("kind") for i in material.degradations_json or []]
+        assert "material.parsed" in _event_types(db)

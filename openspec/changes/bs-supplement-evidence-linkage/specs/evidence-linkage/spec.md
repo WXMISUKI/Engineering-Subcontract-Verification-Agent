@@ -11,7 +11,7 @@
 
 ### Requirement: 人员证件关系可判定
 
-系统 SHALL 比较人员姓名、岗位、企业、证书类别和证书编号，并将关系标记为 matched、conflict 或 unresolved。
+系统 SHALL 比较人员姓名、岗位、企业、证书类别和证书编号，并将关系标记为 matched、conflict 或 unresolved；仅在主体唯一且证书页质量可读时才可判为 matched。
 
 #### Scenario: 字段一致且可定位
 
@@ -27,6 +27,30 @@
 
 - **WHEN** 姓名、企业或证书类别无法可靠确认
 - **THEN** 系统 SHALL 输出无法确认及具体缺失字段，不得猜测人员身份
+
+#### Scenario: 同名人员跨主体
+
+- **WHEN** 同一姓名出现在多个非空主体的名单记录或证书页中
+- **THEN** 系统 SHALL 将关系标记为 unresolved 并保留候选依据，不得按文件顺序或流水号择一认定
+
+#### Scenario: 证书页质量存疑
+
+- **WHEN** 证书页字段一致但页面质量为 review_required 或 unreadable
+- **THEN** 系统 SHALL 将关系标记为 unresolved，只作为人工复核线索，不得作为通过证据
+
+### Requirement: 关系记录只追加
+
+系统 SHALL 以 append-only 方式保存人员证件关系；同一任务重复解析只追加新版本，历史关系行保持可读，不更新、不删除。
+
+#### Scenario: 事实批次变化后重算关系
+
+- **WHEN** 同一任务的材料事实产生新批次并重新解析关系
+- **THEN** 系统 SHALL 追加新的关系行并保留旧行，供复核对比
+
+#### Scenario: 关系重放
+
+- **WHEN** 事实批次与解析器版本未变化时重复解析关系
+- **THEN** 系统 SHALL 命中同一关系键并跳过写入，不产生重复行
 
 ### Requirement: 问题证据包含补件
 

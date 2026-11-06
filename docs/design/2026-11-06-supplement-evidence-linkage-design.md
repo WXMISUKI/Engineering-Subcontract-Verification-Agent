@@ -1,7 +1,7 @@
 # 补件材料跨文档证据关联设计
 
 日期：2026-11-06
-状态：D0 基线已确认；S1 事实层硬化、S2 解析链路接入已实施（待验收），S3 关系解析未开始
+状态：D0 基线已确认；S1 事实层硬化、S2 解析链路接入、S3 人员证件三态关系已实施（均待验收）
 范围：工程分包独立版补件、人员证件关联、问题证据投影和人工复核
 
 ## 意图
@@ -146,3 +146,25 @@ FindingEvidenceLink
 - **不做**：不自动补读可疑页、不在本阶段改写 finding、不新增材料表字段、不改历史任务结论。
 
 验证见 `openspec/changes/bs-supplement-evidence-linkage/verification.md` 阶段二。
+
+## S3 人员证件三态关系（2026-11-06 实施）
+
+实施范围：新增 `bs_evidence_relation` 表与 `relation_resolution.py`，在 `_finish_ingest` 事实写入之后、
+主体冲突检查之前解析关系；关系与事实、材料状态、`material.parsed` 同 Session 提交。
+
+- **只消费已落库事实**：证书侧读 `bs_material_fact` 的最新批次，名单侧复用 `extract_management_roster`
+  与 OCR 布局线索（`roster_b_entries`）；本阶段不发起任何 OCR、不补齐缺失字符，也不重跑历史批次。
+- **三态判定**：姓名、主体、企业名称、岗位应交证书类别（项目经理→B、安全员→C、企业负责人→A）
+  与名单证书编号逐项比较；任一冲突为 `conflict`，无冲突但有无法确认项为 `unresolved`，全部一致才
+  `matched`，并保存两侧页级依据与事实行号。
+- **同名不等于同人**：同一姓名出现在多个非空主体的名单记录或证书页时直接 `unresolved`，保留候选关系
+  供人工确认，不按文件顺序或流水号择一。
+- **质量存疑不判通过**：证书页质量为 `review_required`/`unreadable` 时新增 `evidence.quality` 维度并
+  降为 `unresolved`，即使字段一致也只作为人工复核线索。
+- **append-only**：`relation_key` 由任务、主体、人员、两侧页码、事实行号、状态与解析器版本组成；
+  重复解析命中同一键则跳过，事实批次变化则追加新行，历史关系不更新、不删除。
+- **可观测与降级**：`material.parsed` 载荷新增 `relations_inserted`；关系解析抛错只追加
+  `relations_failed` 降级，不影响已读出的文本、事实与 `material.parsed`。
+- **不做**：不改写 finding、不做 A2-05 投影、不改复核界面与报告门槛，也不改动历史任务结论。
+
+验证见 `openspec/changes/bs-supplement-evidence-linkage/verification.md` 阶段三。
