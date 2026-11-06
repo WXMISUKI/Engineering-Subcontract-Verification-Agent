@@ -272,7 +272,8 @@ def summarize_coverage(snapshot, runs, events, *, timeout_reviewable_ids=None, s
                 categories = (event.payload_json or {}).get("failure_categories") or []
                 if isinstance(categories, list):
                     failure_categories.update(c for c in categories if isinstance(c, str) and c in {
-                        "timeout", "invalid_response", "input_budget", "model_call_error"})
+                        "timeout", "invalid_response", "input_budget", "model_call_error",
+                        "rate_limit", "authentication", "service_error"})
                 if (event.event_type == "check.ai_advisory_completed" and advisory_validation_current(event)
                         and categories == ["timeout"] and finding_id in (timeout_reviewable_ids or set())):
                     reviewable_failed_ids.append(finding_id)

@@ -154,8 +154,16 @@ async def _post_ocr(png_bytes: bytes, *, model: str, endpoint: str, api_key: str
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         async with httpx.AsyncClient(timeout=180.0) as client:
             r = await client.post(endpoint, json=body, headers=headers)
+            # Only rejected, transient requests are retried; a successfully read
+            # but poor-quality page must go directly to human review.
+            if r.status_code == 429 or 500 <= r.status_code < 600:
+                import asyncio
+                import random
+                await asyncio.sleep(1.0 + random.uniform(0, 0.5))
+                r = await client.post(endpoint, json=body, headers=headers)
         if r.status_code != 200:
-            raise RuntimeError(f"云端OCR HTTP {r.status_code}")
+            from app.plus.request_errors import ModelHTTPError
+            raise ModelHTTPError(r.status_code)
         data = r.json()
         if on_usage is not None and isinstance(data.get("usage"), dict):
             u = data["usage"]

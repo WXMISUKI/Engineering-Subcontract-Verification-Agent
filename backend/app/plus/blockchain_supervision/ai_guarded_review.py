@@ -270,7 +270,8 @@ async def run_guarded_negative_candidates(*, session_factory, task_id, user, cli
                 db.commit()
         if on_batch_progress:
             state = _batch_progress_state(parts, fresh=fresh)
-            on_batch_progress(frozen_run, batch_index, len(plan["batches"]), state)
+            categories = sorted({part.get("failure_category") for part in parts if part.get("failure_category")})
+            on_batch_progress(frozen_run, batch_index, len(plan["batches"]), state, categories)
         if fresh and any(part.get("failure_category") for part in parts):
             logger.warning("AI batch failed task=%s group=negative batch=%s/%s categories=%s",
                            task_id, batch_index, len(plan["batches"]),
@@ -406,7 +407,8 @@ async def run_guarded_batch_review(*, session_factory, task_id, group_id, findin
                 db.commit()
         if on_batch_progress:
             state = _batch_progress_state(batch_result, fresh=fresh)
-            on_batch_progress(frozen_run, batch_index, len(plan["batches"]), state)
+            categories = sorted({part.get("failure_category") for part in batch_result if part.get("failure_category")})
+            on_batch_progress(frozen_run, batch_index, len(plan["batches"]), state, categories)
         if fresh and any(row.get("failure_category") for row in batch_result):
             logger.warning("AI batch failed task=%s group=%s batch=%s/%s categories=%s",
                            task_id, group_id, batch_index, len(plan["batches"]),

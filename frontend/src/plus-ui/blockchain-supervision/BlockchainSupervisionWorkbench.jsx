@@ -1511,7 +1511,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
           return { ok: false, pending: true }
         }
         if (aiResult.state === 'failed') {
-          const labels = { timeout: '模型响应超时', invalid_response: '模型返回格式无效', input_budget: '输入超过处理范围', model_call_error: '模型调用异常' }
+          const labels = { timeout: '模型响应超时', invalid_response: '模型返回格式无效', input_budget: '输入超过处理范围', model_call_error: '模型调用异常', rate_limit: '模型服务请求受限（HTTP 429）', authentication: '模型服务认证、权限或额度异常', service_error: '模型服务暂时不可用' }
           const reasons = (aiResult.failureCategories || []).map((code) => labels[code]).filter(Boolean)
           throw new Error(`部分 AI 辅助核查未完成${reasons.length ? `（${reasons.join('、')}）` : ''}，请重试或人工核实`)
         }

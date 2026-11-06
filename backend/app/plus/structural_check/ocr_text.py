@@ -563,6 +563,7 @@ def ocr_pdf_pages(
         "words_fallback_pages": 0,
         "local_pages": 0,
         "failed_pages": [],
+        "request_errors": {},
         "formula_issue_pages": [],
         "formula_issue_details": [],
         # 可选页级产物：只有上游实际返回词级布局时才填充；不估算 confidence，
@@ -672,7 +673,10 @@ def ocr_pdf_pages(
                     else:
                         failed_cloud.append(pno)
                 except Exception as exc:  # noqa: BLE001 —— 单页失败不中断整本
-                    logger.warning("[norm-ocr] 云端第 %s 页失败: %s", pno + 1, str(exc)[:160])
+                    from app.plus.request_errors import classify_request_error
+                    category = classify_request_error(exc)
+                    stats["request_errors"][pno] = category
+                    logger.warning("[norm-ocr] 云端第 %s 页失败: %s", pno + 1, category)
                     failed_cloud.append(pno)
 
         async def run() -> None:

@@ -241,13 +241,18 @@ def ocr_text_pages(abs_path: str, *, page_nos=None, use_cache: bool = True,
                             ocr_meta[key] = meta[key]
                     page["ocr_meta"] = ocr_meta
                 pages.append(page)
-        if not pages:
+        request_errors = [{"page": idx_to_page[index], "category": category}
+                          for index, category in (stats.get("request_errors") or {}).items()
+                          if index in idx_to_page and category in {
+                              "rate_limit", "authentication", "service_error", "timeout", "model_call_error"}]
+        if not pages and not request_errors:
             return [], None
         info = {
             "recovered_pages": len(pages),
             "total_pages": total,
             "unrecovered_pages": max(0, total - len(pages)),
             "engine": stats.get("engine"),
+            "request_errors": request_errors,
             "cache_key": stats.get("cache_key"),
             "layout_pages": sum(
                 1 for meta in page_meta.values()
@@ -256,7 +261,8 @@ def ocr_text_pages(abs_path: str, *, page_nos=None, use_cache: bool = True,
         }
         return pages, info
     except Exception as e:  # OCR 整体不可用 → 诚实降级，不阻断摄取
-        logger.warning("[bs] OCR 兜底不可用 %s: %s", os.path.basename(abs_path), e)
+        from ..request_errors import classify_request_error
+        logger.warning("[bs] OCR 兜底不可用 %s: %s", os.path.basename(abs_path), classify_request_error(e))
         return [], None
 
 
@@ -943,6 +949,9 @@ def parse_material_pages(abs_path: str, *, progress=None) -> tuple:
     rotated_info = None
     unread = sorted(set(range(1, total + 1)) - readable)
     degradations = [d for d in degradations if d.get("kind") != "no_text_layer"]
+    request_errors = (info or {}).get("request_errors") or []
+    if request_errors:
+        degradations.append({"kind": "ocr_request_errors", "request_errors": request_errors})
     recovered_count = len(readable.intersection(requested))
     recovered_pages = {page.get("page") for page in recovered
                        if isinstance(page, dict) and isinstance(page.get("page"), int)}

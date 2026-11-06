@@ -1747,9 +1747,17 @@ def _finish_ingest(task_id: int, material_id: int, bind,
             logger.warning("[bs] 判章跳过 %s: %s", mat.file_name, e)
             mat.seal_json = []
         # 同上：材料收口态与 material.parsed 事件同一事务
+        request_errors = {}
+        for degradation in degradations:
+            if degradation.get("kind") == "ocr_request_errors":
+                for error in degradation.get("request_errors", []):
+                    if type(error.get("page")) is int:
+                        request_errors.setdefault(error.get("category"), set()).add(error["page"])
         add_event(session, task_id, "material.parsed", payload={
             "material_id": mat.id, "file_name": mat.file_name, "pages": mat.pages,
             "degraded": bool(degradations), "ocr_recovered": ocr_recovered,
+            "request_errors": [{"category": category, "pages": sorted(pages)}
+                               for category, pages in request_errors.items()],
             "run_id": parse_run_id,
             "input_sha256": input_sha256,
             "input_sha256_verified": True,
@@ -3241,7 +3249,7 @@ async def run_negative_candidate_ai_advisory(db: Session, task: BsTask, user, *,
         if not latest or (latest.payload_json or {}).get("request_id") != request_id or not _negative_candidate_pending(latest):
             raise AiContextChanged("负面清单辅助核查已过期或被替代")
 
-    def batch_progress(current_run, index, total, status):
+    def batch_progress(current_run, index, total, status, failure_categories=None):
         with SessionLocal(bind=bind) as progress_db:
             locked = progress_db.query(BsTask).filter_by(id=task_id).with_for_update().one_or_none()
             if locked is None:
@@ -3250,7 +3258,7 @@ async def run_negative_candidate_ai_advisory(db: Session, task: BsTask, user, *,
             owned(progress_db, current_run)
             add_event(progress_db, task_id, "check.ai_batch_progress", stage="check", payload={
                 "group_id": "a1", "category": "negative_candidates", "batch_index": index,
-                "batch_total": total, "status": status,
+                "batch_total": total, "status": status, "failure_categories": failure_categories or [],
                 "run_id": current_run["run_id"], "request_id": request_id}, commit=False)
             progress_db.commit()
 
@@ -3420,7 +3428,7 @@ async def run_linked_batch_ai_advisory(db: Session, task: BsTask, user, *, group
                     "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()}, commit=False)
             lease_db.commit()
 
-    def batch_progress(current_run, index, total, status):
+    def batch_progress(current_run, index, total, status, failure_categories=None):
         with SessionLocal(bind=bind) as progress_db:
             locked = progress_db.query(BsTask).filter_by(id=task_id).with_for_update().one_or_none()
             if locked is None:
@@ -3429,7 +3437,7 @@ async def run_linked_batch_ai_advisory(db: Session, task: BsTask, user, *, group
             owned(progress_db, current_run)
             add_event(progress_db, task_id, "check.ai_batch_progress", stage="check", payload={
                 "group_id": group_id, "batch_index": index, "batch_total": total,
-                "status": status, "run_id": current_run["run_id"], "request_id": request_id}, commit=False)
+                "status": status, "failure_categories": failure_categories or [], "run_id": current_run["run_id"], "request_id": request_id}, commit=False)
             progress_db.commit()
 
     def save(save_db, current, current_run, results):
@@ -6209,6 +6217,11 @@ def _event_message(ev: BsTaskEvent) -> str | None:
             return None
         group = "负面清单核查" if p.get("category") == "negative_candidates" else (reference_snapshots.CHECK_GROUPS.get(p.get("group_id")) or {}).get("label", "核查")
         status = {"processing": "正在调用模型", "completed": "批次结果已保存", "reused": "已复用保存的批次结果", "partial": "部分建议需人工核实", "failed": "模型调用未完成，请重试", "incomplete": "批次未完成，需重试或人工核实"}.get(p.get("status"))
+        from ..request_errors import ERROR_MESSAGES
+        categories = p.get("failure_categories") or []
+        details = [ERROR_MESSAGES[category] for category in ERROR_MESSAGES if category in categories]
+        if status and details:
+            status += "：" + "；".join(details)
         return "%s · 第 %s/%s 批 · %s" % (group, index, total, status) if status else None
     if t == "task.rerun" and isinstance(p.get("page_refresh"), dict):
         refresh = p["page_refresh"]
@@ -6270,6 +6283,13 @@ def _event_message(ev: BsTaskEvent) -> str | None:
             text += "（部分内容需人工翻看原件）"
         elif pages:
             text += "（%s 页）" % pages
+        from ..request_errors import ERROR_MESSAGES
+        for error in p.get("request_errors") or []:
+            if not isinstance(error, dict) or error.get("category") not in ERROR_MESSAGES:
+                continue
+            error_pages = sorted({page for page in error.get("pages", []) if type(page) is int and page > 0})
+            if error_pages:
+                text += "；材料识别第%s页%s" % ("、".join(map(str, error_pages)), ERROR_MESSAGES[error["category"]])
         return text
     if t == "material.page_progress":
         name = p.get("file_name") or "材料"

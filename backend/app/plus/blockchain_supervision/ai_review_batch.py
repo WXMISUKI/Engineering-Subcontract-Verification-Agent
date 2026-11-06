@@ -7,6 +7,7 @@ import logging
 import re
 import time
 from copy import deepcopy
+from ..request_errors import classify_request_error
 
 from .ai_evidence import MODEL_EVIDENCE_INSTRUCTIONS, model_scope_description, validate_ai_proposal
 from .semantic_review import InputBudgetExceeded, InvalidModelResponse, MAX_REQUEST_JSON_CHARS, request_json
@@ -245,11 +246,14 @@ async def execute_review_batch(*, client, batch: dict, on_usage=None, max_attemp
         elif isinstance(exc, (json.JSONDecodeError, InvalidBatchResponse, InvalidModelResponse)):
             category = "invalid_response"
         else:
-            category = "model_call_error"
+            category = classify_request_error(exc)
         message = {
             "input_budget": "输入超出模型处理范围，本批未完成",
             "timeout": "模型响应超时，本批未完成",
             "invalid_response": "模型返回格式无法解析，本批未完成",
+            "rate_limit": "模型服务请求受限（HTTP 429），本批未完成",
+            "authentication": "模型服务认证、权限或额度异常，本批未完成",
+            "service_error": "模型服务暂时不可用，本批未完成",
             "model_call_error": "模型调用异常，本批未完成",
         }[category]
         for result in results.values():

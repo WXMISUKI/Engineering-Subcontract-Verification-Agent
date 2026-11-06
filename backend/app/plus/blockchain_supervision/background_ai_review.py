@@ -21,7 +21,8 @@ logger = logging.getLogger(__name__)
 
 class BackgroundReviewIncomplete(Exception):
     def __init__(self, categories=()):
-        self.categories = sorted(set(categories) & {'timeout', 'invalid_response', 'input_budget', 'model_call_error'})
+        self.categories = sorted(set(categories) & {'timeout', 'invalid_response', 'input_budget', 'model_call_error',
+                                                    'rate_limit', 'authentication', 'service_error'})
         super().__init__('部分 AI 核查未完成')
 
 
@@ -49,7 +50,8 @@ def project_job_state(event, *, active_job_ids, instance_id):
         result['reason'] = payload.get('reason', 'execution_failed')
         categories = payload.get('failure_categories')
         result['failure_categories'] = [value for value in categories if isinstance(value, str)
-                                        and value in {'timeout', 'invalid_response', 'input_budget', 'model_call_error'}] if isinstance(categories, list) else []
+                                        and value in {'timeout', 'invalid_response', 'input_budget', 'model_call_error',
+                                                      'rate_limit', 'authentication', 'service_error'}] if isinstance(categories, list) else []
     return result
 
 

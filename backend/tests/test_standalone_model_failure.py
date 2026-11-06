@@ -50,6 +50,7 @@ async def test_real_client_connection_failure_is_not_reported_as_success(caplog)
         client = OpenAICompatibleClient(f'http://127.0.0.1:{port}/v1', 'synthetic-secret', 'synthetic-model', timeout=1)
         result = (await execute_review_batch(client=client, batch=_batch(), max_attempts=1))[0]
     assert result['execution_status'] == 'failed'
-    assert result['failure_category'] == 'model_call_error'
+    # A bound but non-listening socket may be rejected or time out on Windows.
+    assert result['failure_category'] in {'model_call_error', 'timeout'}
     assert result['proposals'] == [] and result['limitations']
     assert 'synthetic-secret' not in str(result) + caplog.text
