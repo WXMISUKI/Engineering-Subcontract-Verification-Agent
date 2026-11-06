@@ -5,7 +5,7 @@
 - BsMaterial：材料 + 四类归属（自动归类只是初始值，可人工更正；总包合同可选，0 或 1 份）
 - BsTaskEvent：事件流（SSE 取数源，取号走加锁读，见 service.add_event）
 """
-from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Index, Integer, JSON, String, Text
+from sqlalchemy import Boolean, Column, Date, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text
 from sqlalchemy.sql import func
 
 from ...database import Base
@@ -152,6 +152,54 @@ class BsMaterial(Base):
     # 「新装库有、迁移库没有」的两套 schema；父删级联由 service 显式完成）。
     superseded_by_id = Column(Integer, nullable=True)
     superseded_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+# 事实表 schema 版本：写行时固化，读取侧据此判断字段语义；不就地升级历史行。
+FACT_SCHEMA_VERSION = "material-facts.v1"
+
+
+class BsMaterialFact(Base):
+    """已落库的材料字段事实；append-only，不等同于业务结论。
+
+    写入即不可变：同一材料重新解析产生新的 ``parse_batch_id``，旧批次事实保持
+    可读，用于回答“当时依据的是哪一版文本”。因此本表**不做更新和删除**。
+    同一批次重放按 ``(material_id, parse_batch_id, field_path, page)`` 幂等，
+    由 ``material_facts.persist_material_facts`` 在写入前查重保证；不在数据库层
+    加唯一索引，是因为 ``page`` 可为 NULL，而 MySQL/SQLite 的唯一索引允许多行
+    NULL，加了会得到“部分生效”的假约束。
+    """
+
+    __tablename__ = "bs_material_fact"
+    __table_args__ = (
+        Index("ix_bs_material_fact_material", "material_id"),
+        Index("ix_bs_material_fact_task_field", "task_id", "field_path"),
+        Index("ix_bs_material_fact_batch", "material_id", "parse_batch_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(Integer, ForeignKey("bs_task.id", ondelete="CASCADE"), nullable=False)
+    material_id = Column(Integer, ForeignKey("bs_material.id", ondelete="CASCADE"), nullable=False)
+    generation_id = Column(String(100), nullable=True)
+    field_path = Column(String(120), nullable=False)
+    raw_value = Column(Text, nullable=False)
+    normalized_value = Column(Text, nullable=True)
+    page = Column(Integer, nullable=True)
+    quote = Column(Text, nullable=True)
+    quality = Column(String(30), nullable=False, default="readable")
+    confidence = Column(Float, nullable=True)
+    # online_ocr_text / local_ocr_text / embedded_text_layer；由页面实际来源推导，
+    # 不统一写成 online_ocr_text。历史行若未知保持 "unknown"。
+    source_kind = Column(String(40), nullable=False, default="unknown")
+    # 解析批次身份：同一内容 + 同一抽取器版本视为同一批次，重放幂等；
+    # 内容或抽取器变化则新增批次，历史批次不覆盖。
+    parse_batch_id = Column(String(64), nullable=False, default="legacy")
+    schema_version = Column(String(20), nullable=False, default=FACT_SCHEMA_VERSION)
+    extractor_version = Column(String(80), nullable=False)
+    # 解析输入的内容指纹；NULL 表示历史/未知，不回填伪造值。
+    content_sha256 = Column(String(64), nullable=True)
+    # 抽取时材料的版本号（BsMaterial.revision_no）；NULL 表示未进入版本链。
+    material_version = Column(Integer, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
 
 

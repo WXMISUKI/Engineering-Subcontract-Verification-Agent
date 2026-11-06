@@ -36,13 +36,18 @@
 - Test: `backend/tests/test_bs_material_facts.py`
 
 **Interfaces:**
-- Produces `MaterialFact` ORM rows and `extract_material_facts(material) -> list[dict]`.
+- Produces `BsMaterialFact` ORM rows and `extract_material_facts(material) -> list[dict]`.
 - Each fact contains `field_path`, `raw_value`, `normalized_value`, `page`, `quote`, `quality`, `confidence`, `source_kind`, and `extractor_version`.
+- `persist_material_facts(db, material, *, generation_id=None, parse_batch_id=None) -> list` appends rows and returns only the newly inserted ones.
+- `material_fact_batches` / `latest_material_facts` / `material_fact_history` read batches without deleting history.
 
-- [ ] Write tests for field normalization, missing critical fields, page grounding, duplicate facts, and legacy materials.
-- [ ] Run the focused tests and verify they fail because the fact model/extractor is absent.
-- [ ] Add the nullable fact table and deterministic extraction/provenance helpers without changing existing material rows.
-- [ ] Run focused tests and the model schema smoke; verify SQLite table creation and JSON serialization.
+**Append-only decision (user-confirmed 2026-11-06):** fact rows are insert-only. A re-parse appends a new `parse_batch_id`; re-running the same content and extractor version is idempotent instead of creating a version. Source and quality values are whitelisted, and `source_kind` follows the page's real origin (`online_ocr_text` / `local_ocr_text` / `embedded_text_layer`) instead of defaulting every page to online OCR.
+
+- [x] Write tests for field normalization, missing critical fields, page grounding, duplicate facts, and legacy materials.
+- [x] Run the focused tests and verify they fail because the fact model/extractor is absent.
+- [x] Add the fact table and deterministic extraction/provenance helpers without changing existing material rows.
+- [x] Run focused tests and the model schema smoke; verify SQLite table creation and JSON serialization.
+- [ ] Confirm the append-only read path against a real re-parsed supplement (needs Task 2 wiring).
 
 ### Task 2: Persist facts when a material reaches parse complete
 
