@@ -1,0 +1,37 @@
+# background-ai-review Specification
+
+## Purpose
+TBD - created by archiving change bs-background-ai-review. Update Purpose after archive.
+## Requirements
+### Requirement: AI 核查脱离客户端请求
+系统 SHALL 对当前审查代的 AI 辅助核查提供可迅速确认的后台提交和只读状态查询；所有选定分组依次执行，模型调用不得要求单个 HTTP 请求保持到核查结束。
+
+#### Scenario: 长时间核查
+- **WHEN** 单轮核查需要超过代理等待时间
+- **THEN** 提交请求及时返回且后台继续执行，状态和批次进度可查询，不以代理 504 表示完成
+
+#### Scenario: 浏览器断线
+- **WHEN** 用户关闭页面或网络中断而后端仍运行
+- **THEN** 已提交的整轮后台核查继续执行；重新连接可读取当前代状态
+
+### Requirement: 任务归属和互斥
+系统 SHALL 对同一任务和审查代保证最多一个后台执行者，状态查询和提交遵守任务账号归属。
+
+#### Scenario: 重复提交
+- **WHEN** 同一代任务已经运行，用户或客户端再次提交
+- **THEN** 返回现有运行状态，不重复调用模型或创建并发执行者
+
+#### Scenario: 跨账号访问
+- **WHEN** 非所有者请求提交或读取状态
+- **THEN** 拒绝访问并且不执行模型调用
+
+### Requirement: 中断和结果保全
+系统 SHALL 保留既有核查代、材料、批次检查点和人工回执；后台运行终态可辨识，意外重启不得伪造完成或盲目重复执行。
+
+#### Scenario: 进程重启
+- **WHEN** 后端进程在核查期间退出或重启
+- **THEN** 未确认的运行显示中断，保留已有结果；后续续跑必须核对当前代及在途租约并复用有效检查点
+
+#### Scenario: 真实技术失败
+- **WHEN** 模型或授权校验失败
+- **THEN** 记录失败类别并阻止未经核实的正式收口，不以部分返回掩盖失败
