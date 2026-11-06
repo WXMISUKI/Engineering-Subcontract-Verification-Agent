@@ -9,9 +9,12 @@
   - [x] 写入层逐行 savepoint，仅在确认键已存在时把 `IntegrityError` 当重复，其他约束错误冒泡
   - [x] 定向测试 12 passed：页号默认、唯一冲突、跨批次允许、Session 不被污染、任务删除级联
   - [x] 隔离 MySQL 8.0 一次性 schema 验证（临时库建表/索引/冲突/默认值/级联，验证后删除）
-- [ ] 固化材料事实、字段原值/规范化值、质量和页级定位结构
+- [x] 固化材料事实、字段原值/规范化值、质量和页级定位结构
   - [x] 事实表与抽取器：append-only 批次、内容指纹、材料版本、来源/质量白名单（`backend/tests/test_bs_material_facts.py`）
-  - [ ] 接入解析完成链路并按批次读取事实（当前仅提供 `persist_material_facts`/`latest_material_facts`，未接业务路径）
+  - [x] S2 接入解析完成链路：事实、材料收口态与 `material.parsed` 同事务写入；抽取失败降级 `facts_failed`
+  - [x] S2 代次归属（②A）：唯一 `material.supplement_linked` 代次才写入，取不到留空
+  - [x] S2 冲突分支（③A）：主体冲突仍保留候选事实，但不构成有效通过证据
+  - [x] S2 定向测试 8 passed（`backend/tests/test_bs_ingest_material_facts.py`）
 - [ ] 建立人员名单、岗位、证书类别、证书编号的跨材料关系解析
 - [ ] 将补件证据投影到 A2-05，分别表达支持、冲突和无法确认
 - [ ] 更新人工复核界面，展示补件影响、字段原因和多页依据

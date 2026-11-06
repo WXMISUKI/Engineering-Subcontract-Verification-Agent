@@ -101,3 +101,40 @@
 - 未部署、未推送、未重启服务、未修改生产数据或历史任务结论。
 
 结论：S1 事实层硬化完成，可进入 S2（解析链路接入）等待确认；本阶段不改变任何业务结论。
+
+## 阶段二：解析链路接入（2026-11-06）
+
+范围：`backend/app/plus/blockchain_supervision/service.py`（`_finish_ingest` 收口接入、
+`_material_supplement_generation`）及新增定向用例 `backend/tests/test_bs_ingest_material_facts.py`。
+
+实际执行：
+
+- `backend/.venv/Scripts/python.exe -m pytest tests/test_bs_ingest_material_facts.py -q --tb=short`：8 passed。
+- 同口径回归 `backend/.venv/Scripts/python.exe -m pytest tests -k "bs_" -q --tb=short`：459 passed / 106 deselected。
+- `python -m py_compile`（service、material_facts、新测试文件）：通过。
+- `openspec validate --all --strict`：8 passed / 0 failed。
+- `git diff --check`：通过。
+
+已验证行为（SQLite 定向用例，解析入口注入、不触发真实 OCR）：
+
+- 解析成功后，事实行、材料 `parse_state="done"` 与 `material.parsed` 同一次提交；事件载荷
+  `facts_inserted` 与本次真正新增的事实行数一致。
+- 抽取器抛错时材料仍按 `done` 收口，降级记录追加 `facts_failed`，不产生事实行，也不发
+  `material.parse_failed`；`facts_inserted` 为 `null`，可区分「没抽到」与「没抽成」。
+- 解析失败只写 `material.parse_failed`，不写事实行。
+- 同内容重复收口复用同一 `parse_batch_id`，事实行数不变，第二次 `facts_inserted` 为 0。
+- 补件材料的事实带上唯一链接代次 `generation_id`；无链接事件或存在多个互斥代次时留空，
+  不猜测归属（②A）。
+- 质量可疑页（`ocr_quality`）产生 `review_required` 候选事实，解析入口只被调用一次，不自动重读。
+- 主体冲突分支仍保留候选事实，同时保留 `subject_conflict` 降级与 `material.subject_conflict`
+  事件，事实不构成有效通过证据（③A）。
+
+未覆盖：
+
+- 未在隔离 MySQL/真实 OCR 链路上重跑（事实表结构已由 S1 的隔离 MySQL 验证覆盖，本阶段只新增
+  写入调用与代次解析）。
+- 未改写任何 finding、A2-05 投影、复核界面或报告门槛；S3 起才消费这些事实。
+- 未做真实补件材料正负向验收（S6）。
+- 未部署、未推送、未重启服务、未修改生产数据或历史任务结论。
+
+结论：S2 解析链路接入完成，事实只在收口事务内追加，可进入 S3（人员证件三态关系）等待确认。

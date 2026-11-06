@@ -1,7 +1,7 @@
 # 补件材料跨文档证据关联设计
 
 日期：2026-11-06
-状态：阶段一事实层已实施；D0 基线已确认，S1 事实层硬化待开始
+状态：D0 基线已确认；S1 事实层硬化、S2 解析链路接入已实施（待验收），S3 关系解析未开始
 范围：工程分包独立版补件、人员证件关联、问题证据投影和人工复核
 
 ## 意图
@@ -124,3 +124,25 @@ FindingEvidenceLink
 ## 外部依据
 
 业界调研见 `docs/research/2026-11-06-supplement-material-idp.md`，其中记录 Azure Document Intelligence、Google Document AI、AWS Textract/A2I 和 OpenAI File Search 的官方资料与版本、grounding、置信度、人工复核及元数据过滤依据。
+
+## S2 解析链路接入（2026-11-06 实施）
+
+收口位置：`service._finish_ingest` 解析成功分支之后、任何提交之前。事实行、材料状态
+（`parse_state`/`pages_json`/`degradations_json`）与 `material.parsed` 事件由同一个会话一次性
+提交，不存在“材料显示已读完、事实还查不到”的中间态。
+
+- **D-1 同事务**：`persist_material_facts` 在 `material.parsed` 之前调用；该事件的 `commit=True`
+  一次性提交全部脏变更，因此不需要额外事务管理。
+- **D-2 降级**：抽取抛错时只追加 `{"kind": "facts_failed"}` 到降级记录，材料仍按 `done` 收口，
+  不重跑 OCR、不把抽取异常升级为解析失败。降级同时写入局部 `degradations`，保证冲突分支重建
+  降级列表时不会丢掉这条记录。
+- **S2-D1 代次归属**（选定 A）：查本材料（ZIP 子材料查其容器）的 `material.supplement_linked`
+  事件；恰好一个代次才写入 `generation_id`，零个或多个一律留空，不猜归属、不改表结构。
+- **③A 冲突分支**（选定 A）：主体冲突/主体未确认分支因为写入点前置而同样保留候选事实；冲突
+  记录仍写在 `degradations_json` 并发出 `material.subject_conflict|unresolved` 事件，事实因此
+  只是候选证据，不构成有效通过证据。
+- **可观测**：`material.parsed` 载荷新增 `facts_inserted`（本次真正新增行数，重放为 0，降级为
+  `null`），用于区分“没抽到”和“没抽成”。
+- **不做**：不自动补读可疑页、不在本阶段改写 finding、不新增材料表字段、不改历史任务结论。
+
+验证见 `openspec/changes/bs-supplement-evidence-linkage/verification.md` 阶段二。

@@ -34,6 +34,7 @@ from .classify import ROLE_LABELS, classify_material, validate_materials
 from .finding_text import bounded_finding_message
 from .ai_current_guard import AiContextChanged, assert_ai_context_current
 from .identity_labels import subject_identity_label
+from .material_facts import persist_material_facts
 from .models import (PARSE_STATE_STORED, STATUS_LABELS, BsFinding, BsMaterial, BsMaterialConfirmation, BsPacket,
                      BsReviewVersion, BsSubject, BsTask, BsTaskEvent)
 from .rules import load_config
@@ -1621,6 +1622,28 @@ def _emit_material_page_progress(session, task_id, material, current, total, sou
     })
 
 
+def _material_supplement_generation(db: Session, material: BsMaterial) -> str | None:
+    """本材料所属的补件代次；ZIP 子材料认其容器的链接事件。
+
+    只接受**唯一**代次：同一材料出现多个互斥代次、或根本没有链接事件时返回
+    ``None``。事实照写、代次留空，让复核看见「证据存在但归属未定」，不靠猜测
+    补归属（S2-D1）。
+    """
+    linked_id = material.container_material_id or material.id
+    payloads = (
+        db.query(BsTaskEvent.payload_json)
+        .filter(BsTaskEvent.task_id == material.task_id,
+                BsTaskEvent.event_type == "material.supplement_linked")
+        .all()
+    )
+    generations = set()
+    for (payload,) in payloads:
+        payload = payload or {}
+        if payload.get("material_id") == linked_id and payload.get("generation_id"):
+            generations.add(str(payload["generation_id"]))
+    return generations.pop() if len(generations) == 1 else None
+
+
 def _finish_ingest(task_id: int, material_id: int, bind,
                    *, refresh_type: bool = True) -> None:
     """重活段（P2-2 挪出请求线程）：自带会话，文本提取 → 判章 → 事件落库。
@@ -1686,6 +1709,22 @@ def _finish_ingest(task_id: int, material_id: int, bind,
                                "run_id": parse_run_id,
                                "input_sha256": input_sha256})
             return
+        # D-1：事实在收口事务内写入——材料状态、事实批次与 material.parsed 由
+        # 本会话一次性提交，避免「材料已 done 但事实还看不见」的中间态。
+        # 抽取失败不回滚已读出的材料，只降级 facts_failed（D-2：不自动重跑 OCR）。
+        facts_inserted = None
+        try:
+            inserted_facts = persist_material_facts(
+                session, mat, generation_id=_material_supplement_generation(session, mat),
+            )
+            facts_inserted = len(inserted_facts)
+        except Exception as e:  # 事实是候选证据，抽取异常不得吞掉解析结果
+            logger.warning("[bs] 材料事实抽取失败 material=%s: %s", material_id, e,
+                           exc_info=True)
+            degraded = {"kind": "facts_failed", "message": str(e)[:200]}
+            # 同步写进局部 degradations：下游降级摘要与冲突分支都以它为准。
+            degradations = list(degradations or []) + [degraded]
+            mat.degradations_json = list(mat.degradations_json or []) + [degraded]
         if owner is not None:
             conflict = material_subject_conflict(session, owner, mat)
             selected_subject = session.get(BsSubject, mat.subject_id) if mat.subject_id is not None else None
@@ -1761,6 +1800,7 @@ def _finish_ingest(task_id: int, material_id: int, bind,
             "run_id": parse_run_id,
             "input_sha256": input_sha256,
             "input_sha256_verified": True,
+            "facts_inserted": facts_inserted,
             "layout_pages": sum(d.get("layout_pages", 0) for d in degradations
                                  if d.get("kind") == "ocr_fallback"),
         })
