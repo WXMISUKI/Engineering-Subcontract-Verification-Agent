@@ -63,3 +63,41 @@
 
 - **WHEN** 写入事实行
 - **THEN** 系统 SHALL 只接受白名单内的来源类型与质量状态，并按页面实际来源区分线上 OCR、本地 OCR 与文本层
+
+### Requirement: 材料读取收口携带事实批次
+
+系统 SHALL 在材料读取收口的同一事务内写入该批次材料事实与 `material.parsed` 事件；事实写入失败不得导致已成功的解析结果丢失，也不得自动重新解析。
+
+#### Scenario: 解析成功时原子收口
+
+- **WHEN** 材料解析成功并准备写入 `material.parsed`
+- **THEN** 系统 SHALL 在同一事务内提交材料解析状态、页级内容、材料事实批次与 `material.parsed` 事件
+
+#### Scenario: 事实抽取失败降级
+
+- **WHEN** 材料解析成功但事实抽取抛错
+- **THEN** 系统 SHALL 仍提交解析结果与 `material.parsed` 事件，在材料降级记录中追加 `facts_failed`，且不自动重跑 OCR
+
+#### Scenario: 解析失败不产生事实
+
+- **WHEN** 材料解析失败
+- **THEN** 系统 SHALL 不写入任何事实行，并以 `material.parse_failed` 收口
+
+#### Scenario: 质量可疑页面只产生候选事实
+
+- **WHEN** 页面可读但质量可疑
+- **THEN** 系统 SHALL 生成候选事实并标记为 `review_required` 或 `unreadable`，不得将其当作通过证据
+
+### Requirement: 事实批次按代次归属
+
+系统 SHALL 记录材料事实所属补件代次；无法唯一确定代次时 SHALL 保留事实并标记代次未知，不得推测归属。
+
+#### Scenario: 补件材料的事实归属
+
+- **WHEN** 材料由补件链接创建并解析成功
+- **THEN** 系统 SHALL 将事实批次关联到该链接记录的补件代次
+
+#### Scenario: 代次无法唯一确定
+
+- **WHEN** 同一材料存在多个互斥的补件链接或链接缺失
+- **THEN** 系统 SHALL 写入事实并将代次标记为未知，供后续人工复核
