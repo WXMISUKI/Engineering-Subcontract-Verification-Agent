@@ -10,7 +10,10 @@ import re
 
 
 def _compact_with_positions(text: str) -> tuple[str, list[int]]:
-    positions = [i for i, ch in enumerate(text) if not ch.isspace()]
+    # WeKnora 的 OCR 正文可能保留 Markdown 的加粗标记（如
+    # ``**第十五条**``）。这些标记不是原文字符，不能让它们导致已登记
+    # 条款无法匹配；其余字符仍保留原始位置，便于返回可审计的原文片段。
+    positions = [i for i, ch in enumerate(text) if not ch.isspace() and ch not in "*`"]
     return "".join(text[i].translate(str.maketrans("（）", "()")) for i in positions), positions
 
 

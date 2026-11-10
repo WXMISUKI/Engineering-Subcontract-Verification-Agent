@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 from ...models.models import KnowledgeBaseBinding, KnowledgeRef
 from ...services.knowledge.context import OWNER_SR_CONVERSATION
 from ...services.knowledge.factory import ProviderConnection, acquire_provider_backend
-from ...services.knowledge.fulltext import reconstruct_text_chunks
+from ...services.knowledge.fulltext import document_from_report, reconstruct_text_chunks
 from ...services.knowledge.reference_access import (
     ReferenceOriginalAccessError, authorized_reference_provider, read_authorized_reference_original,
 )
@@ -612,10 +612,15 @@ def _fetch_verified_text_parts(db: Session, task: BsTask, scope: dict, source: d
             report = backend.fetch_document_text_reported(source["knowledge_id"], kb_id=source["kb_id"], max_chars=None)
         chunks = report.get("chunks") or []
         if (report.get("status") != "ok" or report.get("scope_complete") is not True
-                or any(row.get("chunk_type") != "text" or row.get("knowledge_id") != source["knowledge_id"]
+                or any(not isinstance(row, dict) or row.get("knowledge_id") != source["knowledge_id"]
                        for row in chunks)):
             return None
-        document = reconstruct_text_chunks(chunks)
+        document = document_from_report(report)
+        if document is None:
+            # 兼容尚未返回 assembly_trace 的旧 Provider；带图片占位符的
+            # 不完整报告仍会由 reconstruct_text_chunks 明确拒绝。
+            text_chunks = [row for row in chunks if row.get("chunk_type") == "text"]
+            document = reconstruct_text_chunks(text_chunks)
         parts = match_text_parts(document, preamble, clause["text"]) if document else None
         if (not parts or not _verify_authorized_original(db, task, scope, source, deadline)
                 or _cross_page_connection(db, task, scope, source) != connection):

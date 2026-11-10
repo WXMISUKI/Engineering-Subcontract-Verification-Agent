@@ -24,6 +24,53 @@ def _review_item_label(item_id):
                  if row.get("id") == item_id and row.get("title")), item_id)
 
 
+_TASK_LEVEL_KINDS = {"transfer_scope", "illegal_subcontract", "negative_list"}
+
+
+def scope_task_level_materials(finding, materials):
+    """按 finding 已登记的材料锚点裁剪任务级模型上下文。
+
+    任务级规则原本会把所有可读页交给每个 AI finding，扫描材料稍大时会
+    形成多个 16K 分批请求。只有存在明确材料/页锚点时才裁剪，并把裁剪
+    标记交给上层，避免模型把局部材料误当成完整范围；没有锚点则保持
+    原有全量 fail-closed 行为。
+    """
+    rows = list(materials or [])
+    if (getattr(finding, "subject_id", None) is not None
+            or getattr(finding, "kind", None) not in _TASK_LEVEL_KINDS):
+        return rows, False
+
+    material_ids = set()
+    page_anchors = {}
+
+    def add_anchor(material_id, page):
+        if type(material_id) is not int:
+            return
+        material_ids.add(material_id)
+        if type(page) is int and page > 0:
+            page_anchors.setdefault(material_id, set()).update({page - 1, page, page + 1})
+
+    add_anchor(getattr(finding, "material_id", None), getattr(finding, "page", None))
+    for evidence in getattr(finding, "evidence_json", None) or []:
+        if isinstance(evidence, dict):
+            add_anchor(evidence.get("material_id"), evidence.get("page"))
+    if not material_ids:
+        return rows, False
+
+    selected = []
+    for row in rows:
+        material_id = row.get("material_id") if isinstance(row, dict) else None
+        page = row.get("page") if isinstance(row, dict) else None
+        if material_id not in material_ids:
+            continue
+        allowed_pages = page_anchors.get(material_id)
+        if allowed_pages is None or page in allowed_pages:
+            selected.append(row)
+    if not selected:
+        return rows, False
+    return selected, len(selected) < len(rows)
+
+
 def build_review_context(*, finding, materials, run, subject_names_by_id=None):
     context = {"materials": [], "references": [], "limitations": []}
     if (not isinstance(run, dict) or run.get("state") != "completed" or run.get("task_id") != finding.task_id
@@ -136,6 +183,11 @@ def build_review_context(*, finding, materials, run, subject_names_by_id=None):
                 continue
             context["materials"].append({"task_id": finding.task_id, "subject_id": material.subject_id,
                                          "material_id": material.id, "page": page["page"], "text": page["text"]})
+    scoped_materials, scoped = scope_task_level_materials(finding, context["materials"])
+    if scoped:
+        context["materials"] = scoped_materials
+        context["incomplete_material_scope"] = True
+        context["limitations"].append("模型上下文已按当前核查项材料锚点裁剪，其他材料页未纳入；不能据此证明完整范围")
     role = {"RC-L11": "安全员", "RC-P12": "项目总工"}.get(finding.item_id)
     if role and finding.subject_id is not None and context["materials"]:
         allowed = {(page["material_id"], page["page"]) for page in context["materials"]}

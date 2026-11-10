@@ -207,6 +207,42 @@ def reconstruct_text_chunks(chunks: Iterable[Dict[str, Any]]) -> Dict[str, Any] 
     return {"text": text, "segments": segments}
 
 
+def document_from_report(report: Dict[str, Any]) -> Dict[str, Any] | None:
+    """将 ``fetch_document_text_reported`` 的完整装配报告转为可引用正文。
+
+    扫描件的正文由 ``text`` 占位块和 ``image_ocr`` 块共同装配。调用方不能
+    只取 ``text`` 块再调用 :func:`reconstruct_text_chunks`，否则会把合法的
+    OCR 正文误判为不可用。这里仅接受服务端已经完成且带完整偏移轨迹的报告；
+    缺 OCR、占位符未替换或轨迹不连续时继续 fail-closed。
+    """
+    if not isinstance(report, dict) or report.get("status") != "ok":
+        return None
+    if report.get("scope_complete") is not True:
+        return None
+    text = report.get("text")
+    trace = report.get("assembly_trace")
+    segments = trace.get("segments") if isinstance(trace, dict) else None
+    if (not isinstance(text, str) or not text or not isinstance(trace, dict)
+            or trace.get("complete") is not True
+            or trace.get("coordinate_space") != "full_document"
+            or not isinstance(segments, list) or not segments):
+        return None
+    previous_end = 0
+    for segment in segments:
+        if (not isinstance(segment, dict) or not isinstance(segment.get("chunk_id"), str)
+                or not segment["chunk_id"] or type(segment.get("start")) is not int
+                or type(segment.get("end")) is not int):
+            return None
+        start, end = segment["start"], segment["end"]
+        if (start < previous_end or start < 0 or end <= start or end > len(text)
+                or text[previous_end:start].strip()):
+            return None
+        previous_end = end
+    if text[previous_end:].strip():
+        return None
+    return {"text": text, "segments": segments}
+
+
 def assemble_document(
     text_chunks: Iterable[Dict[str, Any]],
     ocr_chunks: Iterable[Dict[str, Any]],
@@ -316,6 +352,7 @@ __all__ = [
     "READ_CHUNK_TYPES",
     "READ_WINDOW_CHARS",
     "assemble_document",
+    "document_from_report",
     "parse_image_info",
     "resolve_start_offset",
     "slice_document",
