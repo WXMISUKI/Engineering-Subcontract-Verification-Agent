@@ -235,6 +235,14 @@ async def cloud_ocr_structured(png_bytes: bytes, *, model: str, endpoint: str, a
     返回 `{"markdown": str, "words": [{text, bbox}]}`。markdown 可能为空
     （模型只给词列表时），调用方需回退 `words_to_text`，不得把空串当成功。
     """
+    import os
+    provider = os.environ.get('OCR_CLOUD_PROVIDER', 'legacy').strip().lower()
+    if provider == 'moma':
+        from app.plus.moma_ocr import recognize_page
+        return await recognize_page(png_bytes, model=model, endpoint=endpoint, api_key=api_key,
+                                    prompt=prompt, on_usage=on_usage)
+    if provider != 'legacy':
+        raise ValueError('不支持的 OCR provider')
     content = await _post_ocr(png_bytes, model=model, endpoint=endpoint, api_key=api_key,
                               prompt=prompt, on_usage=on_usage, subject=subject,
                               billing_model_code=billing_model_code)
@@ -255,6 +263,9 @@ async def cloud_ocr_image(png_bytes: bytes, *, model: str, endpoint: str, api_ke
     `prompt` 仅用于需要结构化正文的调用方；本函数仍只返回词级结果，
     公式页请改用 `cloud_ocr_structured`（词级结果无法承载二维公式）。
     """
+    import os
+    if os.environ.get('OCR_CLOUD_PROVIDER', 'legacy').strip().lower() != 'legacy':
+        raise RuntimeError('当前 OCR provider 不提供词级坐标')
     content = await _post_ocr(png_bytes, model=model, endpoint=endpoint, api_key=api_key,
                               prompt=prompt, on_usage=on_usage, subject=subject,
                               billing_model_code=billing_model_code)
@@ -316,9 +327,15 @@ async def cloud_ocr_page_concurrent(pdf_path: str, page_nos: list[int], *,
 def cloud_config() -> dict:
     """从独立应用环境变量读模型、端点与密钥；缺一项则不可用。"""
     import os
+    provider = os.environ.get('OCR_CLOUD_PROVIDER', 'legacy').strip().lower()
+    if provider not in ('legacy', 'moma'):
+        raise ValueError('不支持的 OCR provider')
     model = os.environ.get("OCR_CLOUD_MODEL", "").strip()
     endpoint = os.environ.get("OCR_CLOUD_ENDPOINT", "").strip()
     api_key = os.environ.get("OCR_CLOUD_API_KEY", "").strip()
     if not all((model, endpoint, api_key)):
         return {}
+    if provider == 'moma':
+        from app.plus.moma_security import require_https_endpoint
+        require_https_endpoint(endpoint)
     return {"model": model, "endpoint": endpoint, "api_key": api_key, "enabled": True}

@@ -3017,6 +3017,8 @@ def ai_checkpoint_client_fingerprint(client) -> str | None:
     if any(not isinstance(value, str) or not value for value in values):
         return None
     values.append(bool(getattr(client, "enable_thinking", False)))
+    if getattr(client, "provider", "legacy") == "moma":
+        values.append("moma")
     payload = json.dumps(["bs-ai-checkpoint-client-v1", *values], ensure_ascii=False, separators=(",", ":"))
     secret = get_settings().SECRET_KEY.encode("utf-8")
     return hmac.new(secret, payload.encode("utf-8"), hashlib.sha256).hexdigest()

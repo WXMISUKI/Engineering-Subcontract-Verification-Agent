@@ -56,6 +56,7 @@
 
 - 业务分析使用 `LLM_MODEL`、`LLM_API_BASE`、`LLM_API_KEY`；地址须符合现有 OpenAI 兼容客户端的接口约定。
 - 业务材料线上识别使用 `OCR_CLOUD_MODEL`、`OCR_CLOUD_ENDPOINT`、`OCR_CLOUD_API_KEY`。`OCR_CLOUD_ENDPOINT` 是现有云 OCR 客户端使用的完整接口地址，并非业务模型的基础地址；更换服务商时还须确认请求和响应协议兼容，否则需要适配代码，不能保证仅修改地址即可使用。
+- MoMA 业务文本与扫描页识别的配置、安全边界及尚未完成的验收，参见 [MoMA 适配配置与验收说明](../bs-moma-provider-adaptation/operator-guide.md)。该适配的本地模拟验证不代表已完成目标服务联通。
 - 知识索引使用 `EMBEDDING_MODEL`、`EMBEDDING_API_BASE`、`EMBEDDING_API_KEY`、`EMBEDDING_DIMENSION`；扫描知识资料解析另用 `KNOWLEDGE_VLM_MODEL`、`KNOWLEDGE_VLM_API_BASE`、`KNOWLEDGE_VLM_API_KEY`。按实际网络配置精确域名白名单。索引模型和扫描解析模型分别核实，不能直接假定与业务 OCR 相同。
 
 已有知识库更换 Embedding 模型或维度时，不应直接沿用旧向量索引：先备份并制定迁移方案，在隔离的新知识库中重新导入、建立索引并验证召回，再受控切换绑定。业务密钥、数据库密码和知识服务稳定加密密钥各自独立管理；不要在排障时公开包含密钥的完整 Compose 配置。
