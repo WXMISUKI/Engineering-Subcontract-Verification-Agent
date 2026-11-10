@@ -11,3 +11,8 @@ dist/
 .venv/
 backend/app/uploads/
 .research/
+# MoMA 的本地交接、资料副本和过程规格；正式代码与回归测试仍跟踪。
+/docs/2026-11-10-moma-adaptation-handoff.md
+/docs/2026-11-10-cleanup-review-inventory.md
+/docs/moma-reference-2026-11-10/
+/openspec/changes/bs-moma-provider-adaptation/
