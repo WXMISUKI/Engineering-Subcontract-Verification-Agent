@@ -1,0 +1,415 @@
+{
+  "_comment": "模型目录种子（价格基线 2026-11-05，来源：百炼模型广场/模型调用价格页，华北2）。只含目录与价格，不含任何密钥；provider 的 api_key_ref 写 env 变量名。价格为种子值，管理员可在「模型与计费」页调权（草稿→发布），历史账单按旧版本不变。金额单位：微积分；1 积分 = 1,000,000 微积分；1 元 = 100 积分。token 权重单位=微积分/千 token；非 token 单价=微积分/单位。",
+  "providers": [
+    {
+      "code": "default",
+      "name": "默认 OpenAI 兼容端点",
+      "protocol": "openai_compatible",
+      "base_url": "",
+      "api_key_ref": "LLM_API_KEY",
+      "enabled": true
+    },
+    {
+      "code": "dashscope",
+      "name": "阿里云百炼（OCR / embedding）",
+      "protocol": "openai_compatible",
+      "base_url": "",
+      "api_key_ref": "OCR_CLOUD_API_KEY",
+      "enabled": true
+    },
+    {
+      "code": "coze",
+      "name": "Coze",
+      "protocol": "coze",
+      "base_url": "https://api.coze.cn",
+      "api_key_ref": "COZE_API_KEY",
+      "enabled": true
+    },
+    {
+      "code": "mimo",
+      "name": "MiMo TTS",
+      "protocol": "mimo",
+      "base_url": "https://api.xiaomimimo.com/v1/chat/completions",
+      "api_key_ref": "MIMO_API_KEY",
+      "enabled": true
+    },
+    {
+      "code": "local",
+      "name": "本地模型（RapidOCR 等）",
+      "protocol": "local",
+      "base_url": "",
+      "api_key_ref": "",
+      "enabled": true
+    }
+  ],
+  "models": [
+    {
+      "code": "qwen3.7-flash",
+      "display_name": "Qwen3.7 Flash",
+      "provider": "default",
+      "upstream_model": "qwen3.7-flash",
+      "unit_type": "token",
+      "unit_scale": 1000,
+      "context_size": 129024,
+      "context_size_limit": 129024,
+      "max_output": 8192,
+      "supports_vision": true,
+      "supports_tools": true,
+      "supports_reasoning": false,
+      "is_user_selectable": true,
+      "enabled": true,
+      "sort_order": 10,
+      "price": {
+        "cache_hit_input_micro_per_1k": 4000,
+        "cache_miss_input_micro_per_1k": 20000,
+        "cache_write_input_micro_per_1k": 0,
+        "output_micro_per_1k": 80000,
+        "tiers": [
+          {
+            "up_to_input_tokens": 32000,
+            "cache_hit_input_micro_per_1k": 4000,
+            "cache_miss_input_micro_per_1k": 20000,
+            "cache_write_input_micro_per_1k": 0,
+            "output_micro_per_1k": 80000
+          },
+          {
+            "up_to_input_tokens": 256000,
+            "cache_hit_input_micro_per_1k": 12000,
+            "cache_miss_input_micro_per_1k": 60000,
+            "cache_write_input_micro_per_1k": 0,
+            "output_micro_per_1k": 240000
+          },
+          {
+            "up_to_input_tokens": 1000000,
+            "cache_hit_input_micro_per_1k": 24000,
+            "cache_miss_input_micro_per_1k": 120000,
+            "cache_write_input_micro_per_1k": 0,
+            "output_micro_per_1k": 480000
+          }
+        ],
+        "note": "百炼官方不打折价（华北2，2026-11-05）：≤32K 0.2/0.8、32K-256K 0.6/2.4、256K-1M 1.2/4.8 元每百万 token；隐式缓存命中按输入20%。按单次调用输入 token 选档，聚合台账按平均每调输入选档。"
+      }
+    },
+    {
+      "code": "qwen3.7-plus",
+      "display_name": "Qwen3.7 Plus",
+      "provider": "default",
+      "upstream_model": "qwen3.7-plus",
+      "unit_type": "token",
+      "unit_scale": 1000,
+      "context_size": 129024,
+      "context_size_limit": 129024,
+      "max_output": 16384,
+      "supports_vision": true,
+      "supports_tools": true,
+      "supports_reasoning": true,
+      "is_user_selectable": true,
+      "enabled": true,
+      "sort_order": 20,
+      "price": {
+        "cache_hit_input_micro_per_1k": 40000,
+        "cache_miss_input_micro_per_1k": 200000,
+        "cache_write_input_micro_per_1k": 0,
+        "output_micro_per_1k": 800000,
+        "tiers": [
+          {
+            "up_to_input_tokens": 256000,
+            "cache_hit_input_micro_per_1k": 40000,
+            "cache_miss_input_micro_per_1k": 200000,
+            "cache_write_input_micro_per_1k": 0,
+            "output_micro_per_1k": 800000
+          },
+          {
+            "up_to_input_tokens": 1000000,
+            "cache_hit_input_micro_per_1k": 120000,
+            "cache_miss_input_micro_per_1k": 600000,
+            "cache_write_input_micro_per_1k": 0,
+            "output_micro_per_1k": 2400000
+          }
+        ],
+        "note": "百炼官方不打折价（华北2，2026-11-05）：≤256K 2/8、256K-1M 6/24 元每百万 token；隐式缓存命中按输入20%。平台按不打折价，不使用限时8折；思考模式输入官方8元档暂未单列。"
+      }
+    },
+    {
+      "code": "qwen3.5-ocr",
+      "display_name": "Qwen3.5 OCR",
+      "provider": "dashscope",
+      "upstream_model": "qwen3.5-ocr",
+      "unit_type": "token",
+      "unit_scale": 1000,
+      "supports_vision": true,
+      "is_user_selectable": false,
+      "enabled": true,
+      "sort_order": 30,
+      "price": {
+        "cache_hit_input_micro_per_1k": 0,
+        "cache_miss_input_micro_per_1k": 50000,
+        "cache_write_input_micro_per_1k": 0,
+        "output_micro_per_1k": 200000,
+        "note": "百炼官方价（华北2，2026-11-05）：qwen3.5-ocr 输入0.5/输出2元每百万token；按实际usage计费，不再按页。"
+      }
+    },
+    {
+      "code": "qwen3-vl-plus",
+      "display_name": "Qwen3-VL-Plus（视觉兜底）",
+      "provider": "default",
+      "upstream_model": "qwen3-vl-plus",
+      "unit_type": "token",
+      "unit_scale": 1000,
+      "context_size": 260096,
+      "max_output": 32768,
+      "context_size_limit": 260096,
+      "supports_vision": true,
+      "is_user_selectable": false,
+      "enabled": true,
+      "sort_order": 40,
+      "price": {
+        "cache_hit_input_micro_per_1k": 20000,
+        "cache_miss_input_micro_per_1k": 100000,
+        "cache_write_input_micro_per_1k": 0,
+        "output_micro_per_1k": 1000000,
+        "tiers": [
+          {
+            "up_to_input_tokens": 32000,
+            "cache_hit_input_micro_per_1k": 20000,
+            "cache_miss_input_micro_per_1k": 100000,
+            "cache_write_input_micro_per_1k": 0,
+            "output_micro_per_1k": 1000000
+          },
+          {
+            "up_to_input_tokens": 128000,
+            "cache_hit_input_micro_per_1k": 30000,
+            "cache_miss_input_micro_per_1k": 150000,
+            "cache_write_input_micro_per_1k": 0,
+            "output_micro_per_1k": 1500000
+          },
+          {
+            "up_to_input_tokens": 256000,
+            "cache_hit_input_micro_per_1k": 60000,
+            "cache_miss_input_micro_per_1k": 300000,
+            "cache_write_input_micro_per_1k": 0,
+            "output_micro_per_1k": 3000000
+          }
+        ],
+        "note": "百炼 qwen3-vl-plus 官方价（华北2，2026-11-05）：≤32K 1/10、32K-128K 1.5/15、128K-256K 3/30 元每百万 token；缓存命中按输入 20%。视觉兜底按实际 usage 计费，不再按张。"
+      }
+    },
+    {
+      "code": "text-embedding-v3",
+      "display_name": "Text Embedding v3",
+      "provider": "dashscope",
+      "upstream_model": "text-embedding-v3",
+      "unit_type": "token",
+      "unit_scale": 1000,
+      "supports_vision": false,
+      "is_user_selectable": false,
+      "enabled": true,
+      "sort_order": 50,
+      "price": {
+        "cache_hit_input_micro_per_1k": 0,
+        "cache_miss_input_micro_per_1k": 50000,
+        "cache_write_input_micro_per_1k": 0,
+        "output_micro_per_1k": 0,
+        "note": "embedding 只有输入，无缓存"
+      }
+    },
+    {
+      "code": "mimo-v2.5-tts",
+      "display_name": "MiMo TTS",
+      "provider": "mimo",
+      "upstream_model": "mimo-v2.5-tts",
+      "unit_type": "char",
+      "unit_scale": 1000,
+      "supports_vision": false,
+      "is_user_selectable": false,
+      "enabled": true,
+      "sort_order": 60,
+      "price": {
+        "unit_micro_per_unit": 500000,
+        "note": "按千字符计价种子价"
+      }
+    },
+    {
+      "code": "coze-default",
+      "display_name": "Coze 默认 Bot",
+      "provider": "coze",
+      "upstream_model": "coze-default",
+      "unit_type": "token",
+      "unit_scale": 1000,
+      "is_user_selectable": false,
+      "enabled": true,
+      "sort_order": 70,
+      "price": {
+        "cache_hit_input_micro_per_1k": 0,
+        "cache_miss_input_micro_per_1k": 300000,
+        "cache_write_input_micro_per_1k": 0,
+        "output_micro_per_1k": 900000,
+        "note": "Coze 无缓存上报，输入按未命中计"
+      }
+    },
+    {
+      "code": "rapidocr-local",
+      "display_name": "RapidOCR（本地）",
+      "provider": "local",
+      "upstream_model": "rapidocr",
+      "unit_type": "page",
+      "unit_scale": 1,
+      "is_user_selectable": false,
+      "enabled": true,
+      "billable": false,
+      "sort_order": 80,
+      "price": {
+        "unit_micro_per_unit": 0,
+        "note": "本地无外部费用，只统计"
+      }
+    },
+    {
+      "_comment": "2026-11-02：按百炼官方价补默认价（华北2，元/百万 token ÷10 = 积分/千 token；缓存命中/写入按平台 25%/125% 默认）。",
+      "code": "qwen3.8-flash",
+      "display_name": "Qwen3.8 Flash",
+      "provider": "default",
+      "upstream_model": "qwen3.8-flash",
+      "unit_type": "token",
+      "unit_scale": 1000,
+      "context_size": 129024,
+      "context_size_limit": 129024,
+      "max_output": 8192,
+      "is_user_selectable": true,
+      "enabled": true,
+      "sort_order": 21,
+      "price": {
+        "cache_hit_input_micro_per_1k": 10000,
+        "cache_miss_input_micro_per_1k": 80000,
+        "cache_write_input_micro_per_1k": 0,
+        "output_micro_per_1k": 270000,
+        "note": "百炼官方价（华北2，2026-11-05）：0.8/2.7 元/百万 token；隐式缓存命中 0.1 元/百万（12.5%）"
+      }
+    },
+    {
+      "code": "qwen3.8-max",
+      "display_name": "Qwen3.8 Max",
+      "provider": "default",
+      "upstream_model": "qwen3.8-max",
+      "unit_type": "token",
+      "unit_scale": 1000,
+      "context_size": 129024,
+      "context_size_limit": 129024,
+      "max_output": 8192,
+      "is_user_selectable": true,
+      "enabled": true,
+      "sort_order": 23,
+      "price": {
+        "cache_hit_input_micro_per_1k": 240000,
+        "cache_miss_input_micro_per_1k": 1200000,
+        "cache_write_input_micro_per_1k": 0,
+        "output_micro_per_1k": 3600000,
+        "note": "百炼官方价（华北2，2026-11-05）：12/36 元/百万 token；隐式缓存命中按输入 20%（官方特殊比例以控制台为准）"
+      }
+    },
+    {
+      "code": "qwen3.7-max",
+      "display_name": "Qwen3.7 Max",
+      "provider": "default",
+      "upstream_model": "qwen3.7-max",
+      "unit_type": "token",
+      "unit_scale": 1000,
+      "context_size": 129024,
+      "context_size_limit": 129024,
+      "max_output": 8192,
+      "is_user_selectable": true,
+      "enabled": true,
+      "sort_order": 24,
+      "price": {
+        "cache_hit_input_micro_per_1k": 240000,
+        "cache_miss_input_micro_per_1k": 1200000,
+        "cache_write_input_micro_per_1k": 0,
+        "output_micro_per_1k": 3600000,
+        "note": "百炼官方价（华北2，2026-11-05）：12/36 元/百万 token；隐式缓存命中按输入 20%"
+      }
+    },
+    {
+      "code": "deepseek-v4.1-flash",
+      "display_name": "DeepSeek V4.1 Flash",
+      "provider": "default",
+      "upstream_model": "deepseek-v4.1-flash",
+      "unit_type": "token",
+      "unit_scale": 1000,
+      "context_size": 129024,
+      "context_size_limit": 129024,
+      "max_output": 8192,
+      "is_user_selectable": true,
+      "enabled": true,
+      "sort_order": 25,
+      "price": {
+        "cache_hit_input_micro_per_1k": 20000,
+        "cache_miss_input_micro_per_1k": 200000,
+        "cache_write_input_micro_per_1k": 0,
+        "output_micro_per_1k": 800000,
+        "note": "百炼官方价（华北2，2026-11-05）：忙时 2/8、闲时 1/4 元/百万 token；平台按忙时价默认，隐式缓存命中 10%。闲时调用会高估，时间分档待后续支持"
+      }
+    },
+    {
+      "code": "deepseek-v4-pro",
+      "display_name": "DeepSeek V4 Pro",
+      "provider": "default",
+      "upstream_model": "deepseek-v4-pro",
+      "unit_type": "token",
+      "unit_scale": 1000,
+      "context_size": 129024,
+      "context_size_limit": 129024,
+      "max_output": 8192,
+      "is_user_selectable": true,
+      "enabled": true,
+      "sort_order": 26,
+      "price": {
+        "cache_hit_input_micro_per_1k": 120000,
+        "cache_miss_input_micro_per_1k": 1200000,
+        "cache_write_input_micro_per_1k": 0,
+        "output_micro_per_1k": 2400000,
+        "note": "百炼官方价（华北2，2026-11-05）：12/24 元/百万 token；隐式缓存命中 10%"
+      }
+    },
+    {
+      "code": "kimi-k3",
+      "display_name": "Kimi K3",
+      "provider": "default",
+      "upstream_model": "kimi-k3",
+      "unit_type": "token",
+      "unit_scale": 1000,
+      "context_size": 129024,
+      "context_size_limit": 129024,
+      "max_output": 8192,
+      "is_user_selectable": true,
+      "enabled": true,
+      "sort_order": 27,
+      "price": {
+        "cache_hit_input_micro_per_1k": 200000,
+        "cache_miss_input_micro_per_1k": 2000000,
+        "cache_write_input_micro_per_1k": 0,
+        "output_micro_per_1k": 10000000,
+        "note": "百炼官方价（华北2，2026-11-05）：20/100 元/百万 token；隐式缓存命中 10%"
+      }
+    },
+    {
+      "code": "glm-5.3",
+      "display_name": "GLM 5.3",
+      "provider": "default",
+      "upstream_model": "glm-5.3",
+      "unit_type": "token",
+      "unit_scale": 1000,
+      "context_size": 129024,
+      "context_size_limit": 129024,
+      "max_output": 8192,
+      "is_user_selectable": true,
+      "enabled": true,
+      "sort_order": 28,
+      "price": {
+        "cache_hit_input_micro_per_1k": 200000,
+        "cache_miss_input_micro_per_1k": 800000,
+        "cache_write_input_micro_per_1k": 0,
+        "output_micro_per_1k": 2800000,
+        "note": "百炼官方价（华北2，2026-11-05）：8/28 元/百万 token；隐式缓存命中 25%"
+      }
+    }
+  ]
+}

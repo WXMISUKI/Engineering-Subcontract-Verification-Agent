@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import uuid
+from datetime import datetime
 from types import SimpleNamespace
 
 from sqlalchemy.orm import Session
@@ -21,12 +22,12 @@ logger = logging.getLogger(__name__)
 
 class BackgroundReviewIncomplete(Exception):
     def __init__(self, categories=()):
-        self.categories = sorted(set(categories) & {'timeout', 'invalid_response', 'input_budget', 'model_call_error',
-                                                    'rate_limit', 'authentication', 'service_error'})
+        self.categories = sorted(set(categories) & ai_advisory_snapshots.FAILURE_CATEGORIES)
         super().__init__('部分 AI 核查未完成')
 
 
-def project_job_state(event, *, active_job_ids, instance_id):
+def project_job_state(event, *, active_job_ids, instance_id, progress_event=None, now=None,
+                      stale_after_seconds=1800):
     if event is None:
         return {'state': 'not_started'}
     payload = event.payload_json or {}
@@ -43,6 +44,31 @@ def project_job_state(event, *, active_job_ids, instance_id):
     else:
         return {'state': 'unavailable'}
     result = {'state': state, 'job_id': payload['job_id'], 'review_run_id': payload['review_run_id']}
+    if state in {'running', 'interrupted', 'failed'}:
+        from .service import _safe_event_diagnostics
+        progress_payload = _safe_event_diagnostics(progress_event.payload_json) if progress_event is not None else {}
+        last_event = progress_event or event
+        last_at = getattr(last_event, 'created_at', None)
+        observed_at = now or datetime.now(last_at.tzinfo if last_at and last_at.tzinfo else None)
+        if last_at is not None and last_at.tzinfo is None and observed_at.tzinfo is not None:
+            last_at = last_at.replace(tzinfo=observed_at.tzinfo)
+        elif last_at is not None and last_at.tzinfo is not None and observed_at.tzinfo is None:
+            observed_at = observed_at.replace(tzinfo=last_at.tzinfo)
+        age_seconds = max(0, int((observed_at - last_at).total_seconds())) if last_at else None
+        result.update({
+            'request_id': progress_payload.get('request_id'),
+            'current_group': progress_payload.get('group_id') or _safe_event_diagnostics({'group_id': payload.get('current_group')}).get('group_id'),
+            'current_batch': ({'index': progress_payload.get('batch_index'),
+                               'total': progress_payload.get('batch_total'),
+                               'status': progress_payload.get('status')}
+                              if progress_payload.get('batch_index') is not None else None),
+            'last_progress_at': last_at.isoformat() if last_at else None,
+            'progress_age_seconds': age_seconds,
+            'stale_candidate': state == 'running' and (age_seconds is None or age_seconds >= stale_after_seconds),
+            'diagnostic_state': ('无法核实' if progress_event is None else
+                                 '已中断' if state == 'interrupted' else
+                                 '执行失败' if state == 'failed' else '可定位'),
+        })
     if state == 'completed':
         result['warning'] = payload.get('warning') is True
         result['unlocated_scope_count'] = payload.get('unlocated_scope_count', 0)
@@ -50,8 +76,7 @@ def project_job_state(event, *, active_job_ids, instance_id):
         result['reason'] = payload.get('reason', 'execution_failed')
         categories = payload.get('failure_categories')
         result['failure_categories'] = [value for value in categories if isinstance(value, str)
-                                        and value in {'timeout', 'invalid_response', 'input_budget', 'model_call_error',
-                                                      'rate_limit', 'authentication', 'service_error'}] if isinstance(categories, list) else []
+                                        and value in ai_advisory_snapshots.FAILURE_CATEGORIES] if isinstance(categories, list) else []
     return result
 
 
@@ -68,14 +93,16 @@ def job_status(db, task, review_run_id):
     state = project_job_state(_latest(db, task.id, review_run_id),
                               active_job_ids=set(ACTIVE_JOBS), instance_id=INSTANCE_ID)
     if state['state'] == 'completed' and not _completed_coverage_valid(db, task, review_run_id):
-        return {'state': 'unavailable'}
-    if state['state'] == 'running':
+        return {'state': 'unavailable', 'last_recorded_state': 'completed',
+                'job_id': state['job_id'], 'review_run_id': state['review_run_id'], 'diagnostic_state': '无法核实'}
+    if state['state'] in {'running', 'interrupted', 'failed'}:
         progress = (db.query(BsTaskEvent).filter(BsTaskEvent.task_id == task.id,
-                    BsTaskEvent.event_type == PROGRESS,
+                    BsTaskEvent.event_type.in_((PROGRESS, 'check.ai_batch_progress')),
                     BsTaskEvent.payload_json['job_id'].as_string() == state['job_id'])
                     .order_by(BsTaskEvent.sequence.desc()).first())
-        if progress:
-            state['current_group'] = (progress.payload_json or {}).get('group_id')
+        state = project_job_state(_latest(db, task.id, review_run_id),
+                                  active_job_ids=set(ACTIVE_JOBS), instance_id=INSTANCE_ID,
+                                  progress_event=progress)
     return state
 
 
@@ -131,8 +158,27 @@ def submit_background_job(db, task_id, user, review_run_id, *, retry=False):
         return existing
     if existing['state'] == 'unavailable':
         raise ValueError('已有后台任务记录无法核实')
+    if existing['state'] == 'interrupted':
+        # 未收到终态的 started 可能属于另一工作进程，不能以本进程内存为空
+        # 推断它已停止；任务行锁只串行化提交，不证明旧工作已退出。
+        raise ValueError('无法确认先前后台任务已停止，请联系人工复核')
     if service.current_ai_advisory_pending(db, task):
         raise ValueError('已有 AI 核查仍在运行或租约未到期，请稍后再试')
+    if retry and existing['state'] == 'failed':
+        try:
+            coverage = ai_advisory_snapshots.collect_current_coverage(db, task, snapshot, reporting.report_review_blocking)
+            rows = (coverage or {}).get('groups')
+            if (not isinstance(coverage, dict) or coverage.get('state') != 'available'
+                    or not isinstance(rows, list) or len(rows) != len(groups)
+                    or {row.get('group_id') for row in rows if isinstance(row, dict)} != set(groups)
+                    or any(not isinstance(row, dict) or row.get('state') != 'available'
+                           or not isinstance(row.get('counts'), dict)
+                           or any(type(row['counts'].get(key)) is not int or row['counts'][key] < 0
+                                  for key in ('not_started', 'pending', 'completed', 'partial', 'failed', 'not_run'))
+                           or row['counts']['pending'] for row in rows)):
+                raise ValueError('当前 AI 覆盖状态无法核实，请刷新或联系人工复核')
+        except Exception as exc:
+            raise ValueError('当前 AI 覆盖状态无法核实，请刷新或联系人工复核') from exc
     job_id = uuid.uuid4().hex
     service.add_event(db, task_id, STARTED, stage='check', payload={
         'job_id': job_id, 'review_run_id': review_run_id, 'instance_id': INSTANCE_ID,
@@ -151,9 +197,11 @@ async def _run_background(bind, task_id, user_id, user_type, review_run_id, job_
     from ...standalone.identity import User
     actor = SimpleNamespace(id=user_id, user_type=user_type)
     warning, unlocated_count = False, 0
+    phase = 'checking_group'
     try:
         for group in groups:
             with Session(bind) as db:
+                phase = 'checking_group'
                 task = db.query(BsTask).filter_by(id=task_id).with_for_update().one_or_none()
                 account = db.get(User, user_id)
                 if (not task or not account or not account.is_active or task.created_by != user_id
@@ -178,14 +226,17 @@ async def _run_background(bind, task_id, user_id, user_type, review_run_id, job_
                     'job_id': job_id, 'review_run_id': review_run_id, 'group_id': group}, commit=False)
                 db.commit()
                 if counts['not_started'] or (retry and retryable > 0):
+                    phase = 'running_advisory'
                     ids = ai_advisory_snapshots.advisory_group_ids(run)
                     if ids:
                         await service.run_linked_batch_ai_advisory(db, task, actor, group_id=group,
-                            finding_ids=ids, resume_partial=retry, expected_run_id=run['run_id'], retry_failed=retry)
+                            finding_ids=ids, resume_partial=retry, expected_run_id=run['run_id'], retry_failed=retry,
+                            background_job_id=job_id)
                     if group == 'a1':
                         await service.run_negative_candidate_ai_advisory(db, task, actor, max_batches=64,
-                            expected_run_id=run['run_id'], retry=retry)
+                            expected_run_id=run['run_id'], retry=retry, background_job_id=job_id)
             with Session(bind) as db:
+                phase = 'checking_coverage'
                 task = db.get(BsTask, task_id)
                 snapshot = reference_snapshots.get_reference_snapshot(db, task) if task else None
                 if not snapshot or snapshot.get('review_run_id') != review_run_id:
@@ -201,6 +252,7 @@ async def _run_background(bind, task_id, user_id, user_type, review_run_id, job_
                 warning |= bool(status['skipped'] or counts['partial'] or counts['not_run'] or counts['failed'])
                 unlocated_count += status.get('unlocated_scope_reviewable', 0)
         with Session(bind) as db:
+            phase = 'finishing_job'
             task = db.query(BsTask).filter_by(id=task_id).with_for_update().one_or_none()
             if not task or (task.options_snapshot_json or {}).get(reference_snapshots.REVIEW_POINTER) != review_run_id:
                 raise ValueError('核查运行已变化')
@@ -211,7 +263,17 @@ async def _run_background(bind, task_id, user_id, user_type, review_run_id, job_
     except asyncio.CancelledError:
         raise
     except Exception as exc:
-        logger.warning('AI background job failed task=%s type=%s', task_id, type(exc).__name__)
+        failure_categories = (exc.categories if isinstance(exc, BackgroundReviewIncomplete)
+                              else ['timeout'] if isinstance(exc, (TimeoutError, asyncio.TimeoutError)) else [])
+        diagnostic = {'task_id': task_id, 'review_run_id': review_run_id, 'job_id': job_id,
+                      'group_id': group if 'group' in locals() else None,
+                      'phase': phase,
+                      'exception_type': type(exc).__name__,
+                      'failure_categories': failure_categories}
+        logger.warning('AI background job failed task_id=%s review_run_id=%s job_id=%s group_id=%s '
+                       'phase=%s exception_type=%s failure_categories=%s', task_id, review_run_id, job_id,
+                       diagnostic['group_id'], phase, diagnostic['exception_type'], failure_categories,
+                       extra={'diagnostic': diagnostic})
         try:
             with Session(bind) as db:
                 task = db.query(BsTask).filter_by(id=task_id).with_for_update().one_or_none()
@@ -219,7 +281,13 @@ async def _run_background(bind, task_id, user_id, user_type, review_run_id, job_
                     service.add_event(db, task_id, FAILED, stage='check', payload={
                         'job_id': job_id, 'review_run_id': review_run_id, 'instance_id': INSTANCE_ID,
                         'reason': 'execution_failed',
-                        'failure_categories': exc.categories if isinstance(exc, BackgroundReviewIncomplete) else []}, commit=False)
+                        'exception_type': type(exc).__name__,
+                        'failure_categories': failure_categories}, commit=False)
                     db.commit()
-        except Exception:
-            logger.warning('AI background job failure could not be recorded task=%s', task_id)
+        except Exception as record_exc:
+            record_diagnostic = {
+                'task_id': task_id, 'review_run_id': review_run_id, 'job_id': job_id,
+                'exception_type': type(record_exc).__name__}
+            logger.warning('AI background job failure could not be recorded task_id=%s review_run_id=%s '
+                           'job_id=%s exception_type=%s', task_id, review_run_id, job_id,
+                           type(record_exc).__name__, extra={'diagnostic': record_diagnostic})

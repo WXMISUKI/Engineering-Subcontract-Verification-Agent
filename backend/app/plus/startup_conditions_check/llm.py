@@ -24,13 +24,14 @@ def require_model():
 
 class OpenAICompatibleClient:
     def __init__(self, base_url, api_key, model, enable_thinking=False, prompt_cache_key=None, timeout=None,
-                 provider='legacy'):
+                 max_retries=None, provider='legacy'):
         self.base_url = base_url
         self.api_key = api_key
         self.model = model
         self.enable_thinking = enable_thinking
         self.prompt_cache_key = prompt_cache_key
         self.timeout = timeout
+        self.max_retries = max_retries
         self.provider = provider
 
     def _extra(self):
@@ -43,11 +44,11 @@ class OpenAICompatibleClient:
 
     async def complete(self, messages, on_usage=None):
         from openai import AsyncOpenAI
-        options = {}
+        retry_options = {'max_retries': self.max_retries} if self.max_retries is not None else {}
         if self.provider == 'moma':
             import httpx
-            options['http_client'] = httpx.AsyncClient(follow_redirects=False, timeout=self.timeout)
-        client = AsyncOpenAI(base_url=self.base_url, api_key=self.api_key, timeout=self.timeout, **options)
+            retry_options['http_client'] = httpx.AsyncClient(follow_redirects=False, timeout=self.timeout)
+        client = AsyncOpenAI(base_url=self.base_url, api_key=self.api_key, timeout=self.timeout, **retry_options)
         try:
             response = await client.chat.completions.create(
                 model=self.model, messages=messages, stream=False, temperature=0.2, **self._extra())
@@ -67,7 +68,7 @@ def llm_configured(model_code=None):
                 and (model_code is None or model_code == model))
 
 
-def client_from_env(enable_thinking=False, prompt_cache_key=None, model_code=None):
+def client_from_env(enable_thinking=False, prompt_cache_key=None, model_code=None, max_retries=None):
     provider = os.environ.get('LLM_PROVIDER', 'legacy').strip().lower()
     if provider not in ('legacy', 'moma'):
         raise ValueError('不支持的业务模型 provider')
@@ -79,7 +80,7 @@ def client_from_env(enable_thinking=False, prompt_cache_key=None, model_code=Non
         base_url=os.environ['LLM_API_BASE'].strip(), api_key=os.environ['LLM_API_KEY'].strip(),
         model=os.environ['LLM_MODEL'].strip(), enable_thinking=enable_thinking,
         prompt_cache_key=prompt_cache_key, timeout=float(os.environ.get('LLM_TIMEOUT_SECONDS', '120')),
-        provider=provider)
+        max_retries=max_retries, provider=provider)
 
 
 def run_sync(coro):

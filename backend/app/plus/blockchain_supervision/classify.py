@@ -26,6 +26,21 @@ ROLE_LABELS = {
     ROLE_UNKNOWN: "待归类",
 }
 
+
+def validate_role(role: str | None) -> str | None:
+    """Validate an explicitly supplied material role.
+
+    ``None`` means automatic filename classification and is intentionally allowed.
+    Any explicit value must use the same vocabulary as the role-correction API;
+    otherwise callers could persist an unrenderable role and bypass material
+    readiness/counting rules.
+    """
+    if role is None:
+        return None
+    if role not in ROLE_LABELS:
+        raise ValueError("未知归属类型")
+    return role
+
 # 顺序即优先级：报审类文件名常含「分包」二字（如 报审包-甲·分包合同报审表.pdf），
 # 必须先判 packet 再判 sub（v6 原型同口径）。
 _CLASSIFY_RULES = (

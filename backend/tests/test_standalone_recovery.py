@@ -70,3 +70,37 @@ def test_lock_failure_prevents_recovery(monkeypatch, tmp_path):
     with Session(engine) as db:
         assert db.get(BsTask, 1).state == 'preparing'
         assert db.get(BsMaterial, 1).parse_state == 'parsing'
+
+
+def test_startup_marks_interrupted_supplement_candidate_failed(monkeypatch, tmp_path):
+    from app.standalone import runtime
+
+    @contextmanager
+    def lock(path):
+        yield
+
+    monkeypatch.setattr(runtime, 'exclusive_instance', lock)
+    engine = make_engine()
+    with Session(engine) as db:
+        task = db.get(BsTask, 1)
+        task.options_snapshot_json = {
+            'supplement_plan': {'status': 'running', 'generation_id': 'restart-g1'},
+            'supplement_edit': {'generation_id': 'restart-g1', 'previous_version_no': 4},
+            'supplement_publication': {
+                'state': 'candidate', 'baseline_version_no': 4,
+                'candidate_generation_id': 'restart-g1',
+            },
+        }
+        db.commit()
+
+    with TestClient(create_app(engine, 'x' * 64, runtime_lock_dir=tmp_path)):
+        pass
+
+    with Session(engine) as db:
+        task = db.get(BsTask, 1)
+        publication = task.options_snapshot_json['supplement_publication']
+        assert publication['state'] == 'failed'
+        assert publication['baseline_version_no'] == 4
+        assert publication['candidate_generation_id'] == 'restart-g1'
+        assert publication['last_failure']['reason'] == 'service_restart'
+        assert db.query(BsTaskEvent).filter_by(event_type='task.supplement_failed').count() == 1

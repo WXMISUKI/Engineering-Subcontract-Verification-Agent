@@ -57,6 +57,16 @@ export function buildSubjectsById(subjects) {
 }
 
 /**
+ * 任务头补件入口只允许复用后端明确聚合出的可补件项。
+ * 缺件计划为空时返回 null，调用方必须停在当前页面并说明原因，
+ * 不得凭材料名称创建一个没有主体/条目上下文的泛化上传。
+ */
+export function headerSupplementItemOf(missingPlan) {
+  const item = missingPlan?.missing?.[0]
+  return item && typeof item === 'object' ? item : null
+}
+
+/**
  * 后端结论与材料主体一致时使用已登记主体；两者冲突或主体无法查实则待确认。
  */
 export function resolveFindingSubject(finding, materialsById = {}, subjectsById = {}) {
@@ -181,6 +191,11 @@ function toItem(finding, resolved) {
     explanation: cleanText(finding.explanation),
     ruleReason: cleanText(finding.rule_reason ?? finding.ruleReason),
     quote: cleanText(finding.quote),
+    reasonCode: finding.reason_code ?? finding.reasonCode
+      ?? (Array.isArray(finding.evidence)
+        ? (finding.evidence.find((ref) => ref && ref.reason_code)?.reason_code ?? null)
+        : null),
+    reasonLabel: finding.reason_label ?? finding.reasonLabel ?? null,
     // 刀D（设计 104 §3）：规则依据视图（条目→条款坐标），左栏选中卡片与详情面板共用。
     basis: toBasisView(finding.basis),
     basisStatus: finding.basis_status ?? finding.basisStatus ?? null,
@@ -199,6 +214,7 @@ function toItem(finding, resolved) {
     // 只透传与主材料、页码一致的证据引用。
     anchor: finding.anchor ?? primaryEvidenceRef(finding)?.anchor ?? null,
     decisionTrace: finding.decision_trace ?? finding.decisionTrace ?? null,
+    aiAdjudication: finding.ai_adjudication ?? finding.aiAdjudication ?? null,
     page: finding.page ?? null,
     locationMode: finding.location_mode ?? null,
     materialId: finding.material_id ?? null,

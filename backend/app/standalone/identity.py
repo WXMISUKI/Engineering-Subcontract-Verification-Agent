@@ -1,7 +1,7 @@
 """独立应用账号和会话；调用方负责选择隔离数据库并初始化表。"""
 
 import bcrypt
-from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, select
+from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, Text, select
 from sqlalchemy.orm import DeclarativeBase, Session
 from ..plus.blockchain_supervision.manifest import manifest
 
@@ -26,7 +26,11 @@ class User(Base):
 class Agent(Base):
     __tablename__ = 'agents'
     id = Column(Integer, primary_key=True)
+    name = Column(String(100), nullable=False, default='工程分包审查智能体')
     slug = Column(String(100), nullable=False, unique=True)
+    description = Column(Text, nullable=True)
+    usage_count = Column(Integer, nullable=False, default=0)
+    market_status = Column(String(16), nullable=False, default='published')
 
 
 class ConversationMapping(Base):
@@ -46,6 +50,6 @@ def create_account(engine, username: str, password: str) -> None:
     password_hash = bcrypt.hashpw(raw, bcrypt.gensalt()).decode('ascii')
     with Session(engine) as session:
         if not session.scalar(select(Agent).where(Agent.slug == manifest['code'])):
-            session.add(Agent(slug=manifest['code']))
+            session.add(Agent(slug=manifest['code'], name=manifest.get('name', '工程分包审查智能体')))
         session.add(User(username=username, password_hash=password_hash))
         session.commit()

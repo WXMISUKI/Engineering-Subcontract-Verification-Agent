@@ -8,6 +8,9 @@ class Settings:
     SECRET_KEY: str
     BLOCKCHAIN_SUPERVISION_UPLOAD_MAX_MB: int
     BS_WEKNORA_KB_MAP: str
+    LLM_MODEL: str = ''
+    DEFAULT_MODEL_CODE: str = ''
+    MODEL_SEED_PATH: str = ''
 
 
 def get_settings() -> Settings:
@@ -20,4 +23,11 @@ def get_settings() -> Settings:
         raise RuntimeError('上传大小限制必须是正整数') from exc
     if limit <= 0:
         raise RuntimeError('上传大小限制必须是正整数')
-    return Settings(secret, limit, os.environ.get('BS_WEKNORA_KB_MAP', ''))
+    return Settings(
+        secret,
+        limit,
+        os.environ.get('BS_WEKNORA_KB_MAP', ''),
+        os.environ.get('LLM_MODEL', ''),
+        os.environ.get('DEFAULT_MODEL_CODE', ''),
+        os.environ.get('MODEL_SEED_PATH', ''),
+    )

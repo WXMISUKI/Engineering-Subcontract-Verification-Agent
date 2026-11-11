@@ -16,7 +16,10 @@ import { subjectTypeLabel } from './materialState'
 /** 第二行字段定义：source 说明值从哪来，仅用于本模型内部取数。 */
 const FIELDS = [
   { key: 'type', label: '类型', source: 'subject_type' },
-  { key: 'amount', label: '合同金额', source: 'contract_fact' },
+  { key: 'contractor', label: '承包单位', source: 'contract_party_evidence' },
+  { key: 'employer', label: '建设单位', source: 'contract_party_evidence' },
+  { key: 'scope', label: '拟分包范围', source: 'report_basic_facts' },
+  { key: 'amount', label: '分包金额', source: 'contract_fact' },
   { key: 'project', label: '项目', source: 'section_project' },
   { key: 'signed', label: '签订', source: 'contract_fact' },
   { key: 'pages', label: '页数整册', source: 'material_pages' },
@@ -47,17 +50,28 @@ function contractFactValue(fact, key) {
   if (!field || field.status !== 'hit') return null
   const value = field.value
   if (value === null || value === undefined || value === '') return null
-  const displayValue = key === 'amount' && field.unit === '万元' && Number.isFinite(Number(value))
-    ? Number(value).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1')
-    : String(value).trim()
+  const displayValue = String(value).trim()
   return `${displayValue}${field.unit || ''}`
 }
 
 function pickContractFact(facts) {
   const list = Array.isArray(facts) ? facts.filter(Boolean) : []
   if (!list.length) return null
-  const sub = list.find((fact) => /分包/.test(fact.role_label || ''))
-  return sub || list[0]
+  return list.find((fact) => ['sub', 'labor'].includes(fact.role) || /分包/.test(fact.role_label || '')) || null
+}
+
+function contractorValue(evidence) {
+  const party = evidence?.general_contractor
+  if (!party || typeof party !== 'object') return null
+  if (party.status === 'matched' && typeof party.company === 'string' && party.company.trim()) {
+    return party.company.trim()
+  }
+  if (party.status === 'conflict') return '待核实（主体冲突）'
+  if (party.status === 'unresolved' && party.candidate_company) {
+    return `待核实（候选：${String(party.candidate_company).trim()}）`
+  }
+  if (party.status === 'unresolved') return '未识别/待核实'
+  return null
 }
 
 // 整册页数取 `reading_coverage.total_pages`（parsing.reading_coverage 的唯一定义：
@@ -100,13 +114,28 @@ export function buildTaskHeader({ detail, report } = {}) {
   // 不能覆盖补件/解析修复后的最新金额与签订日期。报告事实仅作历史 DTO 兼容回退。
   const detailFacts = Array.isArray(detail?.contract_facts) ? detail.contract_facts : []
   const reportFacts = Array.isArray(report?.contract_facts) ? report.contract_facts : []
+  const detailPartyEvidence = detail?.contract_party_evidence
+  const reportPartyEvidence = report?.contract_party_evidence
+  const partyEvidence = detailPartyEvidence && typeof detailPartyEvidence === 'object'
+    ? detailPartyEvidence
+    : reportPartyEvidence
   const contractFact = pickContractFact(detailFacts.length ? detailFacts : reportFacts)
+  const packetFacts = detail?.report_basic_facts || {}
+  const packetAmount = packetFacts.subcontract_amount || {}
+  const contractAmount = contractFactValue(contractFact, 'amount')
+  const packetAmountText = packetAmount.status === 'matched' && packetAmount.value != null
+    ? `${packetAmount.value}${packetAmount.unit || ''}` : null
+  const amount = packetAmount.status === 'conflict' || (packetAmountText && contractAmount && packetAmountText !== contractAmount)
+    ? '待核实（金额冲突）' : (packetAmountText || contractAmount)
   const contractProject = typeof contractFact?.project_name === 'string' ? contractFact.project_name.trim() : ''
   const project = [projectName || contractProject, contractSection].filter(Boolean).join(' · ')
 
   const values = {
     type: types.length ? types.join('、') : null,
-    amount: contractFactValue(contractFact, 'amount'),
+    contractor: contractorValue(partyEvidence),
+    employer: contractorValue({ general_contractor: partyEvidence?.employer }),
+    scope: packetFacts.subcontract_scope?.status === 'conflict' ? '待核实（范围冲突）' : packetFacts.subcontract_scope?.value,
+    amount,
     project: project || null,
     signed: contractFactValue(contractFact, 'sign_date'),
     pages: totalPages(materials),

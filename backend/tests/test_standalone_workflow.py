@@ -2,6 +2,8 @@
 import json
 import asyncio
 import time
+import io
+import zipfile
 from pathlib import Path
 
 import fitz
@@ -145,12 +147,20 @@ def test_uploaded_pdf_starts_and_runs_checks_with_unavailable_knowledge(tmp_path
     current_plan = client.get(f'{base}/tasks/{task_id}/supplement-plan')
     assert current_plan.json()['supplement_plan']['status'] == 'running'
     assert current_plan.json()['supplement_plan']['superseded_version_no'] == previous_version
+    duplicate_activation = client.post(f'{base}/tasks/{task_id}/supplement-rerun')
+    assert duplicate_activation.status_code == 200
+    assert duplicate_activation.json().get('already_running') is True
     current = client.get(f'{base}/tasks/{task_id}').json()
     assert current['options_snapshot']['rerun']['carry'] == []
     assert client.get(f'{base}/tasks/{task_id}/report?stage=draft').status_code == 409
     assert client.get(f'{base}/tasks/{task_id}/findings').json()['publication_status'] == 'preparing'
+    historical_during_candidate = client.get(
+        f'{base}/tasks/{task_id}/report?stage=draft&version_no={previous_version}')
+    assert historical_during_candidate.status_code == 200, historical_during_candidate.text
     frozen = client.get(f'{base}/tasks/{task_id}/versions/{previous_version}').json()['snapshot']
     assert [m['file_name'] for m in frozen['materials']] == ['synthetic.pdf']
+    frozen_business_document = frozen['report']['business_document']
+    assert historical_during_candidate.json()['business_document'] == frozen_business_document
     groups = current_plan.json()['supplement_plan'].get('execution_groups')
     assert groups, current_plan.json()
     for suffix in (endpoints[group] for group in groups):
@@ -187,23 +197,74 @@ def test_uploaded_pdf_starts_and_runs_checks_with_unavailable_knowledge(tmp_path
     published = client.get(f'{base}/tasks/{task_id}/findings').json()
     assert published['publication_status'] == 'ready'
     assert published['publication_generation_id'] == 'synthetic-supplement'
+    assert published['publication_state'] == 'candidate'
+    assert published['baseline_version_no'] == previous_version
     diff = client.get(f'{base}/tasks/{task_id}/versions/diff', params={'a': previous_version, 'b': 'current'})
     assert diff.status_code == 200, diff.text
     draft_after_supplement = client.get(f'{base}/tasks/{task_id}/report?stage=draft')
-    assert draft_after_supplement.status_code == 200
-    assert draft_after_supplement.json()['meta']['review_version_no'] is None
+    assert draft_after_supplement.status_code == 409
+    assert draft_after_supplement.json()['detail']['code'] == 'supplement_candidate_unpublished'
+    opinion_during_candidate = client.get(f'{base}/tasks/{task_id}/opinion?stage=draft')
+    assert opinion_during_candidate.status_code == 409
+    assert opinion_during_candidate.json()['detail']['code'] == 'supplement_candidate_unpublished'
+    opinion_preview_during_candidate = client.get(f'{base}/tasks/{task_id}/opinion/preview-markdown?stage=draft')
+    assert opinion_preview_during_candidate.status_code == 200, opinion_preview_during_candidate.text
+    opinion_pdf_preview_during_candidate = client.get(f'{base}/tasks/{task_id}/opinion/preview?stage=draft')
+    assert opinion_pdf_preview_during_candidate.status_code == 200, opinion_pdf_preview_during_candidate.text
+    report_export_during_candidate = client.get(f'{base}/tasks/{task_id}/report/export?fmt=docx&stage=draft')
+    assert report_export_during_candidate.status_code == 409
+    opinion_export_during_candidate = client.get(f'{base}/tasks/{task_id}/opinion/export?fmt=docx&stage=draft')
+    assert opinion_export_during_candidate.status_code == 409
+    ignored_id = next(row['id'] for row in rows if row['status'] in ('hit', 'undecidable'))
     for row in rows:
         if row['status'] in ('hit', 'undecidable'):
             response = client.patch(f"{base}/findings/{row['id']}/review",
-                                    json={'decision': 'accepted', 'note': 'synthetic review'})
+                                    json={'decision': 'ignored' if row['id'] == ignored_id else 'accepted',
+                                          'note': 'synthetic ignored reason' if row['id'] == ignored_id else 'synthetic review'})
             assert response.status_code == 200, (row['item_id'], response.text)
     completed = client.post(f'{base}/tasks/{task_id}/complete')
     assert completed.status_code == 200, json.dumps(completed.json(), ensure_ascii=True)
     assert completed.json()['state'] == 'done'
     assert client.get(f'{base}/tasks/{task_id}/supplement-plan').json()['supplement_plan']['status'] == 'completed'
+    after_complete = client.get(f'{base}/tasks/{task_id}/findings').json()
+    assert after_complete['publication_state'] == 'published'
+    assert after_complete['publication_generation_id'] == 'synthetic-supplement'
+    report_after_complete = client.get(f'{base}/tasks/{task_id}/report?stage=draft')
+    assert report_after_complete.status_code == 200
+    assert report_after_complete.json()['meta']['publication_generation_id'] == 'synthetic-supplement'
+    assert report_after_complete.json()['meta']['publication_state'] == 'published'
+    opinion_after_complete = client.get(f'{base}/tasks/{task_id}/opinion?stage=draft')
+    assert opinion_after_complete.status_code == 200
+    assert opinion_after_complete.json()['meta']['publication_generation_id'] == 'synthetic-supplement'
+    assert opinion_after_complete.json()['meta']['publication_state'] == 'published'
+    published_lineage = [
+        after_complete,
+        report_after_complete.json()['meta'],
+        opinion_after_complete.json()['meta'],
+    ]
+    assert {row['publication_state'] for row in published_lineage} == {'published'}
+    assert {row['publication_generation_id'] for row in published_lineage} == {'synthetic-supplement'}
+    assert {row['review_policy'] for row in published_lineage} == {'current_generation'}
+    confirmed_report = client.get(f'{base}/tasks/{task_id}/report?stage=confirmed')
+    assert confirmed_report.status_code == 200, confirmed_report.text
+    confirmed_opinion = client.get(f'{base}/tasks/{task_id}/opinion?stage=confirmed')
+    assert confirmed_opinion.status_code == 200, confirmed_opinion.text
     confirmed = client.get(f'{base}/tasks/{task_id}/report/export?fmt=docx&stage=confirmed')
     assert confirmed.status_code == 200, confirmed.text
     assert confirmed.content.startswith(b'PK')
+    confirmed_opinion_export = client.get(f'{base}/tasks/{task_id}/opinion/export?fmt=docx&stage=confirmed')
+    assert confirmed_opinion_export.status_code == 200, confirmed_opinion_export.text
+    assert confirmed_opinion_export.content.startswith(b'PK')
+    evidence_bundle = client.get(f'{base}/tasks/{task_id}/report/evidence-bundle?stage=confirmed')
+    assert evidence_bundle.status_code == 200, evidence_bundle.text
+    assert evidence_bundle.content.startswith(b'PK')
+    with zipfile.ZipFile(io.BytesIO(evidence_bundle.content)) as archive:
+        audit_report = json.loads(archive.read('report.json'))
+        ignored = [item for section in audit_report['sections'] for item in section['items']
+                   if item.get('finding_id') == ignored_id]
+        assert ignored[0]['human_disposition']['code'] == 'ignored'
+        assert ignored[0]['human_disposition']['note'] == 'synthetic ignored reason'
+        assert all(ignored_id not in item['finding_ids'] for item in audit_report['business_document']['issues'])
     second = client.post(f'{base}/tasks/{task_id}/supplement-plan', json={
         'generation_id': 'second-supplement', 'category': 'submission_packet',
         'item_ids': ['RC-A01'], 'subject_ids': [subjects[0]['subject_id']],
@@ -212,6 +273,9 @@ def test_uploaded_pdf_starts_and_runs_checks_with_unavailable_knowledge(tmp_path
     second_edit = client.post(f'{base}/tasks/{task_id}/supplement-edit')
     assert second_edit.status_code == 200
     prior = client.get(f"{base}/tasks/{task_id}/versions/{second_edit.json()['previous_version_no']}").json()['snapshot']
+    assert any(finding['finding_id'] == ignored_id and finding['review']['decision'] == 'ignored'
+               for finding in prior['findings'])
+    assert all(ignored_id not in item['finding_ids'] for item in prior['report']['business_document']['issues'])
     assert prior['task']['options_snapshot']['supplement_plan']['generation_id'] == 'synthetic-supplement'
     old_supplement_id = supplement.json()['material_id']
     broken = client.post(f'{base}/tasks/{task_id}/materials/upload',
@@ -232,4 +296,22 @@ def test_uploaded_pdf_starts_and_runs_checks_with_unavailable_knowledge(tmp_path
         assert replacement.parse_state == 'failed'
         assert old.superseded_by_id is None
     assert detail['state'] == 'setup'
+    failed_publication = client.get(f'{base}/tasks/{task_id}/findings').json()
+    assert failed_publication['publication_state'] == 'failed'
+    assert failed_publication['publication_generation_id'] == 'synthetic-supplement'
+    assert failed_publication['candidate_generation_id'] == 'second-supplement'
+    current_finding_id = failed_publication['findings'][0]['id']
+    assert client.patch(f"{base}/findings/{current_finding_id}/review",
+                        json={'decision': 'accepted', 'note': 'must remain baseline-only'}).status_code == 409
     assert client.get(f'{base}/tasks/{task_id}/report?stage=draft').status_code == 409
+    failed_opinion = client.get(f'{base}/tasks/{task_id}/opinion?stage=draft')
+    assert failed_opinion.status_code == 409
+    assert failed_opinion.json()['detail']['code'] == 'supplement_failed'
+    failed_confirmed_report = client.get(f'{base}/tasks/{task_id}/report?stage=confirmed')
+    assert failed_confirmed_report.status_code == 409
+    failed_bundle = client.get(f'{base}/tasks/{task_id}/report/evidence-bundle?stage=confirmed')
+    assert failed_bundle.status_code == 409
+    historical_after_failure = client.get(
+        f'{base}/tasks/{task_id}/report?stage=draft&version_no={previous_version}')
+    assert historical_after_failure.status_code == 200, historical_after_failure.text
+    assert historical_after_failure.json()['business_document'] == frozen_business_document

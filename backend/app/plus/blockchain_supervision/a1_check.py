@@ -89,6 +89,25 @@ def _detect_tax(window: str) -> str:
     return "unknown"
 
 
+def _detect_tax_for_amount(text: str, match) -> str:
+    """Bind a tax label to the amount it qualifies.
+
+    A clause can list inclusive, exclusive and tax values on one line. A
+    symmetric window would make the first amount inherit a later ``不含税``
+    label, so prefer the label before the amount and only inspect a short suffix
+    for forms such as ``金额 100 元（含税）``.
+    """
+    detected = _detect_tax(match.group(0))
+    if detected != "unknown":
+        return detected
+    prefix = text[max(0, match.start() - 40):match.start()]
+    detected = _detect_tax(prefix)
+    if detected != "unknown":
+        return detected
+    suffix = text[match.end():min(len(text), match.end() + 16)]
+    return _detect_tax(suffix)
+
+
 def extract_contract_amount(material) -> dict:
     """从一份合同文本层抽取主金额：优先强关键词，回退泛关键词。
 
@@ -101,11 +120,10 @@ def extract_contract_amount(material) -> dict:
             value_wan = value * _UNIT_TO_WAN[m.group(3)]
             # 允许“含税”出现在金额前，或紧跟单位之后；窗口不跨到下一条金额，
             # 避免首个含税总价被后续“不含税金额”反向覆盖。
-            window = text[max(0, m.start() - 40):m.end() + 20]
             candidates.append({
                 "strong": m.group(1) in _STRONG_KEYWORDS,
                 "value_wan": value_wan,
-                "tax": _detect_tax(window),
+                "tax": _detect_tax_for_amount(text, m),
                 "quote": text[max(0, m.start() - 20):m.end() + 20],
                 "page": page_no,
             })

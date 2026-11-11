@@ -1,6 +1,7 @@
 import hashlib
 
 import fitz
+import pytest
 
 from app.plus.blockchain_supervision import parsing
 from app.plus.structural_check import ocr_text
@@ -84,6 +85,23 @@ def test_rotated_and_targeted_retries_use_online_service(monkeypatch, tmp_path):
     assert all(call.get('use_cloud', True) is True and call['use_cache'] is False for call in calls)
 
 
+def test_rotated_page_honors_270_degree_direction(monkeypatch, tmp_path):
+    path = pdf_file(tmp_path)
+    observed = []
+
+    def fake_ocr(rotated_path, **kwargs):
+        with fitz.open(rotated_path) as doc:
+            observed.append(doc[0].rotation)
+        return [{'page': 1, 'text': 'readable rotated certificate',
+                 'ocr_meta': {'source': 'cloud', 'quality': 'ocr_ok'}}], {'engine': 'cloud:synthetic'}
+
+    monkeypatch.setattr(parsing, 'ocr_text_pages', fake_ocr)
+    pages, _ = parsing.ocr_rotated_text_pages(str(path), [1], rotations={1: 270})
+
+    assert observed == [270]
+    assert pages[0]['ocr_meta']['rotation_retry'] == 270
+
+
 def test_low_quality_page_remains_for_human_review_without_retry(monkeypatch, tmp_path):
     path = tmp_path / 'quality.pdf'
     doc = fitz.open()
@@ -103,6 +121,49 @@ def test_low_quality_page_remains_for_human_review_without_retry(monkeypatch, tm
     assert incomplete['ocr_suspect_pages'] == [1]
     assert incomplete['ocr_retry_pages'] == []
     assert incomplete['rotation_retry_pages'] == []
+
+
+@pytest.mark.parametrize('direction', [90, 270])
+def test_certificate_orientation_signal_triggers_one_bounded_rotation_retry(monkeypatch, tmp_path, direction):
+    path = tmp_path / 'rotated-certificate.pdf'
+    doc = fitz.open()
+    doc.new_page().draw_rect(fitz.Rect(30, 30, 90, 90), fill=(0, 0, 0))
+    doc.save(path)
+    doc.close()
+
+    calls = []
+
+    def fake_ocr(path, **kwargs):
+        return ([{
+            'page': 1,
+            'text': f'<290,422,375,155,{direction}>,公路水运工程施工企业主要负责人和安全生产管理人员安全生产考核合格证书\n姓名：于文祥',
+            'ocr_meta': {'source': 'cloud'},
+        }], {'engine': 'cloud:synthetic'})
+
+    def fake_rotated(path, page_nos, *, rotations=None):
+        calls.append(list(page_nos))
+        assert rotations == {1: direction}
+        return ([{
+            'page': 1,
+            'text': '公路水运工程施工企业主要负责人和安全生产管理人员安全生产考核合格证书\n'
+                    '姓名：于文祥\n企业名称：武汉龙辰建设有限公司\n证书编号：鄂交安C25G01400\n'
+                    '有效期：2025-06-10 至 2028-06-10',
+            'ocr_meta': {'source': 'cloud_rotated', 'quality': 'ocr_ok', 'rotation_retry': direction},
+        }], {'engine': 'cloud:synthetic'})
+
+    monkeypatch.setattr(parsing, 'ocr_text_pages', fake_ocr)
+    monkeypatch.setattr(parsing, 'ocr_rotated_text_pages', fake_rotated)
+    pages, degradations = parsing.parse_material_pages(str(path))
+
+    assert calls == [[1]]
+    assert pages[0]['text'].endswith('有效期：2025-06-10 至 2028-06-10')
+    fallback = next(row for row in degradations if row['kind'] == 'ocr_fallback')
+    assert fallback['rotation_retry_pages'] == [1]
+    assert fallback['rotation_retry_degrees'] == {'1': direction}
+    assert fallback['rotation_retry_recovered_pages'] == [1]
+    assert fallback['page_states'][0]['state'] == 'ocr_ok'
+    assert any(item['state'] == 'retrying' and item['attempt'] == 1
+               for item in fallback['page_state_history'][0]['transitions'])
 
 
 def test_missing_identity_fields_go_to_review_without_second_ocr(monkeypatch, tmp_path):

@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.database import Base
 from app.plus.blockchain_supervision.models import BsEvidenceRelation, BsTask
 from app.plus.blockchain_supervision.certificate_number_check import roster_b_entries
+from app.plus.blockchain_supervision.roster_certificate_evidence import roster_certificate_entries
 from app.plus.blockchain_supervision.relation_resolution import (
     STATUS_CONFLICT, STATUS_MATCHED, STATUS_UNRESOLVED,
     build_person_certificate_relations, latest_relations, persist_relations,
@@ -77,10 +78,17 @@ def _cert_facts(mid, *, page=1, name="陶瑜", company=COMPANY, ctype="B",
     return facts
 
 
-def _build(materials, facts_by_material, subject_names=None):
+def _cert_page(number, page=1):
+    return {"page": page,
+            "text": "姓名：陶瑜\n企业名称：%s\n证书编号：%s" % (COMPANY, number),
+            "ocr_meta": {"quality": "ocr_ok"}}
+
+
+def _build(materials, facts_by_material, subject_names=None, generation_lookup=None):
     return build_person_certificate_relations(
         materials, facts_by_material,
         subject_names=subject_names if subject_names is not None else {7: COMPANY},
+        generation_lookup=generation_lookup,
     )
 
 
@@ -126,8 +134,9 @@ def test_unresolved_when_certificate_holder_name_is_unreadable():
                                                               number="沪交安C25G00301")})
     relation = relations[0]
     assert relation["status"] == STATUS_UNRESOLVED
-    assert relation["right"] == {}
-    assert "证书页" in relation["reason"]
+    assert relation["right"]["material_id"] == 2
+    assert relation["right"]["certificate_evidence"][0]["role"] == "candidate"
+    assert "无法确认持证人" in relation["reason"]
 
 
 def test_unresolved_when_two_certificates_for_same_person_disagree():
@@ -184,6 +193,8 @@ def test_unresolved_when_roster_page_has_no_certificate_number():
     assert relation["status"] == STATUS_UNRESOLVED
     number_dim = next(d for d in relation["dimensions"] if d["field"] == "certificate.number")
     assert number_dim["result"] == "unresolved"
+    assert number_dim["reason_code"] == "field_not_found"
+    assert relation["reason_code"] == "field_not_found"
 
 
 def test_text_table_continuation_number_is_used_as_roster_evidence():
@@ -201,6 +212,14 @@ def test_text_table_continuation_number_is_used_as_roster_evidence():
     number_dim = next(d for d in relation["dimensions"] if d["field"] == "certificate.number")
     assert number_dim["expected"] == "沪交安B25G00206"
     assert number_dim["actual"] == "沪交安B25G00683"
+    evidence = relation["left"]["number_evidence"]
+    assert evidence["number"] == "沪交安B25G00206"
+    assert "G00206" in evidence["quote"]
+    assert evidence["number_source"] == "text_table"
+    assert evidence["extractor_version"] == "roster-cert.v1"
+    assert number_dim["expected_ref"] == {
+        "material_id": 1, "page": 1, "quote": "|  |  | 沪交安 B（25）G00206 |  |  |  |",
+    }
 
 
 def test_roster_b_entries_returns_empty_when_continuation_is_ambiguous():
@@ -404,3 +423,261 @@ def test_unresolved_when_certificate_material_has_no_subject_attribution():
     assert relation["status"] == STATUS_UNRESOLVED
     subject_dim = next(d for d in relation["dimensions"] if d["field"] == "subject")
     assert subject_dim["result"] == "unresolved"
+
+ROSTER_TEXT_C_CONTINUATION = (
+    "管理人员名单\n"
+    "| 序号 | 姓名 | 职务 | 持证以及证号 | 电话 | 备注 |\n"
+    "| --- | --- | --- | --- | --- | --- |\n"
+    "| 1 | 鄢明志 | 安全员 | 交安 C 证 | 15290298723 |  |\n"
+    "|  |  | 沪交安 C(22)G00822 |  |  |  |\n"
+)
+
+ROSTER_TEXT_A_CONTINUATION = (
+    "管理人员名单\n"
+    "| 序号 | 姓名 | 职务 | 持证以及证号 | 电话 | 备注 |\n"
+    "| --- | --- | --- | --- | --- | --- |\n"
+    "| 1 | 张升茂 | 企业负责人 | 交安 A 证 | 13800000001 |  |\n"
+    "|  |  | 沪交安A25G00049 |  |  |  |\n"
+)
+
+
+def test_matched_when_safety_officer_c_certificate_matches():
+    roster = _material(1, file_name="管理人员名单.pdf",
+                       pages=[_text_page(ROSTER_TEXT_C_CONTINUATION)])
+    cert = _material(2, pages=[{"page": 1, "text": "姓名：鄢明志\n企业名称：%s\n证书编号：沪交安C(22)G00822" % COMPANY}])
+    relation = _build([roster, cert], {
+        1: [], 2: _cert_facts(2, name="鄢明志", ctype="C", number="沪交安C(22)G00822"),
+    })[0]
+    assert relation["status"] == STATUS_MATCHED
+    assert relation["post"] == "安全员"
+    assert relation["reason_code"] is None
+    evidence = relation["left"]["number_evidence"]
+    assert evidence["certificate_type"] == "C"
+    assert evidence["number"] == "沪交安C22G00822"
+    assert evidence["number_source"] == "text_table"
+    assert evidence["page"] == 1
+    assert evidence["extractor_version"] == "roster-cert.v1"
+
+
+def test_matched_when_enterprise_leader_a_certificate_matches():
+    roster = _material(1, file_name="管理人员名单.pdf",
+                       pages=[_text_page(ROSTER_TEXT_A_CONTINUATION)])
+    cert = _material(2, pages=[{"page": 1, "text": "姓名：张升茂\n企业名称：%s\n证书编号：沪交安A25G00049" % COMPANY}])
+    relation = _build([roster, cert], {
+        1: [], 2: _cert_facts(2, name="张升茂", ctype="A", number="沪交安A25G00049"),
+    })[0]
+    assert relation["status"] == STATUS_MATCHED
+    assert relation["post"] == "企业负责人"
+    assert relation["left"]["number_evidence"]["certificate_type"] == "A"
+
+
+def test_unresolved_with_reason_code_when_roster_has_two_numbers():
+    text = (
+        "附件九：主要管理人员名单及联络方式\n"
+        "| 序号 | 姓名 | 职务 | 持证以及证号 | 电话 | 备注 |\n"
+        "| --- | --- | --- | --- | --- | --- |\n"
+        "| 1 | 陶瑜 | 项目经理 | 交安 B 证 | 13397917308 |  |\n"
+        "|  |  | 沪交安 B（25）G00206 |  |  |  |\n"
+        "|  |  | 沪交安 B（25）G00207 |  |  |  |\n"
+    )
+    roster = _material(1, file_name="管理人员名单.pdf", pages=[_text_page(text)])
+    cert = _material(2, pages=[{"page": 1, "text": CERT_TEXT}])
+    relation = _build([roster, cert], {1: [], 2: _cert_facts(2)})[0]
+    assert relation["status"] == STATUS_UNRESOLVED
+    assert relation["reason_code"] == "field_ambiguous"
+    assert len(relation["left"]["number_candidates"]) == 2
+    number_dim = next(d for d in relation["dimensions"] if d["field"] == "certificate.number")
+    assert number_dim["reason_code"] == "field_ambiguous"
+
+
+def test_unresolved_with_post_unmapped_reason_code():
+    text = (
+        "管理人员名单\n"
+        "| 序号 | 姓名 | 职务 | 持证以及证号 | 电话 | 备注 |\n"
+        "| --- | --- | --- | --- | --- | --- |\n"
+        "| 1 | 王五 | 劳务员 | 交安 B 证 沪交安B25G00206 | 13800000001 |  |\n"
+    )
+    roster = _material(1, file_name="管理人员名单.pdf", pages=[_text_page(text)])
+    cert = _material(2, pages=[{"page": 1, "text": "姓名：王五\n企业名称：%s\n证书编号：沪交安B25G00206" % COMPANY}])
+    relation = _build([roster, cert], {
+        1: [], 2: _cert_facts(2, name="王五"),
+    })[0]
+    assert relation["status"] == STATUS_UNRESOLVED
+    assert relation["reason_code"] == "post_unmapped"
+    type_dim = next(d for d in relation["dimensions"] if d["field"] == "certificate.type")
+    assert type_dim["reason_code"] == "post_unmapped"
+
+def test_matched_when_person_holds_both_b_and_c_but_post_requires_b():
+    text = (
+        "管理人员名单\n"
+        "| 序号 | 姓名 | 职务 | 持证以及证号 | 电话 | 备注 |\n"
+        "| --- | --- | --- | --- | --- | --- |\n"
+        "| 1 | 陶瑜 | 项目经理 | 交安 B 证 | 13397917308 |  |\n"
+        "|  |  | 沪交安 B（25）G00206 |  |  |  |\n"
+        "|  |  | 沪交安 C(25)G00301 |  |  |  |\n"
+    )
+    roster = _material(1, file_name="管理人员名单.pdf", pages=[_text_page(text)])
+    cert = _material(2, pages=[{"page": 1, "text": CERT_TEXT}])
+    relation = _build([roster, cert], {1: [], 2: _cert_facts(2)})[0]
+    assert relation["status"] == STATUS_MATCHED
+    assert relation["left"]["number_evidence"]["certificate_type"] == "B"
+    assert relation["left"]["number_evidence"]["number"] == "沪交安B25G00206"
+
+def test_roster_certificate_entries_collects_main_row_and_continuation():
+    text = (
+        "管理人员名单\n"
+        "| 序号 | 姓名 | 职务 | 持证以及证号 | 电话 | 备注 |\n"
+        "| --- | --- | --- | --- | --- | --- |\n"
+        "| 1 | 陶瑜 | 项目经理 | 交安 B 证 沪交安B25G00206 | 13397917308 |  |\n"
+        "|  |  | 沪交安 C(25)G00301 |  |  |  |\n"
+    )
+    roster = _material(1, file_name="管理人员名单.pdf", pages=[_text_page(text)])
+    rows = roster_certificate_entries([roster])
+    found = {(row["certificate_type"], row["number"]) for row in rows}
+    assert ("B", "沪交安B25G00206") in found
+    assert ("C", "沪交安C25G00301") in found
+
+def test_matched_when_supplement_supersedes_original_certificate():
+    original = _material(1, file_name="原报审材料.pdf",
+                         pages=[_roster_page(page=1), _cert_page("沪交安B25G00683", page=2)])
+    supplement = _material(2, file_name="补件证书.pdf",
+                           pages=[_cert_page("沪交安B25G00206", page=1)])
+    relation = _build(
+        [original, supplement],
+        {1: _cert_facts(1, page=2, number="沪交安B25G00683", base_id=100),
+         2: _cert_facts(2, page=1, number="沪交安B25G00206", base_id=200)},
+        generation_lookup=lambda material: ({"generation_id": "g-2", "sequence": 10}
+                                            if material.id == 2 else None),
+    )[0]
+    assert relation["status"] == STATUS_MATCHED
+    assert relation["generation_id"] == "g-2"
+    assert relation["right"]["material_id"] == 2
+    assert relation["right"]["pages"] == [1]
+    assert relation["right"]["fact_ids"] == [200, 201, 202, 203]
+    roles = {item["material_id"]: item["role"] for item in relation["right"]["certificate_evidence"]}
+    assert roles == {1: "superseded", 2: "authoritative"}
+    assert relation["right"]["certificate_evidence"][0]["material_id"] == 2
+
+
+def test_conflict_when_latest_supplement_disagrees_with_roster():
+    original = _material(1, file_name="原报审材料.pdf",
+                         pages=[_roster_page(page=1), _cert_page("沪交安B25G00683", page=2)])
+    supplement = _material(2, file_name="补件证书.pdf",
+                           pages=[_cert_page("沪交安B25G00999", page=1)])
+    relation = _build(
+        [original, supplement],
+        {1: _cert_facts(1, page=2, number="沪交安B25G00683", base_id=100),
+         2: _cert_facts(2, page=1, number="沪交安B25G00999", base_id=200)},
+        generation_lookup=lambda material: ({"generation_id": "g-2", "sequence": 10}
+                                            if material.id == 2 else None),
+    )[0]
+    assert relation["status"] == STATUS_CONFLICT
+    assert relation["right"]["material_id"] == 2
+    number_dim = next(d for d in relation["dimensions"] if d["field"] == "certificate.number")
+    assert number_dim["expected"] == "沪交安B25G00206"
+    assert number_dim["actual"] == "沪交安B25G00999"
+
+
+def test_unresolved_when_latest_supplement_number_is_unreadable():
+    original = _material(1, file_name="原报审材料.pdf",
+                         pages=[_roster_page(page=1), _cert_page("沪交安B25G00683", page=2)])
+    supplement = _material(2, file_name="补件证书.pdf",
+                           pages=[{"page": 1, "text": "姓名：陶瑜\n企业名称：%s\n证书编号：" % COMPANY,
+                                   "ocr_meta": {"quality": "ocr_ok"}}])
+    relation = _build(
+        [original, supplement],
+        {1: _cert_facts(1, page=2, number="沪交安B25G00683", base_id=100),
+         2: _cert_facts(2, page=1, number=None, base_id=200)},
+        generation_lookup=lambda material: ({"generation_id": "g-2", "sequence": 10}
+                                            if material.id == 2 else None),
+    )[0]
+    assert relation["status"] == STATUS_UNRESOLVED
+    assert relation["reason_code"] == "supplement_unreadable"
+    assert relation["right"]["material_id"] == 2
+    number_dim = next(d for d in relation["dimensions"] if d["field"] == "certificate.number")
+    assert number_dim["reason_code"] == "supplement_unreadable"
+    roles = {item["material_id"]: item["role"] for item in relation["right"]["certificate_evidence"]}
+    assert roles == {1: "superseded", 2: "authoritative"}
+
+
+def test_latest_supplement_wins_over_older_supplement():
+    original = _material(1, file_name="原报审材料.pdf",
+                         pages=[_roster_page(page=1), _cert_page("沪交安B25G00683", page=2)])
+    first_supplement = _material(2, file_name="补件1.pdf",
+                                 pages=[_cert_page("沪交安B25G00206", page=1)])
+    second_supplement = _material(3, file_name="补件2.pdf",
+                                  pages=[_cert_page("沪交安B25G00999", page=1)])
+    relation = _build(
+        [original, first_supplement, second_supplement],
+        {1: _cert_facts(1, page=2, number="沪交安B25G00683", base_id=100),
+         2: _cert_facts(2, page=1, number="沪交安B25G00206", base_id=200),
+         3: _cert_facts(3, page=1, number="沪交安B25G00999", base_id=300)},
+        generation_lookup=lambda material: {
+            2: {"generation_id": "g-1", "sequence": 10},
+            3: {"generation_id": "g-2", "sequence": 20},
+        }.get(material.id),
+    )[0]
+    assert relation["status"] == STATUS_CONFLICT
+    assert relation["generation_id"] == "g-2"
+    assert relation["right"]["material_id"] == 3
+    roles = {item["material_id"]: item["role"] for item in relation["right"]["certificate_evidence"]}
+    assert roles == {1: "superseded", 2: "superseded", 3: "authoritative"}
+
+
+def test_unresolved_when_same_supplement_generation_has_conflicting_certificates():
+    original = _material(1, file_name="原报审材料.pdf",
+                         pages=[_roster_page(page=1), _cert_page("沪交安B25G00683", page=2)])
+    supplement = _material(2, file_name="补件证书.pdf",
+                           pages=[_cert_page("沪交安B25G00206", page=1),
+                                  _cert_page("沪交安B25G00999", page=2)])
+    relation = _build(
+        [original, supplement],
+        {1: _cert_facts(1, page=2, number="沪交安B25G00683", base_id=100),
+         2: _cert_facts(2, page=1, number="沪交安B25G00206", base_id=200)
+           + _cert_facts(2, page=2, number="沪交安B25G00999", base_id=300)},
+        generation_lookup=lambda material: ({"generation_id": "g-2", "sequence": 10}
+                                            if material.id == 2 else None),
+    )[0]
+    assert relation["status"] == STATUS_UNRESOLVED
+    assert relation["reason_code"] == "certificate_ambiguous"
+    identity_dim = next(d for d in relation["dimensions"] if d["field"] == "certificate.identity")
+    assert identity_dim["reason_code"] == "certificate_ambiguous"
+
+
+def test_unresolved_when_supplement_generations_cannot_be_ordered():
+    original = _material(1, file_name="原报审材料.pdf",
+                         pages=[_roster_page(page=1), _cert_page("沪交安B25G00683", page=2)])
+    first_supplement = _material(2, file_name="补件1.pdf",
+                                 pages=[_cert_page("沪交安B25G00206", page=1)])
+    second_supplement = _material(3, file_name="补件2.pdf",
+                                  pages=[_cert_page("沪交安B25G00999", page=1)])
+    relation = _build(
+        [original, first_supplement, second_supplement],
+        {1: _cert_facts(1, page=2, number="沪交安B25G00683", base_id=100),
+         2: _cert_facts(2, page=1, number="沪交安B25G00206", base_id=200),
+         3: _cert_facts(3, page=1, number="沪交安B25G00999", base_id=300)},
+        generation_lookup=lambda material: {2: "g-1", 3: "g-2"}.get(material.id),
+    )[0]
+    assert relation["status"] == STATUS_UNRESOLVED
+    assert relation["reason_code"] == "certificate_ambiguous"
+
+def test_unresolved_when_unattributed_certificate_clue_exists():
+    roster = _material(1, file_name="管理人员名单.pdf", pages=[_roster_page()])
+    negative = _material(
+        2, file_name="模拟遮挡C证.pdf",
+        pages=[{"page": 1,
+                "text": "安全生产考核合格证书\n交安 C 证\n证书编号：沪交安 C(22)G00822",
+                "ocr_meta": {"quality": "ocr_ok"}}],
+    )
+    facts = _cert_facts(2, name=None, company="■■■（被遮挡）", ctype="C",
+                        number="沪交安C22G00822")
+    relation = _build(
+        [roster, negative], {1: [], 2: facts},
+        generation_lookup=lambda material: ({"generation_id": "g-2", "sequence": 10}
+                                            if material.id == 2 else None),
+    )[0]
+    assert relation["status"] == STATUS_UNRESOLVED
+    assert relation["reason_code"] == "certificate_holder_unconfirmed"
+    assert "C" in relation["reason"] and "不能作为交安B证" in relation["reason"]
+    assert relation["right"]["material_id"] == 2
+    assert relation["right"]["certificate_evidence"][0]["role"] == "candidate"

@@ -29,9 +29,91 @@ def test_live_job_and_finished_job_have_distinct_states():
     assert jobs.project_job_state(event, active_job_ids=set(), instance_id='new-process')['state'] == 'completed'
 
 
+def test_running_job_projection_includes_last_progress_and_stale_diagnostic():
+    now = time.time()
+    event = SimpleNamespace(event_type=jobs.STARTED, created_at=None, payload_json={
+        'job_id': 'job-1', 'review_run_id': 'review-1', 'instance_id': 'instance',
+    })
+    progress = SimpleNamespace(created_at=__import__('datetime').datetime.fromtimestamp(now - 2400), payload_json={
+        'job_id': 'job-1', 'request_id': 'request-1', 'group_id': 'a2',
+        'batch_index': 4, 'batch_total': 6, 'status': 'processing',
+    })
+    projected = jobs.project_job_state(event, active_job_ids={'job-1'}, instance_id='instance',
+                                       progress_event=progress,
+                                       now=__import__('datetime').datetime.fromtimestamp(now))
+    assert projected['state'] == 'running'
+    assert projected['current_group'] == 'a2'
+    assert projected['current_batch'] == {'index': 4, 'total': 6, 'status': 'processing'}
+    assert projected['request_id'] == 'request-1'
+    assert projected['stale_candidate'] is True
+    assert projected['last_progress_at'] is not None
+
+
+def test_running_job_without_progress_is_explicitly_unknown():
+    event = SimpleNamespace(event_type=jobs.STARTED, created_at=None, payload_json={
+        'job_id': 'job-1', 'review_run_id': 'review-1', 'instance_id': 'instance',
+    })
+    projected = jobs.project_job_state(event, active_job_ids={'job-1'}, instance_id='instance')
+    assert projected['last_progress_at'] is None
+    assert projected['stale_candidate'] is True
+    assert projected['diagnostic_state'] == '无法核实'
+
+
+def test_job_status_uses_latest_group_or_batch_event(monkeypatch):
+    engine = create_engine('sqlite://')
+    Base.metadata.create_all(engine)
+    monkeypatch.setattr(jobs, 'ACTIVE_JOBS', {'job-1': object()})
+    with Session(engine) as db:
+        task = BsTask(id=1, conversation_id=1, title='synthetic', state='running', created_by=3, created_by_type='web',
+                      options_snapshot_json={reference_snapshots.REVIEW_POINTER: 'review-1'})
+        db.add(task)
+        db.commit()
+        service.add_event(db, task.id, jobs.STARTED, payload={
+            'job_id': 'job-1', 'review_run_id': 'review-1', 'instance_id': jobs.INSTANCE_ID})
+        service.add_event(db, task.id, 'check.ai_batch_progress', payload={
+            'job_id': 'job-1', 'group_id': 'a2', 'batch_index': 6, 'batch_total': 6, 'status': 'completed'})
+        service.add_event(db, task.id, jobs.PROGRESS, payload={
+            'job_id': 'job-1', 'review_run_id': 'review-1', 'group_id': 'internal_records'})
+        status = jobs.job_status(db, task, 'review-1')
+        assert status['state'] == 'running'
+        assert status['current_group'] == 'internal_records'
+        assert status['current_batch'] is None
+
+
+def test_task_progress_exposes_failed_ai_job_diagnostics(monkeypatch):
+    engine = create_engine('sqlite://')
+    Base.metadata.create_all(engine)
+    monkeypatch.setattr(jobs.ai_advisory_snapshots, 'collect_current_coverage', lambda *_: {
+        'state': 'available', 'groups': [{'group_id': 'a2', 'state': 'available',
+            'counts': {'not_started': 0, 'pending': 0, 'failed': 1, 'partial': 0, 'not_run': 0},
+            'reviewable_failed': 0, 'reviewable_partial': 0, 'reviewable_not_run': 0}]})
+    with Session(engine) as db:
+        task = BsTask(id=1, conversation_id=1, title='synthetic', state='running', created_by=3, created_by_type='web',
+                      options_snapshot_json={reference_snapshots.REVIEW_POINTER: 'review-1'})
+        db.add(task)
+        db.commit()
+        service.add_event(db, task.id, jobs.FAILED, payload={
+            'job_id': 'job-1', 'review_run_id': 'review-1', 'failure_categories': ['timeout']})
+        snapshot = {'ai_auto_enabled': True, 'steps': [{'state': 'completed'}]}
+        progress = service.task_progress(db, task, materials=[], snapshot=snapshot, zip_summary={'containers': []})
+        assert progress['phase'] == 'failed'
+        assert progress['ai_job']['state'] == 'failed'
+        assert progress['ai_job']['failure_categories'] == ['timeout']
+
+
 def test_malformed_job_event_never_fabricates_a_success():
     event = SimpleNamespace(event_type='check.ai_background_completed', payload_json={})
     assert jobs.project_job_state(event, active_job_ids=set(), instance_id='instance')['state'] == 'unavailable'
+
+
+def test_incomplete_material_scope_is_preserved_as_a_failure_category():
+    error = jobs.BackgroundReviewIncomplete(['incomplete_material_scope'])
+    assert error.categories == ['incomplete_material_scope']
+    event = SimpleNamespace(event_type=jobs.FAILED, payload_json={
+        'job_id': 'job-1', 'review_run_id': 'review-1',
+        'failure_categories': ['incomplete_material_scope']})
+    projected = jobs.project_job_state(event, active_job_ids=set(), instance_id='instance')
+    assert projected['failure_categories'] == ['incomplete_material_scope']
 
 
 def test_completed_job_is_not_reused_when_current_coverage_is_incomplete(monkeypatch):
@@ -133,7 +215,7 @@ def test_http_submit_is_nonblocking_deduplicated_and_owner_scoped(tmp_path, monk
         assert state == 'completed'
 
 
-def test_interrupted_job_requires_retry_and_respects_existing_lease(tmp_path, monkeypatch):
+def test_unconfirmed_interrupted_job_cannot_restart_even_without_a_lease(tmp_path, monkeypatch):
     engine = create_engine('sqlite:///' + (tmp_path / 'restart.sqlite').as_posix(), connect_args={'check_same_thread': False})
     Base.metadata.create_all(engine)
     create_account(engine, 'alice', 'Alice-password-123')
@@ -143,15 +225,6 @@ def test_interrupted_job_requires_retry_and_respects_existing_lease(tmp_path, mo
     monkeypatch.setattr(jobs, '_completed_coverage_valid', lambda *_: True)
     lease = {'pending': True}
     monkeypatch.setattr(service, 'current_ai_advisory_pending', lambda *_: lease['pending'])
-    release = threading.Event()
-    async def worker(bind, task_id, user_id, user_type, review_run_id, job_id, groups, retry):
-        assert retry is True
-        while not release.is_set():
-            await asyncio.sleep(.01)
-        with Session(bind) as db:
-            service.add_event(db, task_id, jobs.COMPLETED, stage='check', payload={
-                'job_id': job_id, 'review_run_id': review_run_id, 'instance_id': jobs.INSTANCE_ID})
-    monkeypatch.setattr(jobs, '_run_background', worker)
     with TestClient(create_app(engine, 's' * 64, cookie_secure=False)) as client:
         assert client.post('/api/login', json={'username': 'alice', 'password': 'Alice-password-123'}).status_code == 200
         conversation = client.post('/api/conversations').json()['id']
@@ -170,14 +243,9 @@ def test_interrupted_job_requires_retry_and_respects_existing_lease(tmp_path, mo
         assert client.post(url, json={'review_run_id': 'review-1', 'retry': True}).status_code == 409
         lease['pending'] = False
         response = client.post(url, json={'review_run_id': 'review-1', 'retry': True})
-        assert response.status_code == 202 and response.json()['job_id'] != 'old-job'
-        release.set()
-        for _ in range(100):
-            state = client.get(url, params={'review_run_id': 'review-1'}).json()['state']
-            if state == 'completed':
-                break
-            time.sleep(.01)
-        assert state == 'completed'
+        assert response.status_code == 409
+        assert '无法确认' in response.json()['detail']
+        assert client.get(url, params={'review_run_id': 'review-1'}).json()['job_id'] == 'old-job'
 
 
 def test_worker_processes_all_groups_and_preserves_completed_partial(tmp_path, monkeypatch):
@@ -222,7 +290,7 @@ def test_worker_processes_all_groups_and_preserves_completed_partial(tmp_path, m
         assert event.payload_json['warning'] is True
 
 
-def test_worker_failure_never_records_completion(tmp_path, monkeypatch):
+def test_worker_failure_never_records_completion(tmp_path, monkeypatch, caplog):
     engine = create_engine('sqlite:///' + (tmp_path / 'failure.sqlite').as_posix(), connect_args={'check_same_thread': False})
     Base.metadata.create_all(engine)
     create_account(engine, 'alice', 'Alice-password-123')
@@ -244,4 +312,27 @@ def test_worker_failure_never_records_completion(tmp_path, monkeypatch):
     monkeypatch.setattr(service, 'run_linked_batch_ai_advisory', fail)
     asyncio.run(jobs._run_background(engine, 1, 1, 'web', 'review-1', 'job-1', ['a2'], False))
     with Session(engine) as db:
-        assert jobs._latest(db, 1, 'review-1').event_type == jobs.FAILED
+        event = jobs._latest(db, 1, 'review-1')
+        assert event.event_type == jobs.FAILED
+        assert event.payload_json['exception_type'] == 'TimeoutError'
+        assert event.payload_json['failure_categories'] == ['timeout']
+    assert 'task_id=1' in caplog.text
+    assert 'review_run_id=review-1' in caplog.text
+    assert 'job_id=job-1' in caplog.text
+    assert 'synthetic timeout' not in caplog.text
+
+
+def test_event_dto_exposes_only_allowlisted_diagnostics():
+    event = SimpleNamespace(
+        sequence=7,
+        event_type='check.ai_batch_progress',
+        stage='check',
+        payload_json={'job_id': 'job-1', 'request_id': 'request-1', 'batch_index': 2,
+                      'batch_total': 5, 'prompt': 'must not be exposed'},
+        created_at=None,
+    )
+    projected = service.event_dto(event)
+    assert projected['diagnostics'] == {
+        'job_id': 'job-1', 'request_id': 'request-1', 'batch_index': 2, 'batch_total': 5,
+    }
+    assert 'prompt' not in projected['diagnostics']

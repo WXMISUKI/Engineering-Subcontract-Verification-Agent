@@ -82,6 +82,7 @@ function ReviewRow({ finding, onReview }) {
   const [editing, setEditing] = useState(false)
   const [decision, setDecision] = useState(null)
   const [note, setNote] = useState('')
+  const [validationError, setValidationError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const rv = finding.review
 
@@ -121,7 +122,7 @@ function ReviewRow({ finding, onReview }) {
     <div className="mt-1.5 rounded-[6px] border border-[#EFE6D8] bg-[#FDFAF4] p-2">
       <div className="flex flex-wrap items-center gap-1.5">
         {[['accepted', '采纳'], ['ignored', '忽略']].map(([k, label]) => (
-          <button key={k} onClick={() => setDecision(k)}
+          <button key={k} onClick={() => { setDecision(k); setValidationError('') }}
             className={`rounded-[4px] border px-2 py-0.5 text-xs ${decision === k
               ? (k === 'accepted'
                   ? 'border-emerald-300 bg-emerald-50 font-medium text-emerald-700'
@@ -134,6 +135,11 @@ function ReviewRow({ finding, onReview }) {
           className="min-w-0 flex-1 rounded-[4px] border border-[#E5E5E5] bg-white px-2 py-1 text-xs text-[#1A1A1A] placeholder:text-[#C0C0C0] focus:border-[#8B7355] focus:outline-none" />
         <button disabled={!decision || submitting}
           onClick={async () => {
+            if (decision === 'ignored' && !note.trim()) {
+              setValidationError('忽略必须填写处理理由。')
+              return
+            }
+            setValidationError('')
             setSubmitting(true)
             try {
               await onReview(finding, decision, note.trim() || null)
@@ -145,11 +151,12 @@ function ReviewRow({ finding, onReview }) {
           className="rounded-[4px] bg-[#8B7355] px-2.5 py-1 text-xs font-medium text-white hover:opacity-90 disabled:opacity-60">
           {submitting ? '提交中…' : '提交回执'}
         </button>
-        <button onClick={() => { setEditing(false); setDecision(null); setNote('') }}
+        <button onClick={() => { setEditing(false); setDecision(null); setNote(''); setValidationError('') }}
           className="rounded-[4px] border border-[#E5E5E5] bg-white px-2 py-1 text-xs text-[#6B7280]">
           取消
         </button>
       </div>
+      {validationError && <p role="alert" data-testid="review-row-note-error" className="mt-1 text-[11px] text-[#C62828]">{validationError}</p>}
     </div>
   )
 }

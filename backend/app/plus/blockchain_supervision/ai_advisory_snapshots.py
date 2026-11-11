@@ -15,6 +15,12 @@ from .rules import ATTACHMENT_SEAL_ITEM, negative_list_rules
 from .reference_snapshots import CHECK_GROUPS, REVIEW_POINTER
 
 
+FAILURE_CATEGORIES = frozenset({
+    "timeout", "invalid_response", "input_budget", "model_call_error",
+    "rate_limit", "authentication", "service_error", "incomplete_material_scope",
+})
+
+
 def advisory_pending(event):
     if not event or event.event_type not in {"check.ai_advisory_started", "check.negative_candidates_started"}:
         return False
@@ -271,9 +277,7 @@ def summarize_coverage(snapshot, runs, events, *, timeout_reviewable_ids=None, s
             if state == "failed" and event is not None:
                 categories = (event.payload_json or {}).get("failure_categories") or []
                 if isinstance(categories, list):
-                    failure_categories.update(c for c in categories if isinstance(c, str) and c in {
-                        "timeout", "invalid_response", "input_budget", "model_call_error",
-                        "rate_limit", "authentication", "service_error"})
+                    failure_categories.update(c for c in categories if isinstance(c, str) and c in FAILURE_CATEGORIES)
                 if (event.event_type == "check.ai_advisory_completed" and advisory_validation_current(event)
                         and categories == ["timeout"] and finding_id in (timeout_reviewable_ids or set())):
                     reviewable_failed_ids.append(finding_id)
@@ -312,6 +316,12 @@ def summarize_coverage(snapshot, runs, events, *, timeout_reviewable_ids=None, s
                                 and row.get("candidate_id") in (scope_reviewable_ids or set())):
                             reviewable_not_run += 1
                             unlocated_scope_reviewable += 1
+                        if state == "not_run" and (
+                                row.get("candidate_id") not in (scope_reviewable_ids or set())
+                                or row.get("unavailable_reason") != "contract_scope_unlocated"):
+                            # 仅把不能转人工的未执行候选标成阻断原因；已形成可追溯人工项的
+                            # contract_scope_unlocated 仍允许进入人工复核，不应伪装成模型失败。
+                            failure_categories.add("incomplete_material_scope")
                     if result.get("no_confirmed_subjects") or result.get("unresolved_subject_ids"):
                         counts["not_run"] += 1
         if version_changed:
@@ -389,6 +399,8 @@ def collect_current_coverage(db, task, snapshot, reviewable_predicate=None):
         return None
     user = SimpleNamespace(id=task.created_by, user_type=task.created_by_type)
     runs = []
+    version_mismatch = False
+    review_id = (task.options_snapshot_json or {}).get(REVIEW_POINTER)
     for group in CHECK_GROUPS:
         run = knowledge_runs.get_reference_run(db, task, group_id=group)
         if not run or run.get("state") != "completed":
@@ -396,6 +408,15 @@ def collect_current_coverage(db, task, snapshot, reviewable_predicate=None):
         try:
             assert_ai_context_current(db, task, run, user, allow_completed=True, require_references=False)
         except (AiContextChanged, HTTPException):
+            frozen = run.get("rule_fingerprint")
+            groups = snapshot.get("ai_auto_groups")
+            if (isinstance(groups, list) and group in groups and review_id
+                    and run.get("task_id") == task.id and run.get("group_id") == group
+                    and run.get("review_run_id") == review_id and run.get("run_id")
+                    and isinstance(frozen, str) and frozen):
+                current_rule = knowledge_runs.rule_fingerprint()
+                if isinstance(current_rule, str) and current_rule and frozen != current_rule:
+                    version_mismatch = True
             continue
         runs.append(run)
     events = (db.query(BsTaskEvent).filter(BsTaskEvent.task_id == task.id,
@@ -404,9 +425,13 @@ def collect_current_coverage(db, task, snapshot, reviewable_predicate=None):
                                     "check.negative_candidates_failed")))
         .order_by(BsTaskEvent.sequence.desc()).all())
     a1_run = next((run for run in runs if run.get('group_id') == 'a1'), None)
-    return summarize_coverage(snapshot, runs, events,
+    coverage = summarize_coverage(snapshot, runs, events,
         timeout_reviewable_ids=timeout_reviewable_ids(db, task, runs, reviewable_predicate),
         scope_reviewable_ids=unlocated_scope_reviewable_ids(db, task, user, a1_run, events))
+    if coverage and (coverage.get("state") != "available"
+                     or any(group.get("state") != "available" for group in coverage.get("groups") or [])):
+        coverage["unavailable_reason"] = "rule_version_mismatch" if version_mismatch else "unknown"
+    return coverage
 
 
 def collect_current_advisories(db, task):

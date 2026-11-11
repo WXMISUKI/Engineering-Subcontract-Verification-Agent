@@ -101,6 +101,18 @@ def test_amount_extract_incl_tax():
     assert "12,000万元" in amt["quote"]
 
 
+def test_amount_extract_mixed_tax_clause_keeps_first_amount_label():
+    mat = _mat(
+        101,
+        "预制梁劳务合同.pdf",
+        "合同金额（含税）为人民币41730485元，不含税40515033.98元，税额1215451.02元。",
+        role="labor",
+    )
+    amt = a1_check.extract_contract_amount(mat)
+    assert amt["found"] and amt["tax"] == "incl"
+    assert amt["value_wan"] == pytest.approx(4173.0485)
+
+
 def test_contract_amount_cannot_use_unread_page():
     material = _mat(97, "总包合同.pdf", "合同金额：人民币12,000万元（含税）。", role="general")
     material.degradations_json = [{"kind": "parse_incomplete", "unread_pages": [1]}]

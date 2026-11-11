@@ -25,6 +25,47 @@ function autoRunStorageKey(taskId) {
   return `bs:auto-check:${taskId}`
 }
 
+export const AUTO_RUN_STALE_MS = 30_000
+
+/**
+ * 前端编排请求长期没有收口时允许用户进入恢复路径。
+ * 这只判断本地互斥是否已经占用过久，不推断服务端是否完成；恢复动作仍由
+ * `rerunTask` 重新受理并重新读取服务端快照。
+ */
+export function autoRunIsStale({ running, startedAt, now = Date.now(), staleMs = AUTO_RUN_STALE_MS } = {}) {
+  if (!running || !Number.isFinite(startedAt) || !Number.isFinite(now)) return false
+  return now - startedAt >= staleMs
+}
+
+/**
+ * Decide whether a page reload may resume the background AI run.
+ *
+ * The task detail endpoint can briefly keep the task in `running` while the
+ * progress snapshot has already recorded the terminal background event. In
+ * that window a mount-time resume would start a duplicate run and lock the
+ * manual-review controls again. A closed server-side run always wins over
+ * the client-side snapshot.
+ */
+export function shouldResumeAiAfterReload({
+  taskState,
+  progressPhase,
+  activityHealth,
+  aiCoverage,
+  referenceSnapshot,
+  seenRunId,
+} = {}) {
+  if (taskState !== 'running' && taskState !== 'review') return false
+  if (aiCoverage?.state === 'unavailable') return false
+  if (progressPhase === 'completed' || progressPhase === 'failed') return false
+  if (['check.ai_background_completed', 'check.ai_background_failed'].includes(activityHealth?.last_event_type)) return false
+  if (seenRunId === referenceSnapshot?.review_run_id) return false
+  if (referenceSnapshot?.ai_auto_enabled !== true) return false
+  const groups = referenceSnapshot?.ai_auto_groups
+  const runs = referenceSnapshot?.runs
+  return Array.isArray(groups) && groups.length > 0 && Array.isArray(runs) &&
+    groups.every((group) => runs.some((run) => run?.group_id === group && run?.state === 'completed'))
+}
+
 export function readAutoRunStatus(taskId, runId) {
   try {
     const raw = window.sessionStorage.getItem(autoRunStorageKey(taskId))

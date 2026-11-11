@@ -3,9 +3,11 @@ from jose import JWTError, jwt
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
+from .auth.cookies import SESSION_COOKIE
+
 
 def account_or_address(request):
-    token = request.cookies.get('access_token')
+    token = request.cookies.get(SESSION_COOKIE)
     secret = getattr(request.app.state, 'secret_key', None)
     if token and secret:
         try:

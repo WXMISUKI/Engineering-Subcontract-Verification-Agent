@@ -18,6 +18,58 @@ import { buildReviewQueueSections, classifyReviewItem } from '../lib/reviewQueue
 // - 只做布局与容器：数据全部来自 props（U0 view-model），不含业务逻辑、不请求 API。
 // - 非原型路径的问题摘要与人工处置仍合并在左侧；v3 原型路径把详情独立放在中列。
 
+const REASON_CODE_TEXT = {
+  field_conflict: '字段冲突',
+  field_not_found: '关键字段未提取',
+  field_ambiguous: '字段存在歧义',
+  post_unmapped: '岗位无证书类别映射',
+  subject_unresolved: '主体未确认',
+  certificate_not_located: '未定位到证书页',
+  certificate_holder_unconfirmed: '证书持证人无法确认',
+  certificate_ambiguous: '存在多份互斥证书',
+  supplement_unreadable: '补件证书不可读或缺号',
+  material_unreadable: '材料质量存疑',
+  extraction_failed: '字段提取失败',
+}
+
+function reasonCodeText(code) {
+  return REASON_CODE_TEXT[code] || code || ''
+}
+
+function certificateRoleLabel(role, item = {}) {
+  if (role === 'authoritative') return item.generation_id ? '权威补件' : '当前证书'
+  if (role === 'superseded') return '已替代'
+  return '待确认'
+}
+
+function certificateRoleClass(role) {
+  if (role === 'authoritative') return 'border-emerald-200 bg-emerald-50 text-emerald-700'
+  if (role === 'superseded') return 'border-[#E5E5E5] bg-[#F7F1E9] text-[#6B7280]'
+  return 'border-amber-200 bg-amber-50 text-amber-700'
+}
+
+const EVIDENCE_ROLE_TEXT = {
+  support: '支持证据',
+  contradiction: '矛盾证据',
+  expected: '名单/要求证据',
+  unreadable: '不可读证据',
+  authoritative: '权威补件',
+  superseded: '已替代证据',
+  candidate: '候选证据',
+}
+
+function evidenceRoleLabel(role) {
+  return EVIDENCE_ROLE_TEXT[role] || (role ? `证据角色：${role}` : '')
+}
+
+function evidenceRoleClass(role) {
+  if (role === 'contradiction') return 'border-red-200 bg-red-50 text-red-700'
+  if (role === 'support') return 'border-emerald-200 bg-emerald-50 text-emerald-700'
+  if (role === 'expected') return 'border-sky-200 bg-sky-50 text-sky-700'
+  if (role === 'unreadable') return 'border-amber-200 bg-amber-50 text-amber-700'
+  return 'border-[#E5DED3] bg-[#FCFAF6] text-[#705C45]'
+}
+
 function quoteHeading(finding) {
   if (finding?.anchor?.status === 'page_only') return '材料线索'
   return (finding?.location_mode ?? finding?.locationMode) === 'precise' ? '匹配原文' : '材料线索'
@@ -56,6 +108,31 @@ function sourceLocation({ finding, material, containerIds }) {
   }
   if (locationMode === 'unresolved') return { label: '暂未定位到具体页' }
   return { label: '暂无可用的原文定位信息' }
+}
+
+function publicationPolicyMessage(publication) {
+  if (!publication || typeof publication !== 'object') return null
+  const state = publication.state
+  const policy = publication.reviewPolicy
+  const generation = (state === 'candidate' || policy === 'candidate_requires_review')
+    ? (publication.candidateGenerationId || publication.generationId || '未生成')
+    : (publication.generationId || '未生成')
+  const baseline = publication.baselineVersionNo == null ? '未记录' : publication.baselineVersionNo
+  if (state === 'candidate' || policy === 'candidate_requires_review') {
+    return {
+      tone: 'candidate',
+      title: '当前为补件候选代次，尚未发布',
+      detail: `候选代次：${generation}；基线复核版本：${baseline}。原人工意见不会自动继承，需在当前候选代次重新复核。`,
+    }
+  }
+  if (state === 'failed' || policy === 'baseline_only') {
+    return {
+      tone: 'failed',
+      title: '补件候选运行未发布，当前仍以基线代次为准',
+      detail: `当前公开代次：${generation}；基线复核版本：${baseline}。候选运行失败或被中断，人工意见与报告不会写入失败候选。`,
+    }
+  }
+  return null
 }
 
 function trapTabFocus(event, container) {
@@ -100,6 +177,11 @@ function FindingDetailPane({
   // 刀D（设计 104 §4.2）：消息/摘录只做展示层消毒，库中原文不动。
   const quote = cleanText(finding.quote) || ''
   const message = cleanText(finding.message) || cleanText(finding.title) || '未提供问题描述'
+  const reasonCode = finding.reasonCode || finding.reason_code ||
+    (Array.isArray(finding.evidence)
+      ? (finding.evidence.find((ref) => ref && ref.reason_code)?.reason_code ?? null)
+      : null)
+  const reasonLabel = finding.reasonLabel || finding.reason_label || reasonCodeText(reasonCode)
   const readingPages = finding.status === 'undecidable' && finding.subject_id != null && message.includes('未读')
     ? Object.values(materialsById || {}).flatMap((row) => {
       const id = row?.id ?? row?.material_id
@@ -180,6 +262,14 @@ function FindingDetailPane({
           <h3 className="mb-1 text-xs font-medium text-[#6B7280]">问题描述</h3>
           <p data-testid="detail-problem-description" className="break-words text-[#1F2937]">{message}</p>
         </section>
+        {reasonCode && (
+          <section data-testid="detail-reason-code" className={prototypeMode ? 'sr-only' : undefined}>
+            <h3 className="mb-1 text-xs font-medium text-[#6B7280]">字段原因</h3>
+            <p className="break-words rounded-[4px] border border-[#EFE6D8] bg-[#FDFAF4] px-3 py-2 text-[12px] text-[#705C45]">
+              {reasonLabel}
+            </p>
+          </section>
+        )}
         {readingPages.length > 0 && onOpenSource && (
           <details className="rounded-[4px] border border-[#EFE6D8] px-3 py-2 text-xs text-[#587089]">
             <summary className="cursor-pointer font-medium">材料待读页（{readingPages.length} 页）</summary>
@@ -268,6 +358,27 @@ function FindingDetailPane({
             <h3 className="text-xs font-medium">{refMaterial?.file_name || '材料不可用'}</h3>
             {refQuote && <blockquote className="my-2 break-words text-xs text-[#6B7280]">{refQuote}</blockquote>}
             {loc.canOpen ? <button type="button" className="min-h-8 text-xs text-[#8B7355] hover:underline" onClick={() => onOpenSource?.(loc.materialId, loc.page, findingId)}>定位原文 · 第 {loc.page} 页</button> : <p className="text-xs text-[#9CA3AF]">{loc.label}</p>}
+            {Array.isArray(ref.certificate_evidence) && ref.certificate_evidence.length > 0 && (
+              <div data-testid={`certificate-evidence-${index}`} className="mt-3 rounded-[4px] border border-[#EFE6D8] bg-[#FDFAF4] px-2 py-2">
+                <p className="mb-1 text-[11px] font-medium text-[#8B7355]">补件证据对照</p>
+                <ul className="space-y-1">
+                  {ref.certificate_evidence.map((item, itemIndex) => {
+                    const itemMaterial = materialsById?.[item.material_id]
+                    return (
+                      <li key={`${item.material_id}-${item.page}-${itemIndex}`} data-testid={`certificate-evidence-item-${index}-${itemIndex}`} className="flex flex-wrap items-center gap-1 text-[11px] leading-relaxed text-[#4B5563]">
+                        <span className={`rounded border px-1.5 py-0.5 text-[10px] leading-none ${certificateRoleClass(item.role)}`}>
+                          {certificateRoleLabel(item.role, item)}
+                        </span>
+                        <span>{itemMaterial?.file_name || '材料不可用'}</span>
+                        {item.page ? <span>· 第 {item.page} 页</span> : null}
+                        {item.certificate_number ? <span>· {item.certificate_number}</span> : null}
+                        {item.quality && item.quality !== 'readable' ? <span>· 质量待核实</span> : null}
+                      </li>
+                    )
+                  })}
+                </ul>
+              </div>
+            )}
           </section>
         })}
         <section data-testid="detail-location-status" className={prototypeMode ? 'sr-only' : undefined}>
@@ -334,6 +445,12 @@ function CompareQuickActions({
   const basis = finding.basis && typeof finding.basis === 'object' ? finding.basis : null
   const basisText = basis?.text || finding.basisText || finding.source || '依据库未提供条款原文。'
   const basisDoc = basis?.doc_no || basis?.doc_title || basis?.doc_id || '规则依据'
+  const reasonCode = finding.reasonCode || finding.reason_code ||
+    (Array.isArray(finding.evidence)
+      ? (finding.evidence.find((ref) => ref && ref.reason_code)?.reason_code ?? null)
+      : null)
+  const reasonLabel = finding.reasonLabel || finding.reason_label || reasonCodeText(reasonCode)
+  const subjectLabel = finding.subjectLabel || finding.subject_label || finding.subject_name || null
   const decisionLabel = finding.review?.decision === 'accepted'
     ? '已采纳'
     : finding.review?.decision === 'ignored'
@@ -342,6 +459,8 @@ function CompareQuickActions({
   const problemDescription = finding.description || finding.problem_description || finding.analysis || finding.rule_reason || finding.message || '未提供详细问题描述。'
   const reasoning = finding.analysis || finding.reasoning || finding.rule_reason || finding.explanation || null
   const decisionTrace = finding.decision_trace || finding.decisionTrace || null
+  const aiAdjudication = finding.ai_adjudication || finding.aiAdjudication || null
+  const aiAdjudicationLabel = { hit: '不符合', miss: '符合', undecidable: '无法核实' }[aiAdjudication?.status] || null
   const evidenceStatusLabel = {
     precise: '已取得可验证页码和引文',
     page_only: '只有页码，尚未完成引文定位校验',
@@ -352,12 +471,15 @@ function CompareQuickActions({
   const missingLabels = Array.isArray(decisionTrace?.missing?.labels)
     ? decisionTrace.missing.labels.filter(Boolean)
     : []
+  const evidenceRows = Array.isArray(finding.evidence) ? finding.evidence : []
   const primaryMaterialId = finding.material_id ?? finding.materialId
   const primaryMaterial = primaryMaterialId != null
     ? materialsById[primaryMaterialId] || materialsById[String(primaryMaterialId)] || null
     : null
   const primaryLocation = sourceLocation({ finding, material: primaryMaterial, containerIds })
-  const evidenceRows = Array.isArray(finding.evidence) ? finding.evidence : []
+  const primaryEvidence = evidenceRows.find((reference) =>
+    String(reference.material_id ?? reference.materialId) === String(primaryLocation.materialId)
+    && Number(reference.page) === Number(primaryLocation.page))
   const additionalEvidence = evidenceRows.filter((reference) => !primaryLocation.canOpen
     || String(reference.material_id ?? reference.materialId) !== String(primaryLocation.materialId)
     || Number(reference.page) !== Number(primaryLocation.page))
@@ -370,12 +492,19 @@ function CompareQuickActions({
     <aside data-testid="compare-quick-actions" className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto bg-white p-5">
       <div className="flex flex-wrap items-center gap-1.5">
         <span className={`rounded-full border px-2 py-0.5 text-[10px] ${decisionLabel === '未经人工处理' ? 'border-[#EAD5AA] bg-[#FFF8E9] text-[#96651C]' : 'border-[#C8E4CF] bg-[#EFFAF2] text-[#2F7D49]'}`}>{decisionLabel}</span>
+        {subjectLabel && <span data-testid="compare-subject" className="text-[11px] text-[#6B7280]">归属：{subjectLabel}</span>}
       </div>
       <h2 className="mt-2 text-sm font-semibold leading-relaxed text-[#17283D]">{finding.message || finding.title || '当前问题'}</h2>
       <section data-testid="compare-problem-description" className="mt-4">
         <h3 className="mb-1 text-xs font-medium text-[#7A6C5A]">问题描述</h3>
         <p className="text-[13px] leading-7 text-[#4B4035]">{problemDescription}</p>
       </section>
+      {reasonCode && (
+        <section data-testid="compare-reason-code" className="mt-3 rounded-[4px] border border-[#EFE6D8] bg-[#FDFAF4] px-3 py-2">
+          <h3 className="text-[11px] font-medium text-[#7A6C5A]">字段原因</h3>
+          <p className="mt-1 text-[12px] text-[#705C45]">{reasonLabel}</p>
+        </section>
+      )}
       <section data-testid="compare-ai-reasoning" className="mt-3 rounded-[4px] border border-[#DCE5EE] bg-[#F7F9FB] px-3 py-2">
         <details>
           <summary className="cursor-pointer text-[11px] font-medium text-[#587089]">判定链（基于已落库数据）</summary>
@@ -390,6 +519,17 @@ function CompareQuickActions({
           </p>
         </details>
       </section>
+      {aiAdjudication && aiAdjudicationLabel && (
+        <section data-testid="compare-ai-adjudication" className="mt-3 rounded-[4px] border border-[#DCE5EE] bg-[#F7F9FB] px-3 py-2">
+          <h3 className="text-[11px] font-medium text-[#587089]">AI 判定</h3>
+          <p className="mt-1 text-[12px] leading-relaxed text-[#4B5563]">
+            AI 认定：<b>{aiAdjudicationLabel}</b>
+            {aiAdjudication.reason ? `；理由：${aiAdjudication.reason}` : ''}
+            {aiAdjudication.model_code ? `；模型：${aiAdjudication.model_code}` : ''}
+          </p>
+          <p className="mt-1 text-[10px] leading-relaxed text-[#7A6C5A]">该判定已写入机器结论审计；人工采纳/忽略仍作为独立回执保留。</p>
+        </section>
+      )}
       <section className="mt-3 rounded-[4px] border border-[#EFE6D8] bg-[#FCFAF6] px-3 py-2">
         <h3 className="text-[11px] font-medium text-[#6B7280]">规则依据</h3>
         <p className="mt-1 text-[11px] font-medium leading-relaxed text-[#4B5563]">{basisDoc}</p>
@@ -405,6 +545,11 @@ function CompareQuickActions({
         <h3 className="text-[11px] font-medium text-[#7A6C5A]">证据定位</h3>
         {primaryLocation.canOpen && onOpenSource ? (
           <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-[#4B5563]">
+            {primaryEvidence?.role && (
+              <span className={`rounded border px-1.5 py-0.5 text-[10px] ${evidenceRoleClass(primaryEvidence.role)}`}>
+                {evidenceRoleLabel(primaryEvidence.role)}
+              </span>
+            )}
             <span>{primaryMaterial?.file_name || '当前材料'} · 第 {primaryLocation.page} 页</span>
             <button
               type="button"
@@ -424,6 +569,7 @@ function CompareQuickActions({
               const location = sourceLocation({ finding: reference, material, containerIds })
               return (
                 <li key={`${reference.material_id || 'evidence'}-${reference.page || index}`} className="flex flex-wrap items-center gap-2 text-[11px] text-[#4B5563]">
+                  {reference.role && <span className={`rounded border px-1.5 py-0.5 text-[10px] ${evidenceRoleClass(reference.role)}`}>{evidenceRoleLabel(reference.role)}</span>}
                   <span>{material?.file_name || '材料证据'} · {location.label}</span>
                   {location.canOpen && onOpenSource && (
                     <button
@@ -505,6 +651,7 @@ export default function ReviewWorkbenchLayout({
   className = '',
   reviewFilter,
   onFilterChange,
+    publication = null,
   // V2：右栏顶部「待办与处置」分组（可选；不传时右栏保持原样，历史调用不受影响）。
   todoPanel = null,
   stepPanel = null,
@@ -607,6 +754,7 @@ export default function ReviewWorkbenchLayout({
     : (Array.isArray(readingCoverage?.rows) ? readingCoverage.rows : [])
   const incompleteReadingRows = readingRows.filter((row) => row && row.reading_complete !== true)
   const readingIncomplete = readingCoverage?.complete === false || incompleteReadingRows.length > 0
+  const publicationMessage = publicationPolicyMessage(publication)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const triggerRef = useRef(null)
   const drawerRef = useRef(null)
@@ -919,6 +1067,18 @@ export default function ReviewWorkbenchLayout({
       data-reading-complete={readingCoverage?.complete === true ? 'true' : undefined}
       className={`relative flex w-full min-h-0 min-w-0 flex-col gap-3 overflow-x-hidden ${prototypeMode ? 'max-[1099px]:overflow-y-auto min-[1100px]:h-full min-[1100px]:overflow-hidden min-[1100px]:grid min-[1100px]:grid-cols-[288px_minmax(0,1fr)_360px] min-[1100px]:gap-[14px] min-[1280px]:grid-cols-[300px_minmax(0,1fr)_380px]' : 'xl:h-full xl:overflow-hidden xl:grid xl:grid-cols-[minmax(0,380px)_minmax(0,1fr)] xl:gap-4'} ${className}`}
     >
+      {publicationMessage && (
+        <section
+          data-testid="publication-policy-banner"
+          role="status"
+          className={`col-span-full shrink-0 rounded-[6px] border px-3 py-2 text-[12px] ${publicationMessage.tone === 'failed'
+            ? 'border-[#E9CACA] bg-[#FFF5F5] text-[#8A3B3B]'
+            : 'border-[#E5C79C] bg-[#FFF8EC] text-[#765B36]'}`}
+        >
+          <div className="font-medium">{publicationMessage.title}</div>
+          <div className="mt-1 text-[11px] opacity-90">{publicationMessage.detail}</div>
+        </section>
+      )}
       {/* <1280px：右栏收进抽屉，这里只留入口；中间（左栏）占满宽度不压缩。 */}
       {readingIncomplete && (
         <section

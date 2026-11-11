@@ -6,12 +6,16 @@ from fastapi import Depends, HTTPException, Request
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 
+from .cookies import SESSION_COOKIE
 from ..database import get_db
 from ..standalone.identity import User
 
+# 独立版只有一种 web 用户；保留广场账单路由所需的统一类型名，避免复制整套身份体系。
+UnifiedUser = User
+
 
 def get_current_any_user(request: Request, db: Session = Depends(get_db)) -> User:
-    token = request.cookies.get('access_token')
+    token = request.cookies.get(SESSION_COOKIE)
     try:
         if not token:
             raise JWTError('missing token')

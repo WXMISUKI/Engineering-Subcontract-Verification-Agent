@@ -1,7 +1,7 @@
 // 原型页唯一的展示适配层。
 // 这里不执行规则、不推导业务结论，只把后端 DTO 变成四阶段页面可消费的稳定形状。
 
-import { subjectCodeLabel, subjectDisplayName, subjectTypeLabel } from '../lib/materialState'
+import { subjectCodeLabel, subjectDisplayName, subjectTypeLabel, zipPreparationFailureMessages } from '../lib/materialState'
 
 function formatFileSize(sizeKb) {
   const kb = Number(sizeKb)
@@ -9,6 +9,14 @@ function formatFileSize(sizeKb) {
   if (kb < 1024) return `${Math.round(kb)} KB`
   const mb = kb / 1024
   return `${mb.toFixed(mb >= 10 ? 0 : 1).replace(/\.0$/, '')} MB`
+}
+
+const INTERNAL_PARSE_ERROR_RE = /failed to open file|traceback|exception|(?:^|[\\/])app[\\/]|(?:^|[A-Za-z]:)[\\/]|\/tmp\//i
+
+function userVisibleParseFailureMessage(degradation) {
+  const raw = typeof degradation?.message === 'string' ? degradation.message.trim() : ''
+  if (!raw || INTERNAL_PARSE_ERROR_RE.test(raw)) return '材料无法读取，请检查文件是否损坏'
+  return raw
 }
 
 export const PROTOTYPE_STAGES = [
@@ -61,6 +69,8 @@ export function buildPrototypeFlow(taskState, stage = null, reachedIndex = null)
 
 export function buildPrototypeMaterial(material = {}, subjectsById = {}) {
   const subject = subjectsById[material.subject_id] || subjectsById[String(material.subject_id)]
+    const degradations = Array.isArray(material.degradations) ? material.degradations : []
+    const parseFailure = degradations.find((item) => item?.kind === 'parse_failed' || item?.kind === 'zip_parse_failed')
     const rawFileName = material.file_name || ''
     const fileSizeKb = material.size_kb ?? material.file_size_kb ?? null
     const fileSizeLabel = formatFileSize(fileSizeKb)
@@ -73,8 +83,10 @@ export function buildPrototypeMaterial(material = {}, subjectsById = {}) {
     roleLabel: material.role_label || material.role || '',
     materialCategory: material.material_category || material.category || null,
     supplementLabel: material.supplement_label || material.todo_label || null,
-    subjectConflict: (material.degradations || []).find((item) => item?.kind === 'subject_conflict') || null,
-    subjectUnresolved: (material.degradations || []).find((item) => item?.kind === 'subject_unresolved') || null,
+    degradations,
+    parseFailureMessage: parseFailure ? userVisibleParseFailureMessage(parseFailure) : null,
+    subjectConflict: degradations.find((item) => item?.kind === 'subject_conflict') || null,
+    subjectUnresolved: degradations.find((item) => item?.kind === 'subject_unresolved') || null,
     subjectId: material.subject_id ?? null,
     subjectName: material.subject_name || material.subject?.name || subjectDisplayName(subject) || null,
     // 上传页「查看」直接读原件（GET /materials/{id}/file），不必等解析完成；
@@ -96,6 +108,7 @@ export function buildPrototypeTask(detail = {}) {
     title: detail.title || '',
     state: detail.state || 'setup',
     progress: detail.progress || null,
+    zipPreparation: detail.zip_preparation || null,
     section: {
       projectName: detail.section?.project_name || '',
       contractSection: detail.section?.contract_section || '',
@@ -119,9 +132,12 @@ export function buildPrototypeTask(detail = {}) {
   }
 }
 
-export function buildUploadReadiness({ validation, materials = [] } = {}) {
+export function buildUploadReadiness({ validation, materials = [], zipPreparation = null } = {}) {
   const source = validation || {}
   const reasons = Array.isArray(source.hard_gaps) ? source.hard_gaps.filter(Boolean) : []
+  if (zipPreparationFailureMessages(zipPreparation).length) {
+    reasons.unshift('资料包准备失败，请移除失败资料包后重新上传')
+  }
   const hasSubjectIssue = Array.isArray(source.subject_issue_material_ids) && source.subject_issue_material_ids.length > 0
   if (hasSubjectIssue) reasons.push('请先处理主体不一致或无法确认的材料')
   if (source.parsing_pending && !reasons.includes('材料读取中，读取完成后才能开始核查')) {

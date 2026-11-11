@@ -86,7 +86,7 @@ def material_fingerprint(db: Session, task: BsTask, *, options_snapshot: dict | 
                             "ruleset_manifest",
                             # P8-03C：补件计划/编辑态是调度过程簿记，不改变材料正文、主体
                             # 或规则输入；若纳入指纹会让 carried-forward 永远被误判为失效。
-                            "supplement_plan", "supplement_edit"}}
+                             "supplement_plan", "supplement_edit", "supplement_publication"}}
     return _digest({"materials": rows(BsMaterial), "subjects": rows(BsSubject),
                     "task": {"conversation_id": task.conversation_id,
                              "scope_a1": task.scope_a1, "scope_a3": task.scope_a3,
@@ -178,21 +178,41 @@ def group_pointer(task: BsTask, group_id: str = "a1") -> str | None:
     return options.get(LEGACY_POINTER) if group_id == "a1" else None
 
 
+AI_PROJECTED_FIELDS = ("status", "message", "evidence_json", "material_id", "page", "quote", "location_mode")
+
+
+def finding_input_row(finding: BsFinding) -> dict:
+    """还原可验证的 AI 输出前输入；不能验证时保留当前值以使旧快照失效。"""
+    row = {c.name: getattr(finding, c.name) for c in BsFinding.__table__.columns
+           if c.name not in {"created_at", "review_json", "discrepancy_json"}}
+    adjudication = row.get("ai_adjudication_json")
+    if not isinstance(adjudication, dict):
+        return row
+    original, projected = adjudication.get("input_fields"), adjudication.get("projected_fields")
+    if (isinstance(original, dict) and isinstance(projected, dict)
+            and set(original) == set(AI_PROJECTED_FIELDS) == set(projected)
+            and all(row[name] == projected[name] for name in AI_PROJECTED_FIELDS)):
+        row.update(original)
+        row["ai_adjudication_json"] = None
+    elif ("input_fields" not in adjudication and adjudication.get("status") == "undecidable"
+          and row["status"] == adjudication.get("previous_status", "undecidable")):
+        # 旧版 undecidable 只写审计字段，不改结论及证据。
+        row["ai_adjudication_json"] = None
+    return row
+
+
 def dependency_fingerprint(db: Session, group_id: str, task_id: int) -> str | None:
     if group_id != "a1":
         return None
     rows = db.query(BsFinding).filter_by(task_id=task_id, kind="completeness").order_by(BsFinding.id).all()
     owner = db.get(BsTask, task_id)
     return _digest({"upstream_run_id": group_pointer(owner, "completeness") if owner else None,
-                    "findings": [{c.name: getattr(row, c.name) for c in BsFinding.__table__.columns
-                     if c.name not in {"created_at", "review_json", "discrepancy_json"}} for row in rows]})
+                    "findings": [finding_input_row(row) for row in rows]})
 
 
 def finding_fingerprint(findings: list[BsFinding]) -> str:
     """结论内容指纹；人工处置可变，不影响一条参考终态是否仍对应原结论。"""
-    fields = [column.name for column in BsFinding.__table__.columns
-              if column.name not in {"created_at", "review_json", "discrepancy_json"}]
-    rows = [{field: getattr(finding, field) for field in fields} for finding in findings]
+    rows = [finding_input_row(finding) for finding in findings]
     rows.sort(key=lambda row: (
         row.get("subject_id") or -1, row.get("item_id") or "", row.get("material_id") or -1,
         row.get("page") or -1, row.get("id") or -1))

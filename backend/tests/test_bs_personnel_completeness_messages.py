@@ -140,3 +140,24 @@ def test_certificate_clue_excludes_unrelated_unread_pages():
     assert finding.status == 'undecidable' and finding.page == 3
     assert '第3页' in finding.message and '第2' not in finding.message
     assert '识别质量' not in finding.message
+
+
+def test_structured_ocr_license_page_is_confirmed_as_present():
+    item = next(item for item in load_report_checklist() if item['id'] == 'RC-A02')
+    material = SimpleNamespace(
+        id=59, role='packet', file_name='预制板梁劳务分包报审.pdf', parse_state='done',
+        degradations_json=[],
+        pages_json=[
+            {'page': 1, 'text': '劳务分包报审表'},
+            {'page': 3, 'text': (
+                '```json\n'
+                '{"证照标题":"营业执照", "统一社会信用代码":"91420112MA4K4KKU18", '
+                '"经营范围":"建筑工程施工", "注册资本":"5000万元"}\n'
+                '```'
+            )},
+        ],
+    )
+    finding = run_completeness_check(SimpleNamespace(id=39), [material], items=[item])[0]
+    assert finding.status == 'miss'
+    assert finding.material_id == 59 and finding.page == 3
+    assert finding.quote and '营业执照' in finding.quote

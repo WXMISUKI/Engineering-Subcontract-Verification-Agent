@@ -1,5 +1,5 @@
 """分包认证及知识引用需要的最小兼容模型。"""
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, JSON, Numeric, String, Text, UniqueConstraint, func, text
 from ..database import Base
 from ..standalone.identity import Agent, ConversationMapping
 
@@ -63,3 +63,54 @@ class KnowledgeRef(Base):
     snippet = Column(Text, nullable=True)
     score = Column(Float, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
+
+
+class TokenUsage(Base):
+    """统一模型用量台账；None 表示未知，0 表示已知零。"""
+    __tablename__ = 'token_usage'
+    __table_args__ = (
+        Index('idx_token_usage_user_date', 'user_id', 'created_at'),
+        Index('idx_token_usage_status', 'status'),
+        Index('idx_token_usage_billing_status', 'billing_status'),
+        Index('idx_token_usage_unit_type', 'unit_type'),
+        Index('idx_token_usage_scope', 'billing_scope_type', 'billing_scope_id'),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, nullable=False, index=True)
+    user_type = Column(String(20), default='web', nullable=False, index=True)
+    conversation_id = Column(Integer, ForeignKey('conversation_mappings.id', ondelete='SET NULL'), nullable=True)
+    chat_id = Column(String(100), nullable=True)
+    dedupe_key = Column(String(120), nullable=True, unique=True)
+    input_count = Column(Integer, nullable=True)
+    output_count = Column(Integer, nullable=True)
+    token_count = Column(Integer, nullable=True)
+    source = Column(String(32), default='chat', nullable=False)
+    stage = Column(String(64), nullable=True)
+    as_session_id = Column(String(36), nullable=True)
+    unit_type = Column(String(16), nullable=False, default='token', server_default=text("'token'"))
+    unit_scale = Column(Integer, nullable=False, default=1, server_default=text('1'))
+    billable_quantity = Column(Numeric(18, 3), nullable=True)
+    billable = Column(Boolean, nullable=False, default=True, server_default=text('1'))
+    status = Column(String(16), nullable=False, default='completed', server_default=text("'completed'"))
+    started_at = Column(DateTime, nullable=True)
+    finished_at = Column(DateTime, nullable=True)
+    model_code = Column(String(64), nullable=True)
+    provider_code = Column(String(32), nullable=True)
+    cache_hit_input_count = Column(Integer, nullable=True)
+    cache_miss_input_count = Column(Integer, nullable=True)
+    cache_write_input_count = Column(Integer, nullable=True)
+    cache_reported = Column(Boolean, nullable=True)
+    usage_status = Column(String(16), nullable=True)
+    raw_usage_json = Column(JSON, nullable=True)
+    request_id = Column(String(64), nullable=True)
+    billing_status = Column(String(16), nullable=True)
+    billing_scene = Column(String(32), nullable=True)
+    agent_id = Column(Integer, nullable=True)
+    billing_scope_type = Column(String(32), nullable=True)
+    billing_scope_id = Column(String(64), nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+# Register billing-domain tables with the standalone metadata when installed.
+from . import billing_models as _billing_models  # noqa: E402,F401

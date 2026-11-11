@@ -19,6 +19,20 @@ def client_and_engine():
     return TestClient(create_app(engine, 'x' * 64, cookie_secure=False)), engine
 
 
+def test_standalone_login_does_not_replace_or_remove_marketplace_cookie():
+    client, _ = client_and_engine()
+    client.cookies.set('access_token', 'synthetic-marketplace-cookie', domain='testserver.local', path='/')
+    assert client.get('/api/session').status_code == 401
+    response = client.post('/api/login', json={'username': 'alice', 'password': 'Alice-pass-123'})
+    assert response.status_code == 200
+    assert client.cookies.get('access_token') == 'synthetic-marketplace-cookie'
+    assert client.cookies.get('bs_standalone_session')
+    assert client.get('/api/session').json()['username'] == 'alice'
+    assert client.post('/api/logout').status_code == 204
+    assert client.cookies.get('access_token') == 'synthetic-marketplace-cookie'
+    assert client.get('/api/session').status_code == 401
+
+
 def test_login_logout_and_no_registration():
     client, _ = client_and_engine()
     assert client.get('/api/session').status_code == 401
@@ -28,10 +42,10 @@ def test_login_logout_and_no_registration():
     assert response.status_code == 200
     assert 'HttpOnly' in response.headers['set-cookie']
     assert client.get('/api/session').json()['username'] == 'alice'
-    old_token = client.cookies.get('access_token')
+    old_token = client.cookies.get('bs_standalone_session')
     assert client.post('/api/logout').status_code == 204
     assert client.get('/api/session').status_code == 401
-    client.cookies.set('access_token', old_token)
+    client.cookies.set('bs_standalone_session', old_token)
     assert client.get('/api/session').status_code == 401
 
 
@@ -82,6 +96,45 @@ def test_delete_conversation_rejects_processing_material_and_ai(monkeypatch):
     monkeypatch.setattr(service, 'current_ai_advisory_pending', lambda db, task: True)
     assert client.delete(f'/api/conversations/{cid}').status_code == 409
     assert client.get(f'/api/conversations/{cid}').status_code == 200
+
+
+def test_delete_conversation_allows_stale_running_snapshot_without_active_work(monkeypatch):
+    from app.plus.blockchain_supervision import reference_snapshots
+
+    client, engine = client_and_engine()
+    client.post('/api/login', json={'username': 'alice', 'password': 'Alice-pass-123'})
+    cid = client.post('/api/conversations').json()['id']
+    base = '/api/plus/blockchain-supervision/tasks'
+    tid = client.post(base, json={'conversation_id': cid, 'title': 'stale-review', 'scope_a1': True}).json()['task_id']
+    with Session(engine) as db:
+        task = db.get(BsTask, tid)
+        task.state = 'running'
+        db.commit()
+    monkeypatch.setattr(reference_snapshots, 'get_reference_snapshot', lambda db, task: {
+        'state': 'running', 'runs': [], 'pending_groups': ['a1'], 'missing_groups': ['a1'],
+    })
+    assert client.delete(f'/api/conversations/{cid}').status_code == 204
+
+
+def test_delete_conversation_rejects_active_reference_run(monkeypatch):
+    from app.plus.blockchain_supervision import reference_snapshots
+
+    client, engine = client_and_engine()
+    client.post('/api/login', json={'username': 'alice', 'password': 'Alice-pass-123'})
+    cid = client.post('/api/conversations').json()['id']
+    base = '/api/plus/blockchain-supervision/tasks'
+    tid = client.post(base, json={'conversation_id': cid, 'title': 'active-review', 'scope_a1': True}).json()['task_id']
+    with Session(engine) as db:
+        task = db.get(BsTask, tid)
+        task.state = 'running'
+        db.commit()
+    monkeypatch.setattr(reference_snapshots, 'get_reference_snapshot', lambda db, task: {
+        'state': 'running', 'runs': [{'group_id': 'a1', 'state': 'running'}],
+        'pending_groups': ['a1'], 'missing_groups': [],
+    })
+    response = client.delete(f'/api/conversations/{cid}')
+    assert response.status_code == 409
+    assert response.json()['detail'] == '任务正在处理：材料解析、AI 或核查运行仍未完成，请等待后再删除'
 
 
 def test_existing_bs_guard_accepts_only_owner():
@@ -164,7 +217,7 @@ def test_rate_limit_rejects_forged_or_expired_account_identity():
     app = SimpleNamespace(state=SimpleNamespace(secret_key='x' * 64))
     def key(token):
         scope = {'type': 'http', 'app': app, 'client': ('127.0.0.1', 1234),
-                 'headers': [(b'cookie', ('access_token=' + token).encode())]}
+                 'headers': [(b'cookie', ('bs_standalone_session=' + token).encode())]}
         return account_or_address(Request(scope))
 
     valid = jwt.encode({'sub': '2', 'exp': datetime.now(timezone.utc) + timedelta(minutes=1)}, 'x' * 64)

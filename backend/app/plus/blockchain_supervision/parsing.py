@@ -266,8 +266,12 @@ def ocr_text_pages(abs_path: str, *, page_nos=None, use_cache: bool = True,
         return [], None
 
 
-def ocr_rotated_text_pages(abs_path: str, page_nos: list[int]) -> tuple:
-    """仅对指定物理页创建隔离旋转副本；不沿用旋转图像坐标作为原件坐标。"""
+def ocr_rotated_text_pages(abs_path: str, page_nos: list[int], *, rotations: dict[int, int] | None = None) -> tuple:
+    """仅对指定物理页创建隔离旋转副本；不沿用旋转图像坐标作为原件坐标。
+
+    `rotations` 是 OCR 方向信号对应的纠正角度；只接受 90/270，缺省仍按 90 处理，
+    保持旧的直接调用契约。不同物理页可使用不同方向，避免把 270° 页错误地按 90° 补读。
+    """
     if not page_nos:
         return [], None
     try:
@@ -276,9 +280,15 @@ def ocr_rotated_text_pages(abs_path: str, page_nos: list[int]) -> tuple:
             target = os.path.join(directory, "rotated.pdf")
             with fitz.open(abs_path) as original, fitz.open() as rotated:
                 valid = sorted({page for page in page_nos if type(page) is int and 1 <= page <= original.page_count})
+                rotation_by_page = {
+                    no: (rotations or {}).get(no, 90)
+                    for no in valid
+                    if (rotations or {}).get(no, 90) in (90, 270)
+                }
+                valid = [no for no in valid if no in rotation_by_page]
                 for no in valid:
                     rotated.insert_pdf(original, from_page=no - 1, to_page=no - 1)
-                    rotated[-1].set_rotation((rotated[-1].rotation + 90) % 360)
+                    rotated[-1].set_rotation((rotated[-1].rotation + rotation_by_page[no]) % 360)
                 if not valid:
                     return [], None
                 rotated.save(target)
@@ -292,7 +302,8 @@ def ocr_rotated_text_pages(abs_path: str, page_nos: list[int]) -> tuple:
                 meta = page.get("ocr_meta") or {}
                 text = page.get("text") or ""
                 rotated_meta = {"source": "cloud_rotated", "quality": meta.get("quality", "ocr_ok"),
-                                "retry_count": 2, "layout": [], "rotation_retry": 90}
+                                "retry_count": 2, "layout": [],
+                                "rotation_retry": rotation_by_page[valid[position - 1]]}
                 if re.search(r"(?:特殊工种|特种作业).{0,16}(?:名单|名册)", text):
                     clues = [{"name": name, "post": post, **({"parts": parts} if len(parts) > 1 else {}),
                               **({"partial": True} if not post.endswith(("工", "司机", "指挥", "操作员", "驾驶员")) else {})}
@@ -814,6 +825,24 @@ def _ocr_sideways_layout(page: dict) -> bool:
     return False
 
 
+def _ocr_rotation_degrees(page: dict) -> int | None:
+    """返回确定性方向异常对应的纠正角度；没有可靠信号时返回 None。"""
+    text = page.get("text") or ""
+    # 云端模型把横置页读成带 ``...,90>`` 的坐标残片时，方向异常是确定的；
+    # 只有证书标题缺号但没有该信号的页面仍交人工，避免把清晰的竖直 B/C 证误转 90°。
+    structured_rotation = re.search(r"<[^>\n]{0,240},\s*(90|270)\s*>", text)
+    if structured_rotation:
+        return int(structured_rotation.group(1))
+    if _ocr_sideways_layout(page):
+        return 90
+    return None
+
+
+def _ocr_rotation_candidate(page: dict) -> bool:
+    """只为确定性方向异常触发一次旋转补读。"""
+    return _ocr_rotation_degrees(page) is not None
+
+
 def _ocr_parallel_certificate_columns(page: dict) -> bool:
     """证件重复表头位于并排两列时，扁平文本不能可靠对应各列字段。"""
     meta = page.get("ocr_meta") or {}
@@ -931,7 +960,51 @@ def parse_material_pages(abs_path: str, *, progress=None) -> tuple:
                     page["ocr_meta"]["quality"] = "ocr_suspect"
                 suspect.add(no)
 
-    # 质量存疑或字段不足直接转人工，保留首次结果与页码，不重复调用线上识别。
+    # 对有明确方向异常信号的证书页做一次有界旋转补读。原始 OCR 结果始终保留在
+    # 候选链路中；只有旋转结果通过同一套质量门槛时才替换本次解析页，避免把普通
+    # 短文本或字段缺失页一律重复调用线上 OCR。
+    rotation_degrees = {
+        page["page"]: _ocr_rotation_degrees(page)
+        for page in recovered
+        if isinstance(page, dict) and type(page.get("page")) is int
+        and _ocr_rotation_degrees(page) is not None
+    }
+    rotation_candidates = sorted(rotation_degrees)
+    retry_pages = list(rotation_candidates)
+    rotation_recovered = []
+    rotated_info = None
+    if rotation_candidates:
+        try:
+            rotated, rotated_info = ocr_rotated_text_pages(
+                abs_path, rotation_candidates, rotations=rotation_degrees)
+        except Exception:  # 旋转补读失败时保留首次结果并进入人工复核
+            logger.warning("[bs] 旋转补读失败 %s", os.path.basename(abs_path), exc_info=True)
+            rotated = []
+        rotated_by_page = {
+            page["page"]: page for page in rotated
+            if isinstance(page, dict) and type(page.get("page")) is int
+        }
+        recovered_by_page = {
+            page["page"]: page for page in recovered
+            if isinstance(page, dict) and type(page.get("page")) is int
+        }
+        for page_no in rotation_candidates:
+            candidate = rotated_by_page.get(page_no)
+            if not isinstance(candidate, dict):
+                continue
+            text = candidate.get("text") or ""
+            if (_body_char_count(text) < _MIN_TEXT_CHARS
+                    or _ocr_quality_suspect(text)
+                    or _ocr_sideways_layout(candidate)):
+                continue
+            recovered_by_page[page_no] = candidate
+            native[page_no] = candidate
+            suspect.discard(page_no)
+            readable.add(page_no)
+            rotation_recovered.append(page_no)
+        recovered = [recovered_by_page[page_no] for page_no in sorted(recovered_by_page)]
+
+    # 质量存疑或字段不足直接转人工，保留首次结果与页码，不再做第二次普通 OCR。
     # 历史响应中的统计字段继续返回空集合，避免破坏既有消费者。
     field_candidates = _id_back_manual_review_candidates(native, readable - suspect, requested)
     for no in field_candidates:
@@ -940,13 +1013,10 @@ def parse_material_pages(abs_path: str, *, progress=None) -> tuple:
         meta = native[no].get("ocr_meta")
         if isinstance(meta, dict):
             meta["quality"] = "ocr_suspect"
-    retry_pages = []
     retry_recovered = []
     field_retry_recovered = []
     retry_info = None
     sideways_retry_pages = []
-    rotation_recovered = []
-    rotated_info = None
     unread = sorted(set(range(1, total + 1)) - readable)
     degradations = [d for d in degradations if d.get("kind") != "no_text_layer"]
     request_errors = (info or {}).get("request_errors") or []
@@ -1028,7 +1098,8 @@ def parse_material_pages(abs_path: str, *, progress=None) -> tuple:
             "ocr_field_retry_pages": [],
             "ocr_field_manual_review_pages": sorted(field_candidates),
             "ocr_field_retry_recovered_pages": sorted(field_retry_recovered),
-            "rotation_retry_pages": sorted(set(sideways_retry_pages)),
+            "rotation_retry_pages": sorted(set(retry_pages)),
+            "rotation_retry_degrees": {str(no): rotation_degrees[no] for no in sorted(rotation_degrees)},
             "rotation_retry_recovered_pages": sorted(rotation_recovered),
             "rotation_retry_engine": (rotated_info or {}).get("engine"),
         })
@@ -1076,7 +1147,8 @@ def parse_material_pages(abs_path: str, *, progress=None) -> tuple:
             "ocr_retry_pages": retry_pages,
             "ocr_retry_recovered_pages": sorted(retry_recovered),
             "ocr_retry_engine": (retry_info or {}).get("engine"),
-            "rotation_retry_pages": sorted(set(sideways_retry_pages)),
+            "rotation_retry_pages": sorted(set(retry_pages)),
+            "rotation_retry_degrees": {str(no): rotation_degrees[no] for no in sorted(rotation_degrees)},
             "rotation_retry_recovered_pages": sorted(rotation_recovered),
             "rotation_retry_engine": (rotated_info or {}).get("engine"),
             "page_states": page_states,

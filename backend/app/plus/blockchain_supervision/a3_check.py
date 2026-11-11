@@ -97,6 +97,10 @@ def _check_document(item: dict, materials: list) -> tuple:
     if item.get("id") in {"RC-A02", "RC-A03", "RC-A04"}:
         weak_mention = None
         fields = ("统一社会信用代码", "登记机关", "发证机关", "证书编号", "许可证编号", "备案编号")
+        structured_fields = fields + (
+            "经营范围", "注册资本", "营业期限", "有效期至", "法定代表人", "法人/负责人",
+            "注册日期", "登记日期", "成立日期", "住所", "地址",
+        )
         for material in materials:
             if any(k in (material.file_name or "") for k in item["keywords"]):
                 weak_mention = material
@@ -110,9 +114,16 @@ def _check_document(item: dict, materials: list) -> tuple:
                 # 台账、情况说明和模板中也会列出完整证照字段，不能据此
                 # 将汇总文字提升为证照原件；混合页难区分时保守留给人工。
                 placeholders = re.findall(r"(?:统一社会信用代码|登记机关|发证机关|证书编号|许可证编号|备案编号)[:：]?[＿_]{3,}", text)
+                structured_title = bool(re.search(
+                    r"(?:证照标题|证照类型|证书标题|证件名称)\s*[\"“”']?\s*[：:]\s*[\"“”']?"
+                    r"(?:[^\"“”']{0,400}?[,，]\s*)?"
+                    + re.escape(keyword), text,
+                ))
+                field_count = sum(field in text for field in fields)
+                structured_field_count = sum(field in text for field in structured_fields)
                 if ("分包报审表" in text or re.search(r"台账|情况说明|模板|样表|填写示例|企业安全生产许可证信息", text[:100])
                         or len(placeholders) >= 2
-                        or sum(field in text for field in fields) < 2):
+                        or (field_count < 2 and not (structured_title and structured_field_count >= 2))):
                     continue
                 pos = text.index(keyword)
                 return STATUS_MISS, material.id, text[max(0, pos-20):pos+len(keyword)+20], page

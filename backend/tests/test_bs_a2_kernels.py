@@ -546,6 +546,8 @@ def test_special_certificate_expiry_survives_service_and_report(db_session):
     assert any(f.status == STATUS_HIT and "2026-10-31" in f.message for f in findings)
     report = reporting.build_report(db_session, task)
     assert "2026-10-31" in str(report)
+    assert report["sections"]
+    assert report["qualification_summary"]["audit_ref"]["machine_findings"] >= 1
 
 
 def test_management_id_expiry_survives_service_and_report(db_session):

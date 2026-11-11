@@ -128,7 +128,7 @@ async def test_moma_text_does_not_follow_redirect(monkeypatch):
             super().__init__(transport=httpx.MockTransport(handler), **kwargs)
     monkeypatch.setattr(httpx, 'AsyncClient', MockClient)
     with pytest.raises(Exception):
-        await client_from_env().complete([{'role': 'user', 'content': '合成问题'}])
+        await client_from_env(max_retries=0).complete([{'role': 'user', 'content': '合成问题'}])
     assert requests == ['https://text.example.invalid/v1/chat/completions']
 
 

@@ -27,10 +27,10 @@ from . import (a1_check, a2_check, a3_check, extract, internal_records, parsing,
                semantic_review, knowledge_runs, reference_snapshots, subject_reviews,
                ruleset, rule_item_catalog, checklist, knowledge, material_versions, supplement_impact,
                supplement_generation, ai_guarded_review, ai_advisory_snapshots, ai_review_batch, reference_visibility,
-               personnel_evidence, certificate_number_check, identity_observation, negative_candidate_plan,
+               personnel_evidence, certificate_number_check, evidence_projection, identity_observation, negative_candidate_plan,
                section_projection, material_confirmation, report_policy)
 from ..startup_conditions_check.llm import client_from_env, run_sync
-from .classify import ROLE_LABELS, classify_material, validate_materials
+from .classify import ROLE_LABELS, classify_material, validate_materials, validate_role
 from .finding_text import bounded_finding_message
 from .ai_current_guard import AiContextChanged, assert_ai_context_current
 from .identity_labels import subject_identity_label
@@ -975,6 +975,8 @@ def assign_material_subject(db: Session, task: BsTask, material_id: int,
                                          BsSubject.task_id == task.id).first()
     if mat is None or subject is None or subject.retired:
         raise LookupError("material or subject not in task")
+    if mat.replacement_target_id is not None and mat.subject_id != subject.id:
+        raise ValueError("替换候选必须保持原材料主体")
     packet = None
     if packet_id is not None:
         packet = db.query(BsPacket).filter(BsPacket.id == packet_id,
@@ -1026,6 +1028,7 @@ def add_material(db: Session, task: BsTask, *, file_name: str, size_kb: int = 0,
     """新增材料：自动归类只是初始值（role=None 时按文件名归类，人工指定则标记 confirmed）。"""
     # T10-B §B1：既有路径缺状态门（router 层有、service 直调没有），准备期必须一并拒绝，
     # 否则 `preparing` 只是「界面按不住」的假门禁（调用方仍可从服务层插材料）。
+    validate_role(role)
     if not _material_write_allowed(task):
         raise ValueError("报审资料包正在准备中，暂时不能修改材料；请等待准备完成")
     manual = role is not None
@@ -1059,6 +1062,7 @@ def _material_in_replacement_history(db: Session, task: BsTask, material: BsMate
 
 def set_material_role(db: Session, task: BsTask, material_id: int, role: str) -> BsMaterial:
     """人工更正归属（v6 原型的「归属」片：只记人改动项，不要求逐份确认）。"""
+    validate_role(role)
     # T10-B §B1：service 与 router **两侧都缺**状态门（原实现只靠 UI 不给入口）。
     if not _material_write_allowed(task):
         raise ValueError("报审资料包正在准备中，暂时不能更正材料归属；请等待准备完成")
@@ -1400,6 +1404,7 @@ def ingest_material(db: Session, task: BsTask, *, file_name: str, content: bytes
     既有测试的确定性依赖。start_review 的 parsing_pending 409 闸（07 §4.1）是
     异步窗口的硬防线。
     """
+    validate_role(role)
     # B0（A-08）：直调 service 的二道防线——不经 router（如种子/脚本）也不放过超大文件。
     _check_upload_size(content)
     rel_path = parsing.save_upload(task.id, file_name, content)
@@ -1623,26 +1628,39 @@ def _emit_material_page_progress(session, task_id, material, current, total, sou
     })
 
 
-def _material_supplement_generation(db: Session, material: BsMaterial) -> str | None:
-    """本材料所属的补件代次；ZIP 子材料认其容器的链接事件。
+def _material_supplement_generation_info(db: Session, material: BsMaterial) -> dict | None:
+    """本材料所属的补件代次及事件顺序；ZIP 子材料认其容器的链接事件。
 
     只接受**唯一**代次：同一材料出现多个互斥代次、或根本没有链接事件时返回
     ``None``。事实照写、代次留空，让复核看见「证据存在但归属未定」，不靠猜测
-    补归属（S2-D1）。
+    补归属（S2-D1）。``sequence`` 来自事件写入顺序，用于权威补件排序。
     """
     linked_id = material.container_material_id or material.id
-    payloads = (
-        db.query(BsTaskEvent.payload_json)
+    rows = (
+        db.query(BsTaskEvent.payload_json, BsTaskEvent.sequence)
         .filter(BsTaskEvent.task_id == material.task_id,
                 BsTaskEvent.event_type == "material.supplement_linked")
+        .order_by(BsTaskEvent.sequence)
         .all()
     )
-    generations = set()
-    for (payload,) in payloads:
+    matches = []
+    for payload, sequence in rows:
         payload = payload or {}
         if payload.get("material_id") == linked_id and payload.get("generation_id"):
-            generations.add(str(payload["generation_id"]))
-    return generations.pop() if len(generations) == 1 else None
+            matches.append((sequence, str(payload["generation_id"])))
+    generations = {generation for _, generation in matches}
+    if len(generations) > 1:
+        return {"generation_id": None, "sequence": None, "conflict": True}
+    if not generations:
+        return None
+    return {"generation_id": generations.pop(),
+            "sequence": max(sequence for sequence, _ in matches),
+            "conflict": False}
+
+
+def _material_supplement_generation(db: Session, material: BsMaterial) -> str | None:
+    info = _material_supplement_generation_info(db, material)
+    return info["generation_id"] if info else None
 
 
 def _finish_ingest(task_id: int, material_id: int, bind,
@@ -1733,7 +1751,7 @@ def _finish_ingest(task_id: int, material_id: int, bind,
             try:
                 relations_inserted = len(resolve_task_relations(
                     session, owner,
-                    generation_lookup=lambda m: _material_supplement_generation(session, m),
+                    generation_lookup=lambda m: _material_supplement_generation_info(session, m),
                 ))
             except Exception as e:
                 logger.warning("[bs] 人员证件关系解析失败 material=%s: %s", material_id, e,
@@ -1790,9 +1808,11 @@ def _finish_ingest(task_id: int, material_id: int, bind,
         # 图像判章（W4，复用 OC _local_seal_detect，只 import 不改现役）
         try:
             # 进度事件独立事务，避免提交尚未完成的材料状态。
-            with SessionLocal(bind=bind) as progress_session:
-                _emit_material_page_progress(progress_session, task_id, mat, 0, mat.pages or 0,
-                                             "seal", parse_run_id, 0, 0)
+            # Keep seal progress in the ingest writer session. Opening a second
+            # SQLite writer here races with the dirty material row and can leave
+            # the progress event unrecorded behind ``database is locked``.
+            _emit_material_page_progress(session, task_id, mat, 0, mat.pages or 0,
+                                         "seal", parse_run_id, 0, 0)
         except Exception:
             logger.warning("[bs] 印章阶段进度写入失败 task=%s material=%s", task_id, material_id, exc_info=True)
         try:
@@ -1889,6 +1909,21 @@ def recover_interrupted_ingests(db: Session) -> int:
                     "待重试 %s）", task.id, len(ready), len(retryable))
         # 任务整体事件已在上面统一 commit；此处仅记数不重复提交。
     # 仅恢复已过期租约；其他服务进程的有效运行不能因本进程启动而被作废。
+    interrupted_supplements = (db.query(BsTask)
+                               .filter(BsTask.state.in_((TASK_STATE_SETUP, TASK_STATE_PREPARING)))
+                               .order_by(BsTask.id).all())
+    for task in interrupted_supplements:
+        recovered = recover_supplement_candidate(task)
+        if recovered.get("state") != "failed":
+            continue
+        options = dict(task.options_snapshot_json or {})
+        options["supplement_publication"] = _json_safe(recovered)
+        task.options_snapshot_json = options
+        add_event(db, task.id, "task.supplement_failed", stage="check", payload={
+            "reason": "service_restart",
+            "generation_id": recovered.get("candidate_generation_id"),
+            "baseline_version_no": recovered.get("baseline_version_no"),
+        })
     reference_task_ids = [row[0] for row in db.query(BsTask.id)
                           .filter(BsTask.state.in_(["running", "review"])).all()]
     for task_id in reference_task_ids:
@@ -2182,6 +2217,7 @@ def task_progress(db: Session, task: BsTask, *, materials=None, snapshot=None,
     check_failed = any(step.get("state") in {"failed", "error"} for step in selected_steps)
     ai_state = None
     ai_current = None
+    ai_coverage = None
     if checks_done and snapshot.get("ai_auto_enabled") is True and not done:
         try:
             coverage = ai_advisory_snapshots.collect_current_coverage(db, task, snapshot, reporting.report_review_blocking)
@@ -2191,6 +2227,8 @@ def task_progress(db: Session, task: BsTask, *, materials=None, snapshot=None,
         groups = (coverage or {}).get("groups") or []
         if not coverage or coverage.get("state") != "available" or any(g.get("state") != "available" for g in groups):
             ai_state = "unknown"
+            reason = (coverage or {}).get("unavailable_reason")
+            ai_coverage = {"state": "unavailable", "reason": reason if reason == "rule_version_mismatch" else "unknown"}
         elif any((g.get("counts") or {}).get(key, 0) for g in groups for key in ("not_started", "pending")):
             ai_state = "running"
             pending_groups = [g for g in groups if (g.get("counts") or {}).get("pending", 0) > 0]
@@ -2203,6 +2241,17 @@ def task_progress(db: Session, task: BsTask, *, materials=None, snapshot=None,
             ai_state = "failed"
         else:
             ai_state = "completed"
+        # 未开始的分组不是活动工作。已有可靠失败终态、覆盖可确认且没有
+        # 其他活动租约时，不能把后续未开始的项投影为仍在运行。
+        if ai_state == "running":
+            try:
+                from . import background_ai_review
+                review_run_id = (task.options_snapshot_json or {}).get(reference_snapshots.REVIEW_POINTER)
+                job = background_ai_review.job_status(db, task, review_run_id) if review_run_id else {}
+                if job.get("state") == "failed" and not current_ai_advisory_pending(db, task):
+                    ai_state = "failed"
+            except Exception:
+                logger.warning("[bs] AI terminal status unavailable task_id=%s", task.id, exc_info=True)
     if task.state == "setup":
         phase = "waiting"
     elif task.state == "preparing":
@@ -2309,6 +2358,16 @@ def task_progress(db: Session, task: BsTask, *, materials=None, snapshot=None,
             "completed_units": 1 if phase == "completed" else 0, "total_units": 1,
         },
     ]
+    ai_job = None
+    if phase == "ai_checking" or (phase == "failed" and snapshot.get("ai_auto_enabled") is True):
+        try:
+            from . import background_ai_review
+            review_run_id = (task.options_snapshot_json or {}).get(reference_snapshots.REVIEW_POINTER)
+            if review_run_id:
+                ai_job = background_ai_review.job_status(db, task, review_run_id)
+        except Exception:
+            logger.warning("[bs] AI job diagnostics unavailable task_id=%s", task.id, exc_info=True)
+            ai_job = {"state": "unavailable", "diagnostic_state": "无法核实"}
     return {
         "mode": "determinate" if percent is not None else "indeterminate",
         "phase": phase,
@@ -2319,8 +2378,39 @@ def task_progress(db: Session, task: BsTask, *, materials=None, snapshot=None,
         "stages": stages,
         "material_failed": material_failed,
         "unknown_reason": unknown_reason,
+        "ai_job": ai_job,
+        "ai_coverage": ai_coverage,
         "activity_health": task_activity_health(db, task),
     }
+
+
+def _safe_event_diagnostics(raw) -> dict:
+    """Only project bounded identifiers and recognized diagnostic values."""
+    if not isinstance(raw, dict):
+        return {}
+    result = {}
+    for key in ("job_id", "review_run_id", "request_id"):
+        value = raw.get(key)
+        if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", value):
+            result[key] = value
+    if isinstance(raw.get("group_id"), str) and raw["group_id"] in reference_snapshots.CHECK_GROUPS:
+        result["group_id"] = raw["group_id"]
+    if raw.get("category") == "negative_candidates":
+        result["category"] = raw["category"]
+    for key in ("batch_index", "batch_total"):
+        value = raw.get(key)
+        if type(value) is int and 0 <= value <= 10000000:
+            result[key] = value
+    if raw.get("status") in ("processing", "completed", "partial", "failed", "not_run"):
+        result["status"] = raw["status"]
+    categories = raw.get("failure_categories")
+    if isinstance(categories, list):
+        result["failure_categories"] = [value for value in categories
+                                        if isinstance(value, str) and value in ai_advisory_snapshots.FAILURE_CATEGORIES]
+    exception_type = raw.get("exception_type")
+    if isinstance(exception_type, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", exception_type):
+        result["exception_type"] = exception_type
+    return result
 
 
 def task_activity_health(db: Session, task: BsTask, *, stale_after_seconds: int = 1800,
@@ -2356,6 +2446,8 @@ def task_activity_health(db: Session, task: BsTask, *, stale_after_seconds: int 
         "last_event_sequence": event.sequence if event else None,
         "last_event_at": last_event_at.isoformat() if last_event_at else None,
         "age_seconds": age_seconds,
+        "last_event_stage": event.stage if event else None,
+        "last_event_diagnostics": _safe_event_diagnostics(event.payload_json) if event else {},
         "recovery_action": "refresh_or_retry_or_human_review" if stale_candidate else None,
     }
 
@@ -2374,6 +2466,7 @@ def store_zip_container(db: Session, task: BsTask, *, file_name: str, content: b
     对齐既有 PDF 摄取的三条纪律：`_check_upload_size` 二道防线、完整保留用户传来的
     归属字段、只记「已受理」不返回内部条目信息。
     """
+    validate_role(role)
     _check_upload_size(content)
     # 容器原包独占子目录：同名容器重复上传不再互相覆盖（覆盖会静默改变派生来源）
     rel_path = parsing.save_upload(task.id, file_name, content,
@@ -2981,6 +3074,15 @@ def run_cert_validity(db: Session, task: BsTask, *, persist: bool = True) -> lis
         db, task, materials, identity_observation.run_identity_observations,
         item_id=identity_observation.ITEM_ID, kind="cert_validity",
         source=identity_observation.SOURCE, allow_empty=True)
+    active_ids = active_subject_ids(db, task)
+    subjects = (db.query(BsSubject)
+                .filter(BsSubject.task_id == task.id, BsSubject.id.in_(active_ids))
+                .order_by(BsSubject.id).all()) if active_ids else []
+    confirmed_ids = {subject.id for subject in subjects
+                     if subject_reviews.subject_is_confirmed(subject)}
+    projected = evidence_projection.project_person_certificate_relations(
+        db, task, materials, valid_subject_ids=confirmed_ids)
+    findings = evidence_projection.merge_projected_findings(findings, projected)
     if not persist:
         return findings
     _replace_findings(db, task, findings)
@@ -3085,6 +3187,20 @@ def current_ai_advisory_pending(db: Session, task: BsTask) -> bool:
     return False
 
 
+def current_background_execution_state(db: Session, task: BsTask) -> str | None:
+    """读取当前核查代后台 job 的持久化状态，区分未知与已停止。
+
+    ``ACTIVE_JOBS`` 只属于当前进程；跨进程留下的 started 事件必须通过后台状态投影
+    保守处理，不能因为本进程没有对应对象就允许破坏性重核查。
+    """
+    from . import background_ai_review
+
+    review_run_id = (task.options_snapshot_json or {}).get(reference_snapshots.REVIEW_POINTER)
+    if not review_run_id:
+        return None
+    return background_ai_review.job_status(db, task, review_run_id).get("state")
+
+
 def _record_ai_advisory_usage(bind, *, usage_batches, user_id, user_type, conversation_id, task_id, model_code):
     recorded = True
     for raw in usage_batches:
@@ -3169,7 +3285,11 @@ async def run_linked_ai_advisory(db: Session, task: BsTask, user, *, group_id: s
             if usage_record_failed:
                 _mark_ai_usage_failure(result)
             return result
-    except Exception:
+    except Exception as exc:
+        logger.warning("[bs] AI request failed task_id=%s review_run_id=%s job_id=%s run_id=%s "
+                       "group_id=%s request_id=%s exception_type=%s",
+                       task_id, run.get("review_run_id"), None,
+                       run.get("run_id"), group_id, request_id, type(exc).__name__)
         with SessionLocal(bind=bind) as failure_db:
             locked = failure_db.query(BsTask).filter_by(id=task_id).with_for_update().one_or_none()
             if locked:
@@ -3177,7 +3297,7 @@ async def run_linked_ai_advisory(db: Session, task: BsTask, user, *, group_id: s
                 if latest and latest.event_type == "check.ai_advisory_started" and (latest.payload_json or {}).get("request_id") == request_id:
                     add_event(failure_db, task_id, "check.ai_advisory_failed", stage="check", payload={
                         "run_id": run["run_id"], "group_id": group_id, "finding_id": finding_id, "request_id": request_id,
-                        "validation_version": validation_version}, commit=False)
+                        "validation_version": validation_version, "exception_type": type(exc).__name__}, commit=False)
                     failure_db.commit()
         raise
 
@@ -3259,7 +3379,8 @@ def _negative_candidate_pending(event) -> bool:
 
 
 async def run_negative_candidate_ai_advisory(db: Session, task: BsTask, user, *, max_batches: int,
-                                             expected_run_id: str, client=None, retry: bool = False) -> dict:
+                                             expected_run_id: str, client=None, retry: bool = False,
+                                             background_job_id: str | None = None) -> dict:
     """任务级互斥与用量护栏；仅保存内部候选，不直接产生业务结论。"""
     if type(max_batches) is not int or max_batches < 1 or not isinstance(expected_run_id, str) or not expected_run_id:
         raise ValueError("候选核查预算或运行标识无效")
@@ -3351,7 +3472,8 @@ async def run_negative_candidate_ai_advisory(db: Session, task: BsTask, user, *,
             add_event(progress_db, task_id, "check.ai_batch_progress", stage="check", payload={
                 "group_id": "a1", "category": "negative_candidates", "batch_index": index,
                 "batch_total": total, "status": status, "failure_categories": failure_categories or [],
-                "run_id": current_run["run_id"], "request_id": request_id}, commit=False)
+                "run_id": current_run["run_id"], "request_id": request_id,
+                "job_id": background_job_id}, commit=False)
             progress_db.commit()
 
     def renew(current_run):
@@ -3406,34 +3528,111 @@ async def run_negative_candidate_ai_advisory(db: Session, task: BsTask, user, *,
 
     try:
         with use_model(model_code):
-            actual_client = (client if client is not None else client_from_env(model_code=model_code)) if needs_model else None
+            actual_client = (client if client is not None else client_from_env(model_code=model_code, max_retries=0)) if needs_model else None
             fingerprint = ai_checkpoint_client_fingerprint(actual_client) if actual_client is not None else None
             result = await ai_guarded_review.run_guarded_negative_candidates(
                 session_factory=lambda: SessionLocal(bind=bind), task_id=task_id, user=user, client=actual_client,
                 material_loader=_rule_materials, max_batches=max_batches, on_usage=collect_usage,
                 before_batch=renew, save_result=save, load_checkpoint=load_checkpoint,
                 save_checkpoint=save_checkpoint, on_batch_progress=batch_progress,
-                checkpoint_namespace=f"{validation_version}:{model_code}:{fingerprint or request_id}")
+                checkpoint_namespace=f"{validation_version}:{model_code}:{fingerprint or request_id}",
+                diagnostic_context={'job_id': background_job_id, 'request_id': request_id,
+                                    'model_code': model_code})
         if usage_record_failed:
             for candidate in result["candidates"]:
                 _mark_ai_usage_failure(candidate)
         result["reviewable_proposals"] = negative_candidate_plan.reviewable_candidate_proposals(prepared, result)
         result["finding_records"] = saved_records
         return result
-    except Exception:
+    except Exception as exc:
+        logger.warning("[bs] AI negative-candidate request failed task_id=%s review_run_id=%s job_id=%s "
+                       "run_id=%s request_id=%s exception_type=%s",
+                       task_id, run.get("review_run_id"), background_job_id, run.get("run_id"),
+                       request_id, type(exc).__name__)
         with SessionLocal(bind=bind) as failure_db:
             locked = failure_db.query(BsTask).filter_by(id=task_id).with_for_update().one_or_none()
             latest = _latest_negative_candidate_event(failure_db, task_id, run["run_id"]) if locked else None
             if latest and latest.event_type == "check.negative_candidates_started" and (latest.payload_json or {}).get("request_id") == request_id:
                 add_event(failure_db, task_id, "check.negative_candidates_failed", stage="check", payload={
-                    "run_id": run["run_id"], "request_id": request_id, "validation_version": validation_version}, commit=False)
+                    "run_id": run["run_id"], "request_id": request_id, "validation_version": validation_version,
+                    "exception_type": type(exc).__name__}, commit=False)
                 failure_db.commit()
         raise
 
 
+
+def _apply_ai_adjudication(db: Session, task_id: int, result: dict, *, model_code: str,
+                           run_id: str, request_id: str) -> bool:
+    """把已验证的 AI 判定写入 finding 审计字段；只有 hit/miss 改变正式状态。
+
+    AI 判定与人工 review_json 分离。人工已采纳/忽略时不覆盖；证据不足的
+    undecidable 只保存 AI 判定，不改变机器状态。
+    """
+    if result.get("execution_status") not in {"completed", "partial"}:
+        return False
+    proposals = result.get("proposals") or []
+    if len(proposals) != 1:
+        return False
+    proposal = proposals[0]
+    status = proposal.get("status")
+    if status not in {"hit", "miss", "undecidable"}:
+        return False
+    finding = db.get(BsFinding, result.get("finding_id"))
+    if finding is None or finding.task_id != task_id:
+        return False
+    if finding.review_json and reporting.canonical_review_decision(
+            (finding.review_json or {}).get("decision")) in {"accepted", "ignored"}:
+        return False
+    prior = finding.ai_adjudication_json
+    input_row = knowledge_runs.finding_input_row(finding)
+    # 已有判定必须能恢复其输入，不能把无法验证的旧投影当作原始结论。
+    if prior and input_row.get("ai_adjudication_json") is not None:
+        raise ValueError("原始核查结论无法核实")
+    input_fields = {name: deepcopy(input_row[name]) for name in knowledge_runs.AI_PROJECTED_FIELDS}
+    adjudication = {
+        "status": status,
+        "reason_code": proposal.get("reason_code"),
+        "reason": proposal.get("reason") or proposal.get("message"),
+        "evidence": deepcopy(proposal.get("material_evidence") or []),
+        "rule_evidence": deepcopy(proposal.get("rule_evidence") or []),
+        "previous_status": finding.status,
+        "previous_message": finding.message,
+        "model_code": model_code,
+        "run_id": run_id,
+        "request_id": request_id,
+        "applied_at": datetime.now().isoformat(timespec="seconds"),
+        "input_fields": input_fields,
+    }
+    if status not in {"hit", "miss"}:
+        adjudication["projected_fields"] = {name: deepcopy(getattr(finding, name)) for name in knowledge_runs.AI_PROJECTED_FIELDS}
+        finding.ai_adjudication_json = adjudication
+        return True
+    finding.status = status
+    finding.message = str(proposal.get("message") or finding.message or "")[:500]
+    evidence = proposal.get("material_evidence") or []
+    if evidence:
+        finding.evidence_json = deepcopy(evidence)
+        first = evidence[0]
+        finding.material_id = first.get("material_id")
+        finding.page = first.get("page")
+        finding.quote = first.get("quote")
+        finding.location_mode = "page"
+    adjudication["projected_fields"] = {name: deepcopy(getattr(finding, name)) for name in knowledge_runs.AI_PROJECTED_FIELDS}
+    finding.ai_adjudication_json = adjudication
+    add_event(db, task_id, "check.ai_adjudication_applied", stage="check", payload={
+        "finding_id": finding.id,
+        "status": status,
+        "previous_status": adjudication["previous_status"],
+        "reason_code": adjudication["reason_code"],
+        "run_id": run_id,
+        "request_id": request_id,
+    }, commit=False)
+    return True
+
 async def run_linked_batch_ai_advisory(db: Session, task: BsTask, user, *, group_id: str,
                                       finding_ids: list[int], client=None, resume_partial: bool = False,
-                                      expected_run_id: str | None = None, retry_failed: bool = True) -> list[dict]:
+                                      expected_run_id: str | None = None, retry_failed: bool = True,
+                                      background_job_id: str | None = None) -> list[dict]:
     """按项共用单项租约，分批建议单独留痕；固定结论与人工处置不变。"""
     if not finding_ids or any(type(value) is not int for value in finding_ids) or len(set(finding_ids)) != len(finding_ids):
         raise ValueError("核查结论标识无效或重复")
@@ -3529,7 +3728,8 @@ async def run_linked_batch_ai_advisory(db: Session, task: BsTask, user, *, group
             owned(progress_db, current_run)
             add_event(progress_db, task_id, "check.ai_batch_progress", stage="check", payload={
                 "group_id": group_id, "batch_index": index, "batch_total": total,
-                "status": status, "failure_categories": failure_categories or [], "run_id": current_run["run_id"], "request_id": request_id}, commit=False)
+                "status": status, "failure_categories": failure_categories or [], "run_id": current_run["run_id"],
+                "request_id": request_id, "job_id": background_job_id}, commit=False)
             progress_db.commit()
 
     def save(save_db, current, current_run, results):
@@ -3541,6 +3741,8 @@ async def run_linked_batch_ai_advisory(db: Session, task: BsTask, user, *, group
                 "run_id": current_run["run_id"], "review_run_id": current_run.get("review_run_id"),
                 "group_id": group_id, "request_id": request_id, "model_code": model_code,
                 "validation_version": validation_version, **result}, commit=False)
+            _apply_ai_adjudication(save_db, current.id, result, model_code=model_code,
+                                   run_id=current_run["run_id"], request_id=request_id)
 
     def load_checkpoint(current_run, batch_key):
         with SessionLocal(bind=bind) as checkpoint_db:
@@ -3562,20 +3764,27 @@ async def run_linked_batch_ai_advisory(db: Session, task: BsTask, user, *, group
 
     try:
         with use_model(model_code):
-            actual_client = client if client is not None else client_from_env(model_code=model_code)
+            actual_client = client if client is not None else client_from_env(model_code=model_code, max_retries=0)
             client_fingerprint = ai_checkpoint_client_fingerprint(actual_client)
             output = await ai_guarded_review.run_guarded_batch_review(
                 session_factory=lambda: SessionLocal(bind=bind), task_id=task_id, group_id=group_id,
-                finding_ids=reserved, user=user, client=actual_client,
+                finding_ids=reserved, planning_finding_ids=finding_ids if resume_partial else None,
+                user=user, client=actual_client,
                 material_loader=_rule_materials, on_usage=collect_usage, save_result=save, before_batch=renew,
                 load_checkpoint=load_checkpoint, save_checkpoint=save_checkpoint, on_batch_progress=batch_progress,
-                checkpoint_namespace=f"{validation_version}:{model_code}:{client_fingerprint or request_id}")
+                checkpoint_namespace=f"{validation_version}:{model_code}:{client_fingerprint or request_id}",
+                diagnostic_context={'job_id': background_job_id, 'request_id': request_id,
+                                    'model_code': model_code})
         if usage_record_failed:
             for result in output:
                 _mark_ai_usage_failure(result)
         by_id = {**cached, **{result["finding_id"]: result for result in output}}
         return [by_id[finding_id] for finding_id in finding_ids]
-    except Exception:
+    except Exception as exc:
+        logger.warning("[bs] AI batch request failed task_id=%s review_run_id=%s job_id=%s run_id=%s "
+                       "group_id=%s request_id=%s exception_type=%s",
+                       task_id, run.get("review_run_id"), background_job_id, run.get("run_id"),
+                       group_id, request_id, type(exc).__name__)
         with SessionLocal(bind=bind) as failure_db:
             locked = failure_db.query(BsTask).filter_by(id=task_id).with_for_update().one_or_none()
             if locked:
@@ -3584,7 +3793,7 @@ async def run_linked_batch_ai_advisory(db: Session, task: BsTask, user, *, group
                     if latest and latest.event_type == "check.ai_advisory_started" and (latest.payload_json or {}).get("request_id") == request_id:
                         add_event(failure_db, task_id, "check.ai_advisory_failed", stage="check", payload={
                             "run_id": run["run_id"], "group_id": group_id, "finding_id": finding_id, "request_id": request_id,
-                            "validation_version": validation_version}, commit=False)
+                            "validation_version": validation_version, "exception_type": type(exc).__name__}, commit=False)
                 failure_db.commit()
         raise
 
@@ -3880,6 +4089,9 @@ def _reset_to_setup(session: Session, task_id: int, cause: str,
     if task is None or task.state != TASK_STATE_PREPARING:
         return
     task.state = TASK_STATE_SETUP
+    task.started_at = None
+    task.completed_at = None
+    task.elapsed_seconds = None
     if cause == "container_failed":
         add_event(session, task_id, "zip.preparation_failed", payload=payload)
     elif cause in ("type_gaps", "material_gaps"):
@@ -3917,6 +4129,8 @@ def _finish_preparation(session: Session, task: BsTask, *, operator=None) -> dic
         result = _apply_start_gates(session, task, check=check, operator=operator)
     if result.get("ok"):
         return result
+    if supplement_edit.get("prepare_for_supplement"):
+        record_supplement_failure(session, task, result)
     detail = result.get("detail") or {}
     gaps = detail.get("gaps") or [] if isinstance(detail, dict) else []
     if not gaps and isinstance(detail, dict) and detail.get("message"):
@@ -3982,6 +4196,11 @@ def _prepare_zip_background(task_id: int, bind, operator=None) -> None:
                 defer_replacement=bool(supplement_edit.get("prepare_for_supplement")))
             if not out.get("ok"):
                 failed = failed_zip_containers(session, task)
+                if supplement_preparing:
+                    record_supplement_failure(session, task, {
+                        "reason": out.get("reason"),
+                        "detail": {"containers": [m.file_name for m in failed]},
+                    })
                 _reset_to_setup(session, task.id, "container_failed", {
                     "reason": out.get("reason"),
                     "containers": [{"material_id": m.id, "file_name": m.file_name,
@@ -4005,6 +4224,10 @@ def _prepare_zip_background(task_id: int, bind, operator=None) -> None:
                           or (m.parse_state == "uploaded" and m.path and m.via == "upload")
                           or (m.replacement_target_id is not None and m.parse_state == "done")]
             if incomplete:
+                record_supplement_failure(session, task, {
+                    "reason": "parse_failed",
+                    "detail": {"materials": [m.file_name for m in incomplete]},
+                })
                 names = "、".join(m.file_name for m in incomplete[:3])
                 _reset_to_setup(session, task_id, "material_gaps", {
                     "reason": next((_subject_assessment_issue(m) for m in incomplete if m.parse_state == "done" and _subject_assessment_issue(m)), "parse_failed"),
@@ -4127,6 +4350,9 @@ def _apply_start_gates(db: Session, task: BsTask, *, check: dict, operator=None)
                           "type_conflict": bool(s.type_conflict)} for s in subjects],
         }
         task.state = "running"
+        task.started_at = task.started_at or datetime.now()
+        task.completed_at = None
+        task.elapsed_seconds = None
         db.flush()
         initialize_reference_review(
             db, task, rule_fingerprint=runtime_rule_fingerprint)
@@ -4984,9 +5210,125 @@ def review_output_readiness(db: Session, task: BsTask) -> dict:
 def supplement_active(task: BsTask) -> bool:
     options = task.options_snapshot_json or {}
     plan, edit = options.get("supplement_plan") or {}, options.get("supplement_edit") or {}
+    if supplement_publication(task).get("state") == "failed":
+        return False
     return bool(isinstance(plan, dict) and isinstance(edit, dict) and plan.get("generation_id")
                 and plan.get("generation_id") == edit.get("generation_id")
                 and plan.get("status") in {"planned", "running"})
+
+
+def supplement_publication(task: BsTask) -> dict:
+    """Return the public baseline/candidate publication state for a supplement run.
+
+    The state is derived from the immutable edit snapshot and supplement plan so
+    callers can keep the previous review version visible while a candidate run is
+    preparing.  A completed plan remains published after ``supplement_active``
+    becomes false; this keeps report/finding generation metadata stable.
+    """
+    baseline = {
+        "state": "baseline",
+        "baseline_version_no": None,
+        "candidate_generation_id": None,
+        "published_generation_id": None,
+        "published_version_no": None,
+        "review_policy": "current_generation",
+    }
+    options = task.options_snapshot_json or {}
+    explicit = options.get("supplement_publication")
+    if isinstance(explicit, dict) and explicit.get("state") in {"baseline", "candidate", "published", "failed"}:
+        merged = {**baseline, **_json_safe(explicit)}
+        plan = options.get("supplement_plan") or {}
+        if merged.get("state") == "candidate" and isinstance(plan, dict) and plan.get("status") == "completed":
+            merged.update({
+                "state": "published",
+                "candidate_generation_id": None,
+                "published_generation_id": plan.get("generation_id"),
+                "published_version_no": plan.get("completed_version_no"),
+                "last_failure": None,
+                "review_policy": "current_generation",
+            })
+        merged.setdefault("review_policy", {
+            "baseline": "current_generation",
+            "candidate": "candidate_requires_review",
+            "published": "current_generation",
+            "failed": "baseline_only",
+        }.get(merged.get("state"), "current_generation"))
+        return merged
+
+    plan = options.get("supplement_plan") or {}
+    edit = options.get("supplement_edit") or {}
+    if not isinstance(plan, dict) or not isinstance(edit, dict):
+        return baseline
+    generation_id = plan.get("generation_id")
+    if not generation_id or generation_id != edit.get("generation_id"):
+        return baseline
+    baseline["baseline_version_no"] = edit.get("previous_version_no")
+    status = plan.get("status")
+    if status == "completed":
+        baseline.update({
+            "state": "published",
+            "published_generation_id": generation_id,
+            "published_version_no": plan.get("completed_version_no"),
+            "review_policy": "current_generation",
+        })
+    elif status in {"planned", "running"}:
+        baseline.update({
+            "state": "candidate",
+            "candidate_generation_id": generation_id,
+            "review_policy": "candidate_requires_review",
+        })
+    return baseline
+
+
+def recover_supplement_candidate(task: BsTask) -> dict:
+    """Derive a safe failed state for a candidate interrupted by restart."""
+    publication = supplement_publication(task)
+    if publication.get("state") == "candidate" and task.state in {TASK_STATE_SETUP, TASK_STATE_PREPARING}:
+        publication.update({
+            "state": "failed",
+            "review_policy": "baseline_only",
+            "last_failure": {
+                "reason": "service_restart",
+                "detail": "补件候选运行被服务重启中断，旧基线仍保留。",
+                "at": datetime.now().isoformat(timespec="seconds"),
+            },
+        })
+    return publication
+
+
+def _record_supplement_failure(db: Session, task: BsTask, result: dict) -> None:
+    """Persist a failed candidate attempt while preserving the frozen baseline."""
+    db.rollback()
+    db.refresh(task, with_for_update=True)
+    options = dict(task.options_snapshot_json or {})
+    publication = supplement_publication(task)
+    publication.update({
+        "state": "failed",
+        "review_policy": "baseline_only",
+        "last_failure": {
+            "reason": result.get("reason") or "supplement_failed",
+            "detail": result.get("detail"),
+            "at": datetime.now().isoformat(timespec="seconds"),
+        },
+    })
+    options["supplement_publication"] = _json_safe(publication)
+    task.options_snapshot_json = options
+    db.commit()
+    db.refresh(task)
+
+
+def record_supplement_failure(db: Session, task: BsTask, result: dict) -> None:
+    """Record a failed activation only when a supplement edit is active."""
+    if supplement_publication(task).get("state") == "failed":
+        return
+    options = task.options_snapshot_json or {}
+    plan = options.get("supplement_plan") or {}
+    edit = options.get("supplement_edit") or {}
+    if (isinstance(plan, dict) and isinstance(edit, dict)
+            and (edit.get("prepare_for_supplement")
+                 or (plan.get("generation_id")
+                     and plan.get("generation_id") == edit.get("generation_id")))):
+        _record_supplement_failure(db, task, result)
 
 
 def report_output_readiness(db: Session, task: BsTask, *, require_reading_complete: bool = False) -> dict:
@@ -5000,6 +5342,11 @@ def report_output_readiness(db: Session, task: BsTask, *, require_reading_comple
     options = task.options_snapshot_json or {}
     plan = options.get("supplement_plan") or {}
     edit = options.get("supplement_edit") or {}
+    publication = supplement_publication(task)
+    if publication.get("state") == "failed":
+        return {"ok": False, "code": "supplement_failed", "missing_groups": [],
+                "pending_groups": [],
+                "detail": "补件重核未成功，当前仍保留上一版结果；请修复材料后重新发起。"}
     if supplement_active(task):
         if plan.get("status") != "running" or task.state in {TASK_STATE_SETUP, TASK_STATE_PREPARING}:
             return {"ok": False, "code": "supplement_in_progress", "missing_groups": [],
@@ -5110,9 +5457,9 @@ def report_output_readiness(db: Session, task: BsTask, *, require_reading_comple
 
 
 def complete_review(db: Session, task: BsTask) -> dict:
-    """收口任务：范围分组有结论且所有命中问题均已采纳或忽略后才允许置 done。
+    """收口任务：范围分组有结论且所有无法核实问题均已处理后才允许置 done。
 
-    拍板口径：不做 awaiting_human_review 闸（人工复核走线下，P1-3 回执留痕）。
+    拍板口径：不符合项保留在报告中披露，不阻断正式报告；无法核实项必须处理。
     缺组返回 ok=False + detail 文案（组名取 CHECK_GROUPS 单一表源）；
     done 态重复收口幂等返回。
     """
@@ -5148,20 +5495,20 @@ def complete_review(db: Session, task: BsTask) -> dict:
                or (group.get("counts") or {}).get("not_run", 0) > group.get("reviewable_not_run", 0)
                for group in coverage.get("groups") or []):
             return {"ok": False, "detail": "部分 AI 辅助核查未完成，请返回核查页重试"}
-    pending_hits = (db.query(BsFinding)
-                    .filter(BsFinding.task_id == task.id,
-                            BsFinding.status.in_(("hit", "undecidable")))
-                    .all())
-    pending_hits = ai_advisory_snapshots.filter_current_candidate_findings(
-        db, task, SimpleNamespace(id=task.created_by, user_type=task.created_by_type), pending_hits)
+    pending_undecidable = (db.query(BsFinding)
+                           .filter(BsFinding.task_id == task.id,
+                                   BsFinding.status == "undecidable")
+                           .all())
+    pending_undecidable = ai_advisory_snapshots.filter_current_candidate_findings(
+        db, task, SimpleNamespace(id=task.created_by, user_type=task.created_by_type), pending_undecidable)
     pending_count = sum(
-        1 for finding in pending_hits
-        if reporting.report_review_blocking(finding) and reporting.canonical_review_decision(
+        1 for finding in pending_undecidable
+        if reporting.report_gate_blocking(finding) and reporting.canonical_review_decision(
             (finding.review_json or {}).get("decision")) not in ("accepted", "ignored")
     )
     if pending_count:
         return {"ok": False,
-                "detail": "还有 %d 项问题尚未处理，请在左侧选择“已采纳”或“已忽略”后再完成任务收口" % pending_count}
+                "detail": "还有 %d 项无法核实尚未处理，请在左侧选择“已采纳”或“已忽略”后再生成报告" % pending_count}
     # BS-P2-04（117-B §3.1）：规则版本已经在启动/重跑时冻结；收口只清除回执
     # 携带表并沿用冻结值。历史任务没有冻结值时继续为 NULL，不用当前规则补造。
     options = dict(task.options_snapshot_json or {})
@@ -5182,7 +5529,20 @@ def complete_review(db: Session, task: BsTask) -> dict:
     version = create_review_version(db, task, trigger="completed")
     if supplement_completed:
         supplement_plan["completed_version_no"] = version.version_no
+        publication = supplement_publication(task)
+        publication.update({
+            "state": "published",
+            "review_policy": "current_generation",
+            "published_generation_id": supplement_plan.get("generation_id"),
+            "published_version_no": version.version_no,
+            "candidate_generation_id": None,
+            "last_failure": None,
+        })
+        options["supplement_publication"] = _json_safe(publication)
         task.options_snapshot_json = options
+    task.completed_at = datetime.now()
+    if task.started_at is not None:
+        task.elapsed_seconds = max((task.completed_at - task.started_at).total_seconds(), 0.0)
     task.state = "done"
     db.commit()
     add_event(db, task.id, "task.completed",
@@ -5735,6 +6095,15 @@ def rerun_task(db: Session, task: BsTask, *, scope: str = "all", item_ids=None,
     if task.state not in allowed_states:
         return {"ok": False, "reason": "state",
                 "detail": "请先完成两段式启动并开始核查，再重新核查"}
+    # 旧结论在此之后可能被快照、作废或替换；先用持久化事件和租约判断当前代
+    # 是否仍有 AI 辅助核查，避免把“本进程没有任务对象”误当成安全恢复条件。
+    background_state = current_background_execution_state(db, task)
+    if background_state == "running" or current_ai_advisory_pending(db, task):
+        return {"ok": False, "reason": "ai_advisory_pending",
+                "detail": "当前 AI 辅助核查仍在运行或租约未到期，请稍后重试"}
+    if background_state in {"interrupted", "unavailable"}:
+        return {"ok": False, "reason": "execution_uncertain",
+                "detail": "已有后台核查记录无法确认是否已停止，请先人工核实"}
     if page_candidate is not None and page_text_candidate is not None:
         return {"ok": False, "reason": "page_candidate_scope", "detail": "一次只能使用一种补读候选"}
     any_candidate = page_candidate if page_candidate is not None else page_text_candidate
@@ -6071,6 +6440,16 @@ def rerun_task(db: Session, task: BsTask, *, scope: str = "all", item_ids=None,
             }
             options = dict(task.options_snapshot_json or {})
             options["supplement_plan"] = _json_safe(activated_plan)
+            publication = supplement_publication(task)
+            publication.update({
+                "state": "candidate",
+                "review_policy": "candidate_requires_review",
+                "candidate_generation_id": activated_plan.get("generation_id"),
+                "baseline_version_no": activated_plan.get("superseded_version_no"),
+                "last_failure": None,
+                "activated_at": activated_plan.get("activated_at"),
+            })
+            options["supplement_publication"] = _json_safe(publication)
             task.options_snapshot_json = options
             db.flush()
             add_event(db, task.id, "task.supplement_activated", stage="check",
@@ -6153,8 +6532,20 @@ def enter_supplement_edit(db: Session, task: BsTask) -> dict:
         "previous_parent_reference_present": old_parent_present,
         "previous_parent_reference": old_parent,
     }
+    previous_generation_id = (previous_plan or {}).get("generation_id") if isinstance(previous_plan, dict) else None
+    options["supplement_publication"] = {
+        "state": "baseline",
+        "review_policy": "baseline_only",
+        "baseline_version_no": previous_version.version_no,
+        "candidate_generation_id": plan.get("generation_id"),
+        "published_generation_id": previous_generation_id,
+        "published_version_no": previous_version.version_no if previous_generation_id else None,
+    }
     task.options_snapshot_json = options
     task.state = TASK_STATE_SETUP
+    task.started_at = None
+    task.completed_at = None
+    task.elapsed_seconds = None
     knowledge_runs.clear_reference_run(task)
     db.commit()
     db.refresh(task)
@@ -6178,6 +6569,13 @@ def activate_supplement_plan(db: Session, task: BsTask, *, allow_preparing: bool
     if not current:
         return {"ok": False, "reason": "supplement_plan_required",
                 "detail": "未找到可激活的补件计划"}
+    # 跨进程重复激活可能在候选计划的 JSON 写入与任务状态提交之间读到
+    # ``status=planned``；只要任务已经进入 running/preparing 且计划仍属于
+    # planned/running，就必须按幂等成功处理，不能把竞态误记为失败。
+    publication = supplement_publication(task)
+    if (not allow_preparing and task.state in {"running", TASK_STATE_PREPARING}
+            and current.get("status") in {"planned", "running"}):
+        return {"ok": True, "already_running": True, **current}
     if current.get("status") == "blocked":
         return {"ok": False, "reason": current.get("blocked_reason", "supplement_blocked"),
                 "detail": "补件计划已被阻止，不能启动新审查代"}
@@ -6278,6 +6676,10 @@ def activate_supplement_plan(db: Session, task: BsTask, *, allow_preparing: bool
         supplement_generation_id=current.get("generation_id"),
     )
     if not result.get("ok"):
+        # 激活竞态返回的 state 只表示另一个请求已改变任务状态；
+        # 它不是材料/解析失败，不能覆盖已启动候选的 publication。
+        if result.get("reason") != "state":
+            _record_supplement_failure(db, task, result)
         return result
     db.refresh(task)
     return {"ok": True, **result["supplement_plan"], "task_state": task.state}
@@ -6308,6 +6710,9 @@ def enter_material_edit(db: Session, task: BsTask) -> dict:
     for subject in subjects:
         subject.type_locked = False
     task.state = TASK_STATE_SETUP
+    task.started_at = None
+    task.completed_at = None
+    task.elapsed_seconds = None
     knowledge_runs.clear_reference_run(task)
     db.commit()
     db.refresh(task)
@@ -6344,7 +6749,12 @@ EVENT_LABELS = {
     "knowledge.reference_invalidated": "上游核查已更新，需要重算第二步",
     "check.semantic_started": "正在比对合同条款",
     "check.semantic_progress": "合同核查进展",
+    "check.ai_background_started": "后台 AI 核查已启动",
+    "check.ai_background_progress": "后台 AI 核查进展",
+    "check.ai_background_completed": "后台 AI 核查已结束",
+    "check.ai_background_failed": "后台 AI 核查未完成",
     "check.ai_advisory_completed": "AI 辅助核查已完成",
+    "check.ai_adjudication_applied": "AI 判定已写入",
     "check.ai_advisory_started": "AI 辅助核查进行中",
     "check.ai_advisory_failed": "AI 辅助核查未完成",
     "check.ai_batch_checkpoint": "AI 辅助核查进展已保存",
@@ -6573,6 +6983,8 @@ def _event_message(ev: BsTaskEvent) -> str | None:
 def event_dto(ev: BsTaskEvent) -> dict:
     """时间线仅输出进度；参考原文和模型建议须经独立接口重新校验授权。"""
     sensitive = {reference_snapshots.REVIEW_EVENT, "knowledge.reference_started", knowledge_runs.RUN_EVENT,
+                 "check.ai_background_started", "check.ai_background_progress",
+                 "check.ai_background_completed", "check.ai_background_failed",
                  "check.ai_advisory_started", "check.ai_advisory_completed",
                  "check.ai_advisory_failed", "check.ai_batch_checkpoint", "check.ai_batch_progress",
                  "check.negative_candidates_started", "check.negative_candidates_finished",
@@ -6593,6 +7005,7 @@ def event_dto(ev: BsTaskEvent) -> dict:
             label = "AI 辅助核查部分结果待核实"
         elif raw.get("execution_status") in {"failed", "not_run"}:
             label = "AI 辅助核查未完成"
+    diagnostics = _safe_event_diagnostics(raw)
     return {
         "sequence": ev.sequence,
         "event_type": ev.event_type,
@@ -6601,6 +7014,7 @@ def event_dto(ev: BsTaskEvent) -> dict:
         "stage": ev.stage,
         "payload": payload,
         "progress_key": progress_key,
+        "diagnostics": diagnostics,
         "created_at": ev.created_at.isoformat(timespec="seconds") if ev.created_at else None,
     }
 

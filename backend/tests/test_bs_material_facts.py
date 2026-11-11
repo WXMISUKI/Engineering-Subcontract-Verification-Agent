@@ -380,7 +380,10 @@ def test_deleting_task_cascades_material_facts():
     Base.metadata.create_all(engine)
     with engine.begin() as conn:
         # bs_task 的父链（账号/代理/会话）先满足外键，才能验证级联本身。
-        conn.exec_driver_sql("INSERT INTO agents (id, slug) VALUES (1, 'bs-test')")
+        conn.exec_driver_sql(
+            "INSERT INTO agents (id, name, slug, usage_count, market_status) "
+            "VALUES (1, '测试智能体', 'bs-test', 0, 'published')"
+        )
         conn.exec_driver_sql(
             "INSERT INTO standalone_users (id, username, password_hash, is_active, token_version) "
             "VALUES (1, 'cascade-test', 'x', 1, 0)"

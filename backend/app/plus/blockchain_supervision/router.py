@@ -26,9 +26,11 @@ from .rules import load_report_checklist
 from .basis_subject_projection import subject_basis_view
 from .reference_access import read_reference_original
 from .ai_current_guard import AiContextChanged, assert_ai_context_current
-from .classify import ROLE_LABELS
+from .classify import ROLE_LABELS, validate_role
 from .manifest import manifest
 from .models import STATUS_LABELS, BsFinding, BsMaterial, BsMaterialConfirmation, BsPacket, BsSubject, BsTask, BsTaskEvent
+from ...models.models import TokenUsage
+from ...services.billing import estimates as billing_estimates
 
 router = APIRouter(tags=[f"plus:{manifest['code']}"])
 logger = logging.getLogger(__name__)
@@ -42,6 +44,14 @@ def _is_material_revision_schema_error(exc: OperationalError) -> bool:
         and "bs_material" in text
         and ("revision_no" in text or "replacement_target_id" in text)
     )
+
+
+def _task_timing_dto(task: BsTask) -> dict:
+    return {
+        "started_at": task.started_at.isoformat() if task.started_at else None,
+        "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+        "elapsed_seconds": float(task.elapsed_seconds) if task.elapsed_seconds is not None else None,
+    }
 
 
 @router.get("/ping")
@@ -249,6 +259,7 @@ def list_tasks(conversation_id: int, db: Session = Depends(get_db), user=Depends
          "scope": {"A1": t.scope_a1, "A3": t.scope_a3}, "scale": t.scale,
          "section": _section_dto(t),
          "routing": _routing_dto(t),
+         "timing": _task_timing_dto(t),
          "created_at": t.created_at.isoformat() if t.created_at else None}
         for t in tasks
     ]}
@@ -553,6 +564,7 @@ def get_task(task_id: int, db: Session = Depends(get_db), user=Depends(get_curre
         "section_suggestions": section_projection.section_suggestions(
             material_versions.active_input_materials(materials)),
         "routing": _routing_dto(task),
+        "timing": _task_timing_dto(task),
         "options_snapshot": task.options_snapshot_json,
         "supplement_plan": service.get_supplement_generation_plan(task),
         "subjects": [_subject_dto(s) for s in subjects],
@@ -600,6 +612,46 @@ def confirm_report_employer(task_id: int, body: EmployerConfirmationIn,
                       payload={"candidate": candidate, "user_id": user.id,
                                "user_type": getattr(user, "user_type", None)})
     return {"status": "confirmed", "company": candidate["value"]}
+
+
+@router.get("/tasks/{task_id}/usage")
+def get_task_usage(task_id: int, db: Session = Depends(get_db), user=Depends(get_current_any_user)):
+    """任务级用量只读视图；shadow 阶段记录真实 usage，不扣余额。"""
+    task = _get_task(db, task_id, user)
+    rows = (db.query(TokenUsage)
+            .filter(TokenUsage.user_id == task.created_by,
+                    TokenUsage.user_type == task.created_by_type,
+                    TokenUsage.billing_scope_type == "bs_task",
+                    TokenUsage.billing_scope_id == str(task.id))
+            .order_by(TokenUsage.id).all())
+    known_input = [r.input_count for r in rows if r.input_count is not None]
+    known_output = [r.output_count for r in rows if r.output_count is not None]
+    known_total = [r.token_count for r in rows if r.token_count is not None]
+    billing = billing_estimates.task_summary(
+        db,
+        scope_type="bs_task",
+        scope_id=str(task.id),
+        user_type=task.created_by_type,
+        user_id=task.created_by,
+    )
+    return {
+        "task_id": task.id,
+        "timing": _task_timing_dto(task),
+        "billing_mode": "shadow",
+        "calls": len(rows),
+        "unknown_calls": sum(1 for r in rows if r.token_count is None),
+        "input_tokens": sum(known_input) if known_input else None,
+        "output_tokens": sum(known_output) if known_output else None,
+        "total_tokens": sum(known_total) if known_total else None,
+        "billing": billing,
+        "items": [{
+            "id": r.id, "stage": r.stage, "source": r.source,
+            "model_code": r.model_code, "usage_status": r.usage_status,
+            "input_tokens": r.input_count, "output_tokens": r.output_count,
+            "total_tokens": r.token_count, "billing_status": r.billing_status,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        } for r in rows],
+    }
 
 
 @router.get("/tasks/{task_id}/materials/{material_id}/history")
@@ -849,6 +901,10 @@ async def upload_material(task_id: int, request: Request, file: UploadFile = Fil
     目标须属本任务且未被替代；替代目标先持久化在新候选行，待解析成功后由准备 worker
     调用原子 CAS 生效。上传失败/解析失败时旧材料继续有效，旧文件仍可取原文。
     """
+    try:
+        validate_role(role)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     task = _get_task(db, task_id, user)
     _require_setup(task, "核查已开始，不能再上传材料")
     supplement_label = None
@@ -992,8 +1048,10 @@ async def upload_material(task_id: int, request: Request, file: UploadFile = Fil
 def correct_role(task_id: int, material_id: int, body: RoleCorrectIn,
                  db: Session = Depends(get_db), user=Depends(get_current_any_user)):
     task = _get_task(db, task_id, user)
-    if body.role not in ROLE_LABELS:
-        raise HTTPException(status_code=400, detail="未知归属类型")
+    try:
+        validate_role(body.role)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     # T10-B §B1：原实现两侧都无状态门（只靠 UI 不给入口）——preparing/running 期
     # 直接调接口即可改名，属「界面按不住」的假门禁。
     _require_setup(task, "核查已开始，不能再更正材料归属")
@@ -1418,6 +1476,12 @@ def activate_supplement_plan(task_id: int, response: Response, db: Session = Dep
         response.status_code = 202
         return {"task_id": task.id, **result}
     if not result.get("ok"):
+        # 并发激活时，竞态请求可能在首个事务提交前读到旧任务状态；
+        # ``state`` 只表示需要刷新重试，不代表候选运行失败，不能污染
+        # 已启动请求的 publication 为 failed。
+        if result.get("reason") == "state":
+            raise HTTPException(status_code=409, detail=result)
+        service.record_supplement_failure(db, task, result)
         raise HTTPException(status_code=409, detail=result)
     return {"task_id": task.id, **result}
 
@@ -1533,11 +1597,18 @@ def list_findings(task_id: int, kind: str = None,
     coverage = ai_advisory_snapshots.collect_current_coverage(db, task, snapshot, reporting.report_review_blocking)
     timeout_ids = {value for group in (coverage or {}).get("groups", [])
                    for value in group.get("reviewable_timeout_finding_ids", [])}
-    publication_status = ("preparing" if service.supplement_active(task)
+    publication = service.supplement_publication(task)
+    publication_status = ("preparing" if publication.get("state") == "candidate"
                           and not service.report_output_readiness(db, task).get("ok") else "ready")
+    publication_generation_id = (publication.get("published_generation_id")
+                                 or publication.get("candidate_generation_id"))
     return {**_findings_payload(db, findings, as_of=task.baseline_date, negative_coverage=negative_coverage, timeout_ids=timeout_ids),
             "publication_status": publication_status,
-            "publication_generation_id": ((task.options_snapshot_json or {}).get("supplement_plan") or {}).get("generation_id") if service.supplement_active(task) else None,
+            "publication_state": publication.get("state"),
+            "publication_generation_id": publication_generation_id,
+            "candidate_generation_id": publication.get("candidate_generation_id"),
+            "baseline_version_no": publication.get("baseline_version_no"),
+            "review_policy": publication.get("review_policy"),
             "reference_snapshot": reference_visibility.visible_snapshot(
                 db, task, reference_snapshots.get_reference_snapshot(db, task), user),
             "reference_run": reference_visibility.visible_run(db, task, knowledge_runs.get_reference_run(db, task), user)}
@@ -1676,6 +1747,8 @@ def _finding_dto(f: BsFinding, basis_map: dict = None, subjects_by_id: dict = No
         "location_mode": f.location_mode,
         "material_id": f.material_id,
         "evidence": f.evidence_json or [],
+        "reason_code": reporting.finding_reason_code(f),
+        "reason_label": reporting.reason_code_label(reporting.finding_reason_code(f)),
         "decision_trace": reporting.decision_trace(f, basis),
         # 刀D（设计 104 §3）：规则依据视图（只读，来自依据库；None=未收录坐标）。
         "basis": basis,
@@ -1685,6 +1758,7 @@ def _finding_dto(f: BsFinding, basis_map: dict = None, subjects_by_id: dict = No
         "missing": reporting.finding_missing(f),
         "supplement_hint": supplement_hint,
         "review": reporting.review_dto(f.review_json),
+        "ai_adjudication": f.ai_adjudication_json,
     }
 
 
@@ -1705,6 +1779,9 @@ def review_finding(finding_id: int, body: ReviewIn,
     # Serialize with supplement activation; a historical or partial finding must
     # not accept a new human decision while the replacement run is incomplete.
     task = (db.query(BsTask).filter_by(id=finding.task_id).with_for_update().populate_existing().one())
+    publication = service.supplement_publication(task)
+    if task.state not in ("running", "review") or publication.get("state") == "failed":
+        raise HTTPException(status_code=409, detail="补件重核未完成，当前结果只读，请先完成或恢复重核")
     options = task.options_snapshot_json or {}
     plan, edit = options.get("supplement_plan") or {}, options.get("supplement_edit") or {}
     if (isinstance(plan, dict) and isinstance(edit, dict) and plan.get("generation_id")
@@ -1834,7 +1911,7 @@ def _require_no_pending_hits(db: Session, task_id: int, stage: str = "draft", *,
         task = db.get(BsTask, task_id)
         pending = ai_advisory_snapshots.filter_current_candidate_findings(db, task, user, pending)
     pending = [finding for finding in pending
-               if reporting.report_review_blocking(finding)
+               if reporting.report_gate_blocking(finding)
                and reporting.canonical_review_decision(
                    (finding.review_json or {}).get("decision")) not in ("accepted", "ignored")]
     if pending:
@@ -1863,7 +1940,7 @@ def _require_no_pending_frozen_findings(snapshot: dict, stage: str) -> None:
         finding = BsFinding(item_id=row.get("item_id"), status=row.get("status"),
                             evidence_json=row.get("evidence") or [])
         review = row.get("review") if isinstance(row.get("review"), dict) else {}
-        if (row.get("material_only") is not True and reporting.report_review_blocking(finding)
+        if (row.get("material_only") is not True and reporting.report_gate_blocking(finding)
                 and reporting.canonical_review_decision(review.get("decision")) not in ("accepted", "ignored")):
             pending.append(row.get("finding_id"))
     if pending:
@@ -1894,15 +1971,32 @@ def _attach_generation_identity(payload: dict, *, task: BsTask,
     meta["review_version_no"] = (version_no if version_no is not None
         else service.current_output_version_no(db, task, reference))
     meta.update(supplement_generation.generation_metadata(plan))
+    publication = service.supplement_publication(task)
+    meta.update({
+        "publication_state": publication.get("state"),
+        "publication_generation_id": (publication.get("published_generation_id")
+                                      or publication.get("candidate_generation_id")),
+        "baseline_version_no": publication.get("baseline_version_no"),
+        "review_policy": publication.get("review_policy"),
+    })
     payload["meta"] = meta
     return payload
 
 
 def _require_current_output_ready(db: Session, task: BsTask, stage: str,
-                                  *, require_reading_complete: bool = False, user=None) -> None:
+                                  *, require_reading_complete: bool = False,
+                                  allow_candidate_preview: bool = False, user=None) -> None:
     """当前初稿/确认稿共用报告可读性前提；不把收口闸门带入报告读取。"""
     if stage not in _REVIEW_STAGES:
         raise HTTPException(status_code=400, detail="stage 仅支持 draft / confirmed")
+    publication = service.supplement_publication(task)
+    if publication.get("state") == "candidate" and not allow_candidate_preview:
+        raise HTTPException(status_code=409, detail={
+            "code": "supplement_candidate_unpublished",
+            "message": "补件候选结果尚未发布，当前只能在复核工作台预览和重新处置；候选发布后才能读取或导出正式报告/意见书。",
+            "candidate_generation_id": publication.get("candidate_generation_id"),
+            "baseline_version_no": publication.get("baseline_version_no"),
+        })
     readiness = service.report_output_readiness(
         db, task, require_reading_complete=require_reading_complete)
     if not readiness["ok"]:
@@ -1915,7 +2009,8 @@ def _require_current_output_ready(db: Session, task: BsTask, stage: str,
 
 
 def _output_payload(db: Session, task: BsTask, kind: str, stage: str,
-                    version_no: int | None, *, user, require_reading_complete: bool = False) -> dict:
+                    version_no: int | None, *, user, require_reading_complete: bool = False,
+                    allow_candidate_preview: bool = False) -> dict:
     """当前报告走既有守门；历史只读冻结内容与回执，绝不借当前结果补齐。
 
     历史版本返回前做**展示归一化**（`reporting.normalize_output_payload`）：
@@ -1925,7 +2020,8 @@ def _output_payload(db: Session, task: BsTask, kind: str, stage: str,
     """
     if version_no is None:
         _require_current_output_ready(
-            db, task, stage, require_reading_complete=require_reading_complete, user=user)
+            db, task, stage, require_reading_complete=require_reading_complete,
+            allow_candidate_preview=allow_candidate_preview, user=user)
         if (reference_visibility.snapshot_restricted(db, task, reference_snapshots.get_reference_snapshot(db, task), user)
                 or reference_visibility.run_restricted(db, task, knowledge_runs.get_reference_run(db, task), user)):
             raise HTTPException(status_code=409, detail="参考依据授权已变化，请联系管理员核对后再查看或导出报告")
@@ -2051,7 +2147,8 @@ def preview_opinion(task_id: int, stage: str = "draft", version_no: int | None =
     """只读预览同一意见书渲染内容，不记录导出事件。"""
     task = _get_task(db, task_id, user)
     opinion = _output_payload(db, task, "opinion", stage, version_no, user=user,
-                              require_reading_complete=(stage == "confirmed" and version_no is None))
+                              require_reading_complete=(stage == "confirmed" and version_no is None),
+                              allow_candidate_preview=True)
     digest = export.report_digest(opinion)
     data = export.opinion_pdf_bytes(opinion, digest=digest)
     return Response(content=data, media_type="application/pdf", headers={
@@ -2063,7 +2160,8 @@ def preview_opinion_markdown(task_id: int, stage: str = "draft", version_no: int
                              db: Session = Depends(get_db), user=Depends(get_current_any_user)):
     task = _get_task(db, task_id, user)
     opinion = _output_payload(db, task, "opinion", stage, version_no, user=user,
-                              require_reading_complete=(stage == "confirmed" and version_no is None))
+                              require_reading_complete=(stage == "confirmed" and version_no is None),
+                              allow_candidate_preview=True)
     digest = export.report_digest(opinion)
     return {"markdown": export.opinion_markdown(opinion, digest), "opinion_digest": digest}
 

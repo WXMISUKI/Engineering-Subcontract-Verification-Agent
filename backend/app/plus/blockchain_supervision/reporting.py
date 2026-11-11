@@ -275,6 +275,33 @@ def _evidence(f: BsFinding, file_names: dict, version_facts: dict | None = None)
     return evidence
 
 
+REASON_CODE_LABELS = {
+    "field_conflict": "字段冲突",
+    "field_not_found": "关键字段未提取",
+    "field_ambiguous": "字段存在歧义",
+    "post_unmapped": "岗位无证书类别映射",
+    "subject_unresolved": "主体未确认",
+    "certificate_not_located": "未定位到证书页",
+    "certificate_holder_unconfirmed": "证书持证人无法确认",
+    "certificate_ambiguous": "存在多份互斥证书",
+    "supplement_unreadable": "补件证书不可读或缺号",
+    "material_unreadable": "材料质量存疑",
+    "extraction_failed": "字段提取失败",
+}
+
+
+def finding_reason_code(finding) -> str | None:
+    """从关系投影证据中取稳定原因码；没有则返回 None，不猜原因。"""
+    for ref in getattr(finding, "evidence_json", None) or []:
+        if isinstance(ref, dict) and ref.get("reason_code"):
+            return str(ref["reason_code"])
+    return None
+
+
+def reason_code_label(code) -> str | None:
+    return REASON_CODE_LABELS.get(code) if code else None
+
+
 def report_review_blocking(finding) -> bool:
     """同名身份证识别差异只作可追溯参考，不强迫处置后才能查看报告。"""
     if is_open_term(finding) or checklist.is_material_only_finding(finding):
@@ -286,6 +313,13 @@ def report_review_blocking(finding) -> bool:
                 and isinstance(ref.get("page"), int) and ref["page"] > 0
                 and isinstance(ref.get("anchor"), dict) and ref["anchor"].get("status") == "precise" for ref in refs)
                 and (refs[0]["material_id"], refs[0]["page"]) != (refs[1]["material_id"], refs[1]["page"]))
+
+
+def report_gate_blocking(finding) -> bool:
+    """正式报告门禁只看无法核实项；不符合项保留在报告中披露，不阻断。"""
+    if getattr(finding, "status", None) != STATUS_UNDECIDABLE:
+        return False
+    return report_review_blocking(finding)
 
 
 def decision_trace(f: BsFinding, basis: dict | None = None) -> dict:
@@ -319,6 +353,8 @@ def decision_trace(f: BsFinding, basis: dict | None = None) -> dict:
         "status_label": status,
         "evidence_status": evidence_status,
         "basis_available": bool(basis),
+        "reason_code": finding_reason_code(f),
+        "reason_label": reason_code_label(finding_reason_code(f)),
         "summary": "%s%s%s" % (basis_summary, evidence_summary, missing_summary),
         "missing": missing,
     }
@@ -1161,7 +1197,8 @@ def build_report(db: Session, task: BsTask) -> dict:
                     for ref in (f.evidence_json or [])
                 ],
                 "review": review_dto(f.review_json),
-                "human_disposition": human_disposition(f.review_json),
+                "human_disposition": human_disposition(f.review_json, f.status),
+                "ai_adjudication": deepcopy(f.ai_adjudication_json),
                 # BS-P1-09（设计 98 §8）：该条结论引用的材料是否有未读页（不改判定，
                 # 只让读者知道「这条结论的证据材料没读全」）。
                 "reading_limited": f.material_id in coverage_by_material,

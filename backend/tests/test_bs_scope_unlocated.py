@@ -102,6 +102,22 @@ def test_only_valid_persisted_scope_candidate_is_reviewable_in_coverage():
     assert allowed['counts']['not_run'] == 1 and allowed['reviewable_not_run'] == 1
 
 
+def test_non_reviewable_contract_missing_is_exposed_as_material_scope_category():
+    prepared, result, run = inputs()
+    prepared['candidates'][0]['unavailable_reason'] = 'contract_missing'
+    result['candidates'][0]['unavailable_reason'] = 'contract_missing'
+    run.update({'group_id': 'a1', 'state': 'completed', 'finding_ids': [], 'basis_sources': []})
+    event = SimpleNamespace(event_type='check.negative_candidates_finished', payload_json={
+        'run_id': run['run_id'], 'validation_version': snapshots.ai_review_batch.CHECKPOINT_SCHEMA_VERSION,
+        'result': result,
+    })
+    row = snapshots.summarize_coverage({'ai_auto_enabled': True, 'ai_auto_groups': ['a1']},
+                                       [run], [event])['groups'][0]
+    assert row['counts']['not_run'] == 1
+    assert row['reviewable_not_run'] == 0
+    assert row['failure_categories'] == ['incomplete_material_scope']
+
+
 def test_scope_coverage_requires_matching_active_persisted_finding(monkeypatch):
     prepared, result, run = inputs()
     run['group_id'] = 'a1'
@@ -126,3 +142,28 @@ def test_scope_coverage_requires_matching_active_persisted_finding(monkeypatch):
         db.flush()
         monkeypatch.setattr(snapshots, 'active_candidate_finding_ids', lambda *_: set())
         assert snapshots.unlocated_scope_reviewable_ids(db, task, None, run, [event]) == set()
+
+def test_a2_05_supplement_unreadable_is_report_blocking_with_reason_label():
+    from app.plus.blockchain_supervision.router import _finding_dto
+    finding = BsFinding(
+        task_id=1, subject_id=7, item_id="A2-05", kind="cert_validity",
+        status="undecidable",
+        message="项目经理李强无法确认：补件证书编号未识别，不能回退原证书判通过",
+        evidence_json=[{
+            "material_id": 2, "page": 1, "quote": "交安 B",
+            "reason_code": "supplement_unreadable",
+            "certificate_evidence": [
+                {"material_id": 1, "page": 2, "role": "superseded"},
+                {"material_id": 2, "page": 1, "role": "authoritative"},
+            ],
+        }],
+    )
+    assert reporting.report_review_blocking(finding)
+    assert reporting.finding_reason_code(finding) == "supplement_unreadable"
+    assert reporting.reason_code_label("supplement_unreadable") == "补件证书不可读或缺号"
+    trace = reporting.decision_trace(finding)
+    assert trace["reason_code"] == "supplement_unreadable"
+    assert trace["reason_label"] == "补件证书不可读或缺号"
+    dto = _finding_dto(finding)
+    assert dto["reason_code"] == "supplement_unreadable"
+    assert dto["reason_label"] == "补件证书不可读或缺号"

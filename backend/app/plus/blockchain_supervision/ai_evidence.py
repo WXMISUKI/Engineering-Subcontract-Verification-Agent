@@ -44,7 +44,8 @@ def contains_quote(text: Any, quote: Any) -> bool:
 def validate_ai_proposal(proposal: Any, *, task_id: int, subject_id: int | None, item_id: str,
                          materials: list[dict], references: list[dict],
                          required_subject_name: str | None = None,
-                         incomplete_material_scope: bool = False) -> ProposalValidation:
+                         incomplete_material_scope: bool = False,
+                         kind: str | None = None) -> ProposalValidation:
     """只验证本次上下文中的双侧连续原文；返回结果仍是待人工核实的建议。"""
     def reject(reason: str) -> ProposalValidation:
         return ProposalValidation(False, reason, None)
@@ -56,7 +57,12 @@ def validate_ai_proposal(proposal: Any, *, task_id: int, subject_id: int | None,
     if proposal.get("status") not in {"hit", "miss", "undecidable"}:
         return reject("建议状态无效")
     if proposal["status"] == "miss":
-        return reject("尚未验证完整覆盖，不能由模型建议无风险")
+        # AI 可以在完整材料范围内建议符合，但不能对“缺件/签章缺失”类事项
+        # 用文本中没看到来证明无问题；这两类仍必须保持无法核实并交人工。
+        if incomplete_material_scope:
+            return reject("材料范围不完整，不能由模型建议符合")
+        if kind in {"completeness", "signature_chain"}:
+            return reject("缺件或签章类事项不能仅凭文本片段判为符合")
     if incomplete_material_scope and proposal["status"] == "hit":
         return reject("当前只核对部分材料，无法确认完整范围，确定性建议未采用，请人工核实")
     # 当前模型仅收到 OCR 文本，没有看到页面图像。网络图的图形本体

@@ -41,6 +41,10 @@ class BsTask(Base):
     created_by_type = Column(String(20), nullable=False, default="web")
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    # 任务级计时：由启动/收口事务固化；elapsed_seconds 只在完成后写入。
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    elapsed_seconds = Column(Float, nullable=True)
 
 
 class BsSubject(Base):
@@ -213,7 +217,7 @@ class BsMaterialFact(Base):
 
 
 # 关系 schema 版本：三态关系落行时固化，读取侧据此判断维度语义；不就地升级历史行。
-RELATION_SCHEMA_VERSION = "evidence-relation.v1"
+RELATION_SCHEMA_VERSION = "evidence-relation.v3"
 
 
 class BsEvidenceRelation(Base):
@@ -348,6 +352,8 @@ class BsFinding(Base):
     severity = Column(String(10), nullable=True)        # high / medium / low
     confidence = Column(String(10), nullable=True)      # high / medium / low
     discrepancy_json = Column(JSON, nullable=True)      # {rule:{severity,confidence}, review:{...}}
+    # AI 对无法核实项的结构化判定；与人工 review_json 分离，保留原状态、证据和模型批次。
+    ai_adjudication_json = Column(JSON, nullable=True)
     # BS-P1-12 结构化缺件：存 **key**（如 `general_scope`），不存中文标签。
     # 只落库 key 的原因：缺件文案已改过一次（P1-02），把中文存进库等于让历史结论
     # 跟着文案版本走；而 key 稳定、可归并、可统计（P1-06 面板要按材料类汇总）。

@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from .identity import Agent, ConversationMapping, User
 from ..database import SessionLocal, get_db
+from ..auth.cookies import SESSION_COOKIE
 from ..auth.unified_user import get_current_any_user
 from ..limiter import limiter
 from .reference_mapping import MappingError
@@ -41,7 +42,7 @@ def login(request: Request, body: Login, response: Response, db: Session = Depen
     token = jwt.encode({'sub': str(user.id), 'exp': expiry, 'ver': user.token_version,
                         'pwd': hashlib.sha256(user.password_hash.encode('ascii')).hexdigest()},
                        request.app.state.secret_key, algorithm='HS256')
-    response.set_cookie('access_token', token, httponly=True, secure=request.app.state.cookie_secure,
+    response.set_cookie(SESSION_COOKIE, token, httponly=True, secure=request.app.state.cookie_secure,
                         samesite='lax', max_age=8 * 60 * 60, path='/')
     return {'username': user.username}
 
@@ -74,6 +75,9 @@ def create_app(engine, secret_key: str, *, cookie_secure: bool = True, include_s
         return JSONResponse(status_code=503, content={'detail': '知识库依据无法核实，请联系管理员完成知识初始化'})
 
     app.add_api_route('/api/login', login, methods=['POST'])
+    # 独立版沿用智能体广场的用户侧账单适配器；默认 shadow，只记录用量与预估，不扣余额。
+    from ..routers.billing_user import router as billing_user_router
+    app.include_router(billing_user_router)
     if include_subcontract:
         from ..plus.blockchain_supervision.router import router as subcontract_router
         app.include_router(subcontract_router, prefix='/api/plus/blockchain-supervision')
@@ -91,7 +95,7 @@ def create_app(engine, secret_key: str, *, cookie_secure: bool = True, include_s
     def logout(response: Response, user: User = Depends(get_current_any_user), db: Session = Depends(get_db)):
         user.token_version += 1
         db.commit()
-        response.delete_cookie('access_token', path='/', secure=cookie_secure, httponly=True, samesite='lax')
+        response.delete_cookie(SESSION_COOKIE, path='/', secure=cookie_secure, httponly=True, samesite='lax')
 
     @app.get('/api/session')
     def session(user: User = Depends(get_current_any_user)):
@@ -153,9 +157,16 @@ def create_app(engine, secret_key: str, *, cookie_secure: bool = True, include_s
                 snapshot = reference_snapshots.get_reference_snapshot(db, task) or {}
                 processing = db.scalar(select(BsMaterial.id).where(
                     BsMaterial.task_id == task.id, BsMaterial.parse_state.in_(('uploading', 'parsing'))).limit(1))
+                active_reference_run = any(
+                    (run or {}).get('state') in ('running', 'preparing')
+                    for run in (snapshot.get('runs') or [])
+                )
                 if (task.state == 'preparing' or processing is not None
-                        or snapshot.get('state') == 'running' or service.current_ai_advisory_pending(db, task)):
-                    raise HTTPException(status_code=409, detail='任务正在处理，请等待完成后再删除')
+                        or active_reference_run or service.current_ai_advisory_pending(db, task)):
+                    raise HTTPException(
+                        status_code=409,
+                        detail='任务正在处理：材料解析、AI 或核查运行仍未完成，请等待后再删除',
+                    )
         row.is_deleted = True
         db.commit()
         return Response(status_code=204)

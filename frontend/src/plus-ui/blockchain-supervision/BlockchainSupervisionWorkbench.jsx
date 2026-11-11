@@ -32,23 +32,26 @@ import {
   createBsTask,
   deleteBsMaterial, downloadBsReport, downloadBsOpinion, previewBsOpinion,
   activateBsSupplementPlan, confirmBsMaterial, confirmBsEmployer, createBsSupplementPlan, enterBsMaterialEdit, getBsReport, getBsOpinion, getBsTask, getBsTodo, getBsReviewVersion, getBsRuleset,
-  listBsFindings, listBsTasks, pingBs, reviewBsFinding, rerunBsTask, saveBlob, downloadBsReferenceFile,
+  listBsFindings, listBsTasks, pingBs, reviewBsFinding, rerunBsTask, saveBlob, downloadBsReferenceFile, getBsTaskUsage,
   assignBsMaterialSubject, patchBsSection, runBsCheck, setBsMaterialRole, startBsReview, startBsSupplementEdit, uploadBsMaterial,
   startBsBackgroundAiReview, getBsBackgroundAiReview,
 } from './lib/api'
-import { pendingAutoCheckSteps, planAutoChecks, readAutoRunStatus, writeAutoRunStatus, clearAutoRunStatus } from './lib/autoCheckResume'
+import { autoRunIsStale, pendingAutoCheckSteps, planAutoChecks, readAutoRunStatus, writeAutoRunStatus, clearAutoRunStatus, shouldResumeAiAfterReload } from './lib/autoCheckResume'
 import { aiReviewRequiresNewRun, runBackgroundAiReview } from './lib/autoAiReview'
 import {
   collectContainerIds,
   subjectCodeLabel, subjectNeedsNameConfirm, subjectNeedsTypeConfirm,
 } from './lib/materialState'
 import { buildFiveSteps, filterFindings } from './lib/fiveStepModel'
+import { validateUploadFiles } from './lib/uploadFiles'
+import { taskMutationBusy } from './lib/taskMutationGate'
 import { buildStepOverview } from './lib/stepOverviewModel'
 import { buildTaskHeader } from './lib/taskHeaderModel'
 import { buildMissingPlan, supplementUploadCategoryOf, matchingSupplementGeneration, supplementItemsForSubject } from './lib/todoPlan'
 import { bsEtaLabel, updateBsEta } from './lib/bsEtaPlan'
+import { supplementPublicationPending } from './lib/supplementPublication'
 import { formatEventTime } from './lib/eventTime'
-import { buildMaterialsById, buildSubjectsById, groupFindings } from './lib/reviewWorkbenchModel'
+import { buildMaterialsById, buildSubjectsById, groupFindings, headerSupplementItemOf } from './lib/reviewWorkbenchModel'
 import { statusLabelOf } from './lib/statusDisplay'
 import { isUnreviewedFinding, reviewBucket } from './lib/reviewDecision'
 import { blocksReportReview } from './lib/reviewQueueModel'
@@ -117,6 +120,20 @@ function todayInChina() {
 
 function timelineTime(iso) {
   return formatEventTime(iso, { date: true })
+}
+
+function taskElapsedLabel(timing, now = Date.now()) {
+  if (!timing?.started_at) return '未开始'
+  const completed = timing.completed_at ? Date.parse(timing.completed_at) : now
+  const started = Date.parse(timing.started_at)
+  if (!Number.isFinite(started) || !Number.isFinite(completed)) return '未知'
+  const seconds = timing.elapsed_seconds != null
+    ? Number(timing.elapsed_seconds)
+    : Math.max(0, Math.floor((completed - started) / 1000))
+  if (!Number.isFinite(seconds)) return '未知'
+  const mins = Math.floor(seconds / 60)
+  const secs = Math.floor(seconds % 60)
+  return mins > 0 ? `${mins}分${String(secs).padStart(2, '0')}秒` : `${secs}秒`
 }
 
 function currentActivity(events, state, autoPhase, index = 0, total = 0, stage = null) {
@@ -846,7 +863,15 @@ export default function BlockchainSupervisionWorkbench({ conversationId, onExitP
   }, [])
 
   const addFiles = useCallback(async (fileList) => {
-    const files = Array.from(fileList || []).filter((f) => f.size > 0)
+    const { files, emptyFiles, unsupportedFiles, oversizedFiles } = validateUploadFiles(fileList)
+    const problems = []
+    if (emptyFiles.length) {
+      const names = emptyFiles.map((file) => file?.name || '未命名文件').join('、')
+      problems.push(`无法上传空文件：${names}`)
+    }
+    if (unsupportedFiles.length) problems.push(`仅支持 PDF 和 ZIP：${unsupportedFiles.map((file) => file.name).join('、')}`)
+    if (oversizedFiles.length) problems.push(`文件超过 200 MB：${oversizedFiles.map((file) => file.name).join('、')}`)
+    if (problems.length) onError(problems.join('；'))
     if (!files.length) return
     try {
       const id = await ensureTask()
@@ -1006,6 +1031,7 @@ export default function BlockchainSupervisionWorkbench({ conversationId, onExitP
           onMaterialRoleChange={changeRole}
           onMaterialSubjectChange={changeSubject}
           onSelectFiles={() => !busy && inputRef.current?.click()}
+          onDropFiles={addFiles}
           onRemove={removeMaterial}
           onReplace={replaceMaterial}
           onStart={onStartClick}
@@ -1100,10 +1126,15 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
     onReachStage, onStageSelect, onOpenMaterials, onRequestEditMaterials, onRequestSupplementMaterials, onOpenSupplementOverlay,
     onError, onEditMaterials, onReset, resetting = false, onOpenReviewNotes }) {
   const [detail, setDetail] = useState(null)
+  const [taskUsage, setTaskUsage] = useState(null)
+  const [taskUsageError, setTaskUsageError] = useState('')
+  const [usageNow, setUsageNow] = useState(() => Date.now())
   const [findings, setFindings] = useState([])
   const [publication, setPublication] = useState(null)
-  const publicationPending = detail?.supplement_plan?.status === 'running'
-    && (publication?.generationId !== detail.supplement_plan.generation_id || publication?.status !== 'ready')
+  const publicationPending = supplementPublicationPending({
+    plan: detail?.supplement_plan,
+    publication,
+  })
   const [referenceSnapshot, setReferenceSnapshot] = useState(null)
   // 初值 true：挂载即拉 findings，若默认 false 会先渲染一帧「暂无核查结论」再被数据替换（假空态闪现）
   const [findingsLoading, setFindingsLoading] = useState(true)
@@ -1112,9 +1143,27 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
   const [runningKey, setRunningKey] = useState(null)
   const [autoCheck, setAutoCheck] = useState({ phase: 'idle', index: 0, total: 0, error: '' })
   const autoRunRef = useRef(false)
+  const autoRunGenerationRef = useRef(0)
+  const autoRunControllerRef = useRef(null)
+  const autoRunStartedAtRef = useRef(null)
   const aiResumeSeenRef = useRef(null)
   // 当前审查代（服务端唯一身份）：本地编排状态的读/写都以它为准。
   const reviewRunId = referenceSnapshot?.review_run_id ?? null
+  const allowStaleRunning = Boolean(
+    detail?.state === 'running'
+      && runningKey === null
+      && !['resetting', 'running', 'waiting'].includes(autoCheck.phase)
+      && !['material_reading', 'intelligent_check', 'ai_checking'].includes(detail?.progress?.phase)
+      && !findingsLoading,
+  )
+  const mutationBusy = taskMutationBusy({
+    taskState: detail?.state,
+    steps: referenceSnapshot?.steps,
+    progressPhase: detail?.progress?.phase,
+    localPhase: autoCheck.phase,
+    running: runningKey !== null,
+    allowStaleRunning,
+  })
   // ── 报告两稿别（设计 100 §5）──
   // stage=draft：AI 初稿；stage=confirmed：确认稿。两稿别各自缓存、各自记录技术前提
   // 错误，人工未处置不作为报告资格；读取/导出都绑定当前组件、运行代及依据代。
@@ -1194,6 +1243,28 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
   const [completing, setCompleting] = useState(false)
   const [runVersion, setRunVersion] = useState(0)
   const events = useBsEventStream(taskId, runVersion)
+  const loadTaskUsage = useCallback(async () => {
+    if (!taskId) return
+    try {
+      const usage = await getBsTaskUsage(taskId)
+      setTaskUsage(usage || null)
+      setTaskUsageError('')
+    } catch (error) {
+      // 用量是旁路观察数据，读取失败不能阻断核查或把任务误判为失败。
+      setTaskUsageError(error?.status === 502
+        ? '候选服务正在重启，请稍后刷新'
+        : (error?.message || '用量暂不可用'))
+    }
+  }, [taskId])
+  useEffect(() => {
+    if (!taskId) return undefined
+    loadTaskUsage()
+    const timer = setInterval(() => {
+      setUsageNow(Date.now())
+      loadTaskUsage()
+    }, detail?.state === 'running' ? 5000 : 15000)
+    return () => clearInterval(timer)
+  }, [taskId, detail?.state, loadTaskUsage])
   // 首次回放历史事件只建立刷新基线；只有后续 SSE sequence 增长才重新读取任务详情。
   // 这样不会把「事件历史首载」误当成新事件，避免生产预览中重复 GET /tasks/{id}。
   const eventReloadBaselineRef = useRef({ taskId: null, runVersion: null, sequence: null, suppressUntil: 0 })
@@ -1261,7 +1332,14 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
     try {
       const data = await listBsFindings(taskId)
       setFindings(data?.findings || [])
-      setPublication({ status: data?.publication_status, generationId: data?.publication_generation_id })
+      setPublication({
+        status: data?.publication_status,
+        state: data?.publication_state,
+        generationId: data?.publication_generation_id,
+        candidateGenerationId: data?.candidate_generation_id,
+        baselineVersionNo: data?.baseline_version_no,
+        reviewPolicy: data?.review_policy,
+      })
       setReferenceSnapshot(data?.reference_snapshot ?? null)
       setFindingsError('')
       // 缺件聚合与结论列表同源（同一任务、同一审查代），随结论一起刷新。
@@ -1403,8 +1481,9 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
   // 证据打开闭环（T8-U5A Task 3）：仅 precise 档 + 材料存在时才有入口（U2 的 actions.canOpenSource 已把关）；
   // 页码直接用后端原始 page，不做任何前端换算。page/unresolved/空定位/材料不存在一律走不到这里。
   const openSource = useCallback((materialId, page, findingId = null) => {
-    setPreviewRequest({ materialId, page: page || null, findingId })
-  }, [])
+    setPreviewRequest({ materialId, page: page || null, findingId, closed: false })
+    setActiveView('review')
+  }, [setActiveView])
 
   const autoChecksForScope = useCallback((taskScope = detail?.scope, rerunGroups = undefined) => {
     const scope = taskScope || {}
@@ -1470,6 +1549,11 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
     }
 
     autoRunRef.current = true
+    const generation = ++autoRunGenerationRef.current
+    const controller = new AbortController()
+    autoRunControllerRef.current = controller
+    autoRunStartedAtRef.current = Date.now()
+    const isCurrentRun = () => generation === autoRunGenerationRef.current
     setRunningKey('auto')
     setAutoCheck({ phase: 'running', index: 0, total: steps.length, error: '' })
     writeAutoRunStatus(taskId, reviewRunId, 'running')
@@ -1478,6 +1562,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
     let runId = reviewRunId
     try {
       let result = await loadFindings()
+      if (!isCurrentRun()) return { ok: false, cancelled: true }
       if (result === null) {
         throw new Error('核查结果读取失败，请点击“重试核查”')
       }
@@ -1494,7 +1579,8 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
           ? (result.reference_snapshot.runs || []).some((run) => run.group_id === groupId && run.state === 'completed')
           : requiredKinds.length && requiredKinds.every((kind) => knownKinds.has(kind))
         if (completed) continue
-        await runBsCheck(taskId, groupId)
+        await runBsCheck(taskId, groupId, { signal: controller.signal })
+        if (!isCurrentRun()) return { ok: false, cancelled: true }
         result = await loadFindings()
         if (result === null) {
           throw new Error('核查结果读取失败，请点击“重试核查”')
@@ -1522,7 +1608,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
           return { ok: false, pending: true }
         }
         if (aiResult.state === 'failed') {
-          const labels = { timeout: '模型响应超时', invalid_response: '模型返回格式无效', input_budget: '输入超过处理范围', model_call_error: '模型调用异常', rate_limit: '模型服务请求受限（HTTP 429）', authentication: '模型服务认证、权限或额度异常', service_error: '模型服务暂时不可用' }
+          const labels = { timeout: '模型响应超时', invalid_response: '模型返回格式无效', input_budget: '输入超过处理范围', model_call_error: '模型调用异常', rate_limit: '模型服务请求受限（HTTP 429）', authentication: '模型服务认证、权限或额度异常', service_error: '模型服务暂时不可用', incomplete_material_scope: '合同范围材料不完整，请补充合同范围页或人工核实' }
           const reasons = (aiResult.failureCategories || []).map((code) => labels[code]).filter(Boolean)
           throw new Error(`部分 AI 辅助核查未完成${reasons.length ? `（${reasons.join('、')}）` : ''}，请重试或人工核实`)
         }
@@ -1534,6 +1620,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
           throw new Error('核查结果读取失败，请点击“重试核查”')
         }
       }
+      if (!isCurrentRun()) return { ok: false, cancelled: true }
       writeAutoRunStatus(taskId, runId, 'completed')
       // Plus 任务收口：通知顶栏积分徽标与积分页刷新（与 AS/Chat 同一事件）。
       window.dispatchEvent(new CustomEvent('billing:mutated'))
@@ -1544,6 +1631,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
       await loadRuleset()
       return { ok: true, steps: steps.length }
     } catch (e) {
+      if (!isCurrentRun()) return { ok: false, cancelled: true }
       const message = e?.message || '核查执行失败，请重试'
       writeAutoRunStatus(taskId, runId, 'failed')
       // 自动核查失败收口：已产生的消耗也要让顶栏/积分页刷新。
@@ -1553,16 +1641,21 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
       if (reportError) onError(message)
       return { ok: false, error: message }
     } finally {
-      autoRunRef.current = false
-      setRunningKey(null)
+      if (isCurrentRun()) {
+        autoRunRef.current = false
+        autoRunControllerRef.current = null
+        autoRunStartedAtRef.current = null
+        setRunningKey(null)
+      }
     }
   }, [autoChecksForScope, detail?.options_snapshot, detail?.scope, loadFindings, loadRuleset, onError, reload, reviewRunId, taskId])
 
   const retryAutoChecks = useCallback(() => {
+    if (mutationBusy) return
     setFindingsError('')
     onError('')
     runAutoChecks({ retryAi: true })
-  }, [onError, runAutoChecks])
+  }, [mutationBusy, onError, runAutoChecks])
 
   // 启动与续跑共用同一判据（lib/autoCheckResume.planAutoChecks）：
   // 不再用「本地标记」和「服务端真相」两套互斥分支，避免材料改动换代后
@@ -1572,6 +1665,17 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
     // 已有编排在跑（含本次 rerunTask 主动发起的）时不再并发启动一轮：
     // 否则主动调用会因 autoRunRef 互斥而空转返回，把「已提交」误判成失败。
     if (runningKey !== null) return
+    const serverAiClosed = detail.progress?.ai_coverage?.state === 'unavailable'
+      || detail.progress?.phase === 'completed'
+      || detail.progress?.phase === 'failed'
+      || detail.progress?.ai_job?.state === 'failed'
+      || ['check.ai_background_completed', 'check.ai_background_failed'].includes(detail.progress?.activity_health?.last_event_type)
+    if (serverAiClosed) {
+      aiResumeSeenRef.current = reviewRunId
+      clearAutoRunStatus(taskId, reviewRunId)
+      if (autoCheck.phase !== 'idle') setAutoCheck({ phase: 'idle', index: 0, total: 0, error: '' })
+      return
+    }
     const plan = planAutoChecks({
       taskState: detail.state,
       steps: autoChecksForScope(),
@@ -1582,22 +1686,25 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
       groupOf: (key) => AUTO_CHECK_GROUP[key],
     })
     if (plan.action !== 'none') runAutoChecks()
-    else if (detail.state === 'running' && referenceSnapshot?.ai_auto_enabled === true &&
-             Array.isArray(referenceSnapshot.ai_auto_groups) && referenceSnapshot.ai_auto_groups.length > 0 &&
-             referenceSnapshot.ai_auto_groups.every((group) => (referenceSnapshot.runs || []).some(
-               (run) => run.group_id === group && run.state === 'completed')) &&
-             aiResumeSeenRef.current !== reviewRunId) {
+    else if (shouldResumeAiAfterReload({
+      taskState: detail.state,
+      progressPhase: detail.progress?.phase,
+      activityHealth: detail.progress?.activity_health,
+      aiCoverage: detail.progress?.ai_coverage,
+      referenceSnapshot,
+      seenRunId: aiResumeSeenRef.current,
+    })) {
       aiResumeSeenRef.current = reviewRunId
       runAutoChecks()
     }
-  }, [autoChecksForScope, autoRunOnMount, detail, findings.length, findingsLoading,
+  }, [autoChecksForScope, autoCheck.phase, autoRunOnMount, detail, findings.length, findingsLoading,
     referenceSnapshot, reviewRunId, runAutoChecks, taskId, runningKey])
 
   useEffect(() => {
-    if (autoCheck.phase !== 'waiting' || autoCheck.stage !== 'ai') return undefined
+    if (detail?.progress?.ai_coverage?.state === 'unavailable' || autoCheck.phase !== 'waiting' || autoCheck.stage !== 'ai') return undefined
     const timer = setTimeout(() => runAutoChecks(), 5000)
     return () => clearTimeout(timer)
-  }, [autoCheck.phase, autoCheck.stage, runAutoChecks])
+  }, [autoCheck.phase, autoCheck.stage, detail?.progress?.ai_coverage?.state, runAutoChecks])
 
   // 收口任务（P0-2）：全部分组均有结论才允许 → state=done，后端并发 task.completed 事件；
   // 缺组时后端 409 + detail，由 onError 呈现（文案已说明缺哪些分组）。
@@ -1619,7 +1726,18 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
   // 规则集提示区传入 { scope:'items', itemIds }，由后端按范围过滤落库并继承未变回执。
   // statusKey='ruleset' 时成功/失败落在规则集提示区，不再弹顶部横幅（避免同文案两处）。
   const rerunTask = async ({ scope = null, itemIds = null, statusKey = 'manual' } = {}) => {
-    if (!taskId || runningKey !== null || detail?.state === 'setup' || detail?.state === 'preparing') return false
+    const staleAutoRun = autoRunIsStale({ running: runningKey !== null, startedAt: autoRunStartedAtRef.current })
+      || (runningKey !== null && autoRunStartedAtRef.current == null && autoCheck.phase === 'running')
+    if (!taskId || (mutationBusy && !staleAutoRun) || (runningKey !== null && !staleAutoRun) || detail?.state === 'setup' || detail?.state === 'preparing') return false
+    if (staleAutoRun) {
+      // 让旧的 runAutoChecks 在 await 返回后丢弃结果；AbortController 同时解除前端长请求。
+      autoRunGenerationRef.current += 1
+      autoRunControllerRef.current?.abort()
+      autoRunControllerRef.current = null
+      autoRunRef.current = false
+      autoRunStartedAtRef.current = null
+      setRunningKey(null)
+    }
     if (statusKey === 'ruleset') {
       setRulesetRerunStatus('')
       setRulesetRerunDetail('')
@@ -1995,8 +2113,8 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
       onError(`还有 ${blockingUndecidable} 项无法核实待处理，处理后才能生成报告。`)
       return
     }
-    setActiveView('report')
-  }, [findings, onError, blockingUndecidable, selectFindingAndClosePreview, setActiveView, setReviewFilter])
+    completeTask()
+  }, [findings, onError, blockingUndecidable, selectFindingAndClosePreview, completeTask, setReviewFilter])
   // 状态徽标使用用户任务语言，不暴露后端生命周期术语。
   const stateBadge = checking
     ? { label: '核查进行中', cls: 'border-[#C8E6C9] bg-[#E8F5E9] text-[#2E7D32]' }
@@ -2052,17 +2170,35 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
                 ))}
               </div>
             )}
+            {started && (
+              <div data-testid="task-usage-summary" className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[#6B7280]">
+                <span>任务用时 {taskElapsedLabel(detail?.timing, usageNow)}</span>
+                <span>Token {taskUsage?.total_tokens == null ? '未知' : Number(taskUsage.total_tokens).toLocaleString('zh-CN')}</span>
+                <span>模型调用 {Number(taskUsage?.calls || 0).toLocaleString('zh-CN')} 次</span>
+                {taskUsage?.billing?.estimate && <span>预估 ¥{Number(taskUsage.billing.estimate.estimated_yuan || 0).toFixed(4)}</span>}
+                {taskUsage?.billing?.actual && <span>已计费 ¥{Number(taskUsage.billing.actual.actual_yuan || 0).toFixed(4)}</span>}
+                <span className="text-[#9A8062]">shadow 计费</span>
+                {taskUsageError && <span className="text-[#B45309]">用量暂不可用：{taskUsageError}</span>}
+              </div>
+            )}
           </div>
           {activeView !== 'review' && activeView !== 'report' && <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
             {started && detail?.state !== 'preparing' && (
               <button
                 type="button"
                 data-testid="edit-materials"
-                disabled={checking}
-                onClick={() => onOpenSupplementOverlay?.({
-                  materialLabel: missingPlan?.missing?.[0]?.label || '待补材料',
-                  stepLabel: '第 1 步 · 要素完整性核查',
-                })}
+                disabled={mutationBusy}
+                onClick={() => {
+                  // 任务头入口必须复用待办缺件的完整上下文（类别、主体和条目），
+                  // 不能退化为无主体的泛化上传；否则补件上传会按文件名新建主体，
+                  // 使局部重跑无法关联到原缺件。
+                  const item = headerSupplementItemOf(missingPlan)
+                  if (item) {
+                    supplementMaterial(item)
+                    return
+                  }
+                  onError?.('当前没有可定位的补件项，请在材料清单选择具体缺件后补件')
+                }}
                 className="min-h-9 rounded-[6px] border border-[#B48C55] bg-[#FFFAF2] px-3 py-1.5 text-xs text-[#8A5E1C] hover:bg-[#FFF8E9] disabled:opacity-50"
               >
                 上传 / 补件
@@ -2072,7 +2208,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
               <button
                 type="button"
                 data-testid="rerun-check"
-                disabled={runningKey !== null}
+                disabled={mutationBusy}
                 onClick={() => rerunTask()}
                 className="min-h-9 rounded-[4px] border border-[#E5E5E5] px-3 py-1.5 text-xs text-[#6B7280] hover:bg-[#FAFAF7] disabled:opacity-50"
               >
@@ -2081,7 +2217,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
             )}
               <button
                 type="button"
-                disabled={resetting}
+                disabled={resetting || mutationBusy}
                 onClick={onReset}
                 className="min-h-9 rounded-[4px] border border-[#E5E5E5] px-3 py-1.5 text-xs text-[#6B7280] hover:bg-[#FAFAF7] disabled:opacity-50"
               >
@@ -2101,12 +2237,38 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
               <span className={`rounded-full border px-2.5 py-1 text-xs ${pendingUndecidable > 0 ? 'border-[#EAD5AA] bg-[#FFF8E9] text-[#96651C]' : 'border-[#C8E4CF] bg-[#EFFAF2] text-[#2F7D49]'}`}>
                 {pendingReviewCount > 0 ? `待复核 ${pendingReviewCount} 项` : '核查完成'}
               </span>
+              <button
+                type="button"
+                data-testid="review-edit-materials"
+                disabled={mutationBusy}
+                onClick={() => {
+                  const item = headerSupplementItemOf(missingPlan)
+                  if (item) supplementMaterial(item)
+                  else onError?.('当前没有可定位的补件项，请在材料清单选择具体缺件后补件')
+                }}
+                className="min-h-9 rounded-[6px] border border-[#B48C55] bg-[#FFFAF2] px-3 py-1.5 text-xs text-[#8A5E1C] hover:bg-[#FFF8E9]"
+              >
+                上传 / 补件
+              </button>
+              <button
+                type="button"
+                data-testid="review-rerun-check"
+                disabled={mutationBusy}
+                onClick={() => rerunTask()}
+                className="min-h-9 rounded-[6px] border border-[#E5E5E5] px-3 py-1.5 text-xs text-[#6B7280] hover:bg-[#FAFAF7] disabled:opacity-50"
+              >
+                重新核查
+              </button>
             </div>
           )}
           {activeView === 'review' && (
             <div className="sr-only" aria-label="人工复核高级操作">
-              <button type="button" data-testid="edit-materials" onClick={() => onOpenSupplementOverlay?.({ materialLabel: missingPlan?.missing?.[0]?.label || '待补材料', stepLabel: '第 1 步 · 要素完整性核查' })}>上传 / 补件</button>
-              <button type="button" data-testid="rerun-check" disabled={runningKey !== null} onClick={() => rerunTask()}>重新核查</button>
+               <button type="button" data-testid="edit-materials" disabled={mutationBusy} onClick={() => {
+                const item = headerSupplementItemOf(missingPlan)
+                if (item) supplementMaterial(item)
+                else onError?.('当前没有可定位的补件项，请在材料清单选择具体缺件后补件')
+              }}>上传 / 补件</button>
+               <button type="button" data-testid="rerun-check" disabled={mutationBusy} onClick={() => rerunTask()}>重新核查</button>
               <button type="button" onClick={onReset}>重新开始</button>
               <button type="button" onClick={onOpenReviewNotes}>评审说明</button>
             </div>
@@ -2116,9 +2278,8 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
       {/* 工作区入口与原型 tabs 对齐；运行页是异步过程，不在四个工作区中占一个标签。 */}
       {(versions.length > 0 || rulesetChanged) && (
         <>
-          {/* v3 原型的 Overview 首屏不展示历史版本折叠条；历史版本仍保留在 DOM 和报告上下文中，
-              仅作为次级只读能力，不挤占总览主路径。 */}
-          <details data-testid="review-version-history" className="hidden mt-3 shrink-0 rounded-[6px] border border-[#E5E5E5] bg-white px-4 py-2.5">
+          {/* 历史版本是次级只读能力，默认折叠但必须可发现，供复核与权限验收使用。 */}
+          <details data-testid="review-version-history" className="mt-3 shrink-0 rounded-[6px] border border-[#E5E5E5] bg-white px-4 py-2.5">
           <summary className="cursor-pointer select-none text-[13px] text-[#1A1A1A]">
             历史审查版本 <span className="text-[11px] text-[#9CA3AF]">历史版本（只读，未提供冻结接口），不影响当前核查</span>
           </summary>
@@ -2153,7 +2314,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
               <button
                 type="button"
                 data-testid="ruleset-rerun"
-                disabled={runningKey !== null}
+                disabled={mutationBusy}
                 onClick={() => rerunTask(declaredChangedIds.length
                   ? { scope: 'items', itemIds: declaredChangedIds, statusKey: 'ruleset' }
                   : { statusKey: 'ruleset' })}
@@ -2301,12 +2462,12 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
             }}
             onComplete={!done ? completeTask : undefined}
             completing={completing}
-            completeDisabled={pendingProblems > 0 || checking}
+             completeDisabled={pendingProblems > 0 || mutationBusy}
             pendingProblems={pendingProblems}
             completed={done}
             started={started}
             error={reportStageErrors[reportStage]}
-            refreshDisabled={runningKey !== null}
+             refreshDisabled={mutationBusy}
             opinion={opinion}
             opinionMarkdown={opinionMarkdown}
             opinionLoading={opinionLoading}
@@ -2318,6 +2479,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
         </div>
       ) : activeView === 'run' ? (
         <CheckRunView
+          taskId={taskId}
           taskState={detail?.state}
           snapshot={referenceSnapshot}
           findings={findings}
@@ -2331,7 +2493,8 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
             zipPreparation={detail?.zip_preparation || null}
             supplementPlan={detail?.supplement_plan || null}
           publicationPending={publicationPending}
-          onRetry={retryAutoChecks}
+             mutationBusy={mutationBusy}
+             onRetry={retryAutoChecks}
           onRecheck={() => rerunTask()}
           onEnterReview={() => setActiveView('review')}
           onReviewReady={markReviewReady}
@@ -2363,7 +2526,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
                 error={findingsError || null}
                 onOpenReport={() => setActiveView('report')}
                 onRerun={started && detail?.state !== 'preparing' ? () => rerunTask() : undefined}
-                rerunDisabled={runningKey !== null}
+                 rerunDisabled={mutationBusy}
                 onSelectStep={(stepId) => {
                   setStepFilter(stepId)
                   setReviewOverviewMode(false)
@@ -2373,7 +2536,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
                   selectFindingAndClosePreview(findingId)
                   setActiveView('review')
                 }}
-                onSupplement={supplementMaterial}
+                 onSupplement={mutationBusy ? undefined : supplementMaterial}
               />
             </>
           ))}
@@ -2390,7 +2553,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
             {autoCheck.phase === 'failed' && (
               <div data-testid="auto-check-error" className="inline-flex max-w-full flex-wrap items-center gap-2 rounded-[6px] border border-[#F3C9C9] bg-[#FDF3F3] px-3 py-2 text-[13px] text-[#C62828]">
                 <span>自动核查未完成：{autoCheck.error}</span>
-                <button type="button" onClick={retryAutoChecks} className="rounded border border-[#C62828] px-2 py-1 text-[12px] hover:bg-white">重试核查</button>
+                 <button type="button" disabled={mutationBusy} onClick={retryAutoChecks} className="rounded border border-[#C62828] px-2 py-1 text-[12px] hover:bg-white disabled:cursor-not-allowed disabled:opacity-50">重试核查</button>
               </div>
             )}
             {autoCheck.phase === 'done' && !done && (
@@ -2404,8 +2567,9 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
                 <button
                   type="button"
                   data-testid="auto-check-resume-button"
-                  onClick={retryAutoChecks}
-                  className="rounded border border-[#92400E] px-2 py-1 text-[12px] hover:bg-white"
+                   disabled={mutationBusy}
+                   onClick={retryAutoChecks}
+                   className="rounded border border-[#92400E] px-2 py-1 text-[12px] hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   继续核查
                 </button>
@@ -2426,6 +2590,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
             loading={findingsLoading || autoCheck.phase === 'running'}
             error={findingsError || (autoCheck.phase === 'failed' ? autoCheck.error : null)}
             readingCoverage={detail?.reading_coverage || null}
+            publication={publication}
             missCollapsed={missCollapsed}
             onToggleMiss={toggleMiss}
             onSelect={selectFindingAndClosePreview}

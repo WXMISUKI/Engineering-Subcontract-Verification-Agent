@@ -97,6 +97,17 @@ export default function App() {
   const deleteButtonRef = useRef(null)
 
   useEffect(() => { api('/api/session').then(setUser).catch(() => setUser(null)).finally(() => setChecking(false)) }, [])
+  useEffect(() => {
+    const handleAuthExpired = () => {
+      initialization.current = null
+      setUser(null)
+      setSelected(null)
+      setConversations([])
+      setError('')
+    }
+    window.addEventListener('bs:auth-expired', handleAuthExpired)
+    return () => window.removeEventListener('bs:auth-expired', handleAuthExpired)
+  }, [])
   const refresh = useCallback(async () => {
     const rows = await api('/api/conversations')
     setConversations(rows)

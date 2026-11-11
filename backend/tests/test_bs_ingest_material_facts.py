@@ -314,3 +314,99 @@ def test_relation_failure_degrades_without_losing_parse(tmp_path, monkeypatch):
         assert _facts(db, material_id)
         assert "relations_failed" in [i.get("kind") for i in material.degradations_json or []]
         assert "material.parsed" in _event_types(db)
+
+def _seed_multi_material_task(tmp_path):
+    engine = _engine(tmp_path)
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        db.add(BsTask(id=1, conversation_id=1, title="补件任务", state="running",
+                      created_by=1, created_by_type="web"))
+        subject = BsSubject(task_id=1, stable_code="S-1",
+                            name="中铁二十四局集团上海铁建工程有限公司")
+        db.add(subject)
+        db.commit()
+        return engine, subject.id
+
+
+def _add_material(engine, tmp_path, subject_id, file_name, generation=None):
+    file_path = tmp_path / file_name
+    file_path.write_bytes(b"%PDF-1.4 synthetic certificate")
+    with Session(engine) as db:
+        material = BsMaterial(task_id=1, file_name=file_name, role="packet",
+                              path=os.path.relpath(file_path, APP_ROOT),
+                              subject_id=subject_id, parse_state="parsing")
+        db.add(material)
+        db.commit()
+        if generation:
+            service.add_event(db, 1, "material.supplement_linked",
+                              payload={"generation_id": generation,
+                                       "material_id": material.id},
+                              commit=False)
+            db.commit()
+        return material.id
+
+
+def test_supplement_ingest_replaces_original_certificate_authority(tmp_path, monkeypatch):
+    engine, subject_id = _seed_multi_material_task(tmp_path)
+    original_id = _add_material(engine, tmp_path, subject_id, "原报审材料.pdf")
+    supplement_id = _add_material(engine, tmp_path, subject_id, "补件证书.pdf",
+                                  generation="g-2")
+
+    roster_page = {
+        "page": 1,
+        "text": ("管理人员名单\n| 序号 | 姓名 | 职务 | 持证以及证号 | 电话 | 备注 |\n"
+                 "| --- | --- | --- | --- | --- | --- |\n"
+                 "| 1 | 陶瑜 | 项目经理 | 交安 B 证 | 13397917308 |  |\n"
+                 "|  |  | 沪交安 B（25）G00206 |  |  |  |\n"),
+        "ocr_meta": {"quality": "ocr_ok"},
+    }
+    old_cert_page = {
+        "page": 2,
+        "text": ("姓名：陶瑜\n企业名称：中铁二十四局集团上海铁建工程有限公司\n"
+                 "证书编号：沪交安B25G00683"),
+        "ocr_meta": {"quality": "ocr_ok"},
+    }
+    new_cert_page = {
+        "page": 1,
+        "text": ("姓名：陶瑜\n企业名称：中铁二十四局集团上海铁建工程有限公司\n"
+                 "证书编号：沪交安B25G00206"),
+        "ocr_meta": {"quality": "ocr_ok"},
+    }
+
+    def fake_parse(abs_path, progress=None):
+        if "原报审" in abs_path:
+            return ([roster_page, old_cert_page],
+                    [{"kind": "total_pages", "total_pages": 2}])
+        return ([new_cert_page], [{"kind": "total_pages", "total_pages": 1}])
+
+    monkeypatch.setattr(parsing, "parse_material_pages", fake_parse)
+    service._finish_ingest(1, original_id, engine)
+    service._finish_ingest(1, supplement_id, engine)
+
+    with Session(engine) as db:
+        relations = db.query(BsEvidenceRelation).filter_by(task_id=1).all()
+        assert len(relations) == 2
+        latest = relations[-1]
+        assert latest.status == "matched"
+        assert latest.generation_id == "g-2"
+        assert latest.right_json["material_id"] == supplement_id
+        roles = {item["material_id"]: item["role"]
+                 for item in latest.right_json["certificate_evidence"]}
+        assert roles == {original_id: "superseded", supplement_id: "authoritative"}
+
+def test_conflicting_supplement_generations_make_relation_ambiguous(tmp_path, monkeypatch):
+    engine, material_id = _seed(
+        tmp_path, subject_name="中铁二十四局集团上海铁建工程有限公司")
+    _seed_roster(engine)
+    with Session(engine) as db:
+        service.add_event(db, 1, "material.supplement_linked",
+                          payload={"generation_id": "g-3", "material_id": material_id},
+                          commit=False)
+        db.commit()
+    _pages(monkeypatch)
+    service._finish_ingest(1, material_id, engine)
+    with Session(engine) as db:
+        relation = db.query(BsEvidenceRelation).filter_by(task_id=1).one()
+        assert relation.status == "unresolved"
+        assert "certificate_ambiguous" in [d.get("reason_code")
+                                           for d in relation.dimensions_json or []]

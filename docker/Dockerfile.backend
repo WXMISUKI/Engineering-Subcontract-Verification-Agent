@@ -16,12 +16,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends libgl1 libglib2
     && rm -rf /var/lib/apt/lists/*
 COPY backend/requirements.txt /app/requirements.txt
 RUN --mount=type=bind,from=pdf-build,source=/output,target=/pdf-wheel \
-    test "$(grep -cx 'pymupdf==1.28.0' /app/requirements.txt)" = 1 && \
-    sed '/^pymupdf==1\.28\.0$/d' /app/requirements.txt > /tmp/requirements-no-pdf.txt && \
+    tr -d '\r' < /app/requirements.txt > /tmp/requirements-normalized.txt && \
+    test "$(grep -cx 'pymupdf==1.28.0' /tmp/requirements-normalized.txt)" = 1 && \
+    sed '/^pymupdf==1\.28\.0$/d' /tmp/requirements-normalized.txt > /tmp/requirements-no-pdf.txt && \
     pip install --no-cache-dir -r /tmp/requirements-no-pdf.txt && \
     pip install --no-cache-dir --no-deps /pdf-wheel/pymupdf-1.28.0-*.whl && \
-    rm /tmp/requirements-no-pdf.txt
+    rm /tmp/requirements-normalized.txt /tmp/requirements-no-pdf.txt
 COPY backend/app /app/app
+COPY backend/config/models.seed.json /app/app/models.seed.json
 COPY knowledge/seed-manifest.json /app/knowledge/seed-manifest.json
 RUN useradd --create-home --uid 10001 bsapp && mkdir -p /data /app/app/uploads \
     && chown bsapp:bsapp /data /app/app/uploads

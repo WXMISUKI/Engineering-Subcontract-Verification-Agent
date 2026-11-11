@@ -50,7 +50,13 @@ function _readableDetail(detail) {
  */
 function _httpError(body, tag, status) {
   const detail = body && typeof body === 'object' ? body.detail : undefined
-  const err = new Error(_readableDetail(detail) || `${tag} ${status}`)
+  if (status === 401 && typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('bs:auth-expired'))
+  }
+  const fallback = status === 502
+    ? `${tag}暂时不可用（网关 502），后台服务可能正在重启或上游模型暂时不可用，请稍后重试`
+    : `${tag} ${status}`
+  const err = new Error(_readableDetail(detail) || fallback)
   if (detail !== undefined) err.detail = detail
   err.status = status
   return err
@@ -133,6 +139,12 @@ export async function createBsTask({ conversationId, title, scopeA1, scopeA3, pr
 export async function getBsTask(taskId, { signal } = {}) {
   const r = await fetch(`${BASE}/tasks/${taskId}`, { credentials: 'include', signal })
   return _json(r, 'bs task')
+}
+
+// 任务级计时与 Token 用量只读视图；shadow 阶段只展示真实用量，不扣余额。
+export async function getBsTaskUsage(taskId, { signal } = {}) {
+  const r = await fetch(`${BASE}/tasks/${taskId}/usage`, { credentials: 'include', signal })
+  return _json(r, 'bs task usage')
 }
 
 // D9/T2-A3：材料替代历史只读查询。版本角色、修订号和链路顺序均由后端返回，
@@ -370,7 +382,7 @@ export async function startBsReview(taskId) {
   return _json(r, 'bs start')
 }
 
-export async function runBsCheck(taskId, kind) {
+export async function runBsCheck(taskId, kind, { signal } = {}) {
   const path = {
     completeness: 'check',
     a1: 'check/a1',
@@ -381,7 +393,7 @@ export async function runBsCheck(taskId, kind) {
     semantic: 'check/semantic',
   }[kind]
   if (!path) throw new Error(`未知核查组：${kind || '未提供'}`)
-  const r = await fetch(`${BASE}/tasks/${taskId}/${path}`, { method: 'POST', credentials: 'include' })
+  const r = await fetch(`${BASE}/tasks/${taskId}/${path}`, { method: 'POST', credentials: 'include', signal })
   return _json(r, `bs check ${kind}`)
 }
 
@@ -529,6 +541,7 @@ export const BS_EVENT_TYPES = [
   'knowledge.review_started', 'knowledge.reference_started', 'knowledge.reference_completed',
   'knowledge.reference_discarded', 'knowledge.reference_failed', 'knowledge.reference_invalidated',
   'check.semantic_started', 'check.semantic_progress', 'check.ai_advisory_completed', 'check.ai_advisory_started',
+  'check.ai_background_started', 'check.ai_background_progress', 'check.ai_background_completed', 'check.ai_background_failed',
   'check.ai_advisory_failed', 'check.ai_batch_checkpoint', 'check.ai_batch_progress',
   'check.negative_candidates_started', 'check.negative_candidates_finished',
   'check.negative_candidates_failed', 'check.negative_candidate_checkpoint',
