@@ -67,7 +67,7 @@ it('renders business report content without showing ignored audit items', () => 
   render(<ReportView report={data} />)
   expect(screen.getByTestId('business-document').textContent).toContain('示例总包')
   expect(screen.getByTestId('business-document').textContent).toContain('营业执照')
-  expect(screen.getByTestId('business-document').textContent).toContain('待核实：营业执照')
+  expect(screen.getByTestId('business-document').textContent).toContain('营业执照需要核实')
   expect(screen.queryByText('不展示的忽略项')).toBeNull()
   expect(screen.queryByTestId('report-ignored-items')).toBeNull()
 })
@@ -83,7 +83,7 @@ it('renders projected themes and human notes instead of raw issue text', () => {
   }
   render(<ReportView report={data} />)
   const text = screen.getByTestId('business-document').textContent
-  expect(text).toContain('待核实：人员资料')
+  expect(text).toContain('人员资料需要核实')
   expect(text).toContain('已采纳；已联系补充材料')
   expect(text).not.toContain('不应展开的原始长文')
 })
@@ -95,15 +95,17 @@ it('renders projected review key points and grouped limitations', () => {
     sections: [{ title: '资质审查', summary: '不应展示的阶段结论', fields: [{ label: '旧字段', summary: '旧内容' }],
       key_points: [{ label: '事项定性', summary: '事项性质待核实', status: '待核实' }, { label: '负面清单', summary: '结果待核实', status: '待核实' }] }],
     issues: [], pending_summaries: [], human_notes: [],
-    conclusion: { text: '不应展示的总体结论', limitations: ['总包合同未提供'],
+    conclusion: { text: '不应展示的总体结论', limitations: ['总包合同未提供', '未核查金额占比'],
       limitation_groups: [{ label: '依据与合同范围', items: ['总包合同未提供', '未核查金额占比'] }] },
   }
   render(<ReportView report={data} />)
   const text = screen.getByTestId('business-document').textContent
   expect(text).toContain('事项定性')
   expect(text).toContain('负面清单')
-  expect(text).toContain('依据与合同范围')
+  expect(text).not.toContain('依据与合同范围')
   expect(text).toContain('未核查金额占比')
+  expect(text).not.toContain('五、核查说明')
+  expect(screen.queryByRole('columnheader', { name: '状态' })).toBeNull()
   expect(text).not.toContain('旧字段')
   expect(text).not.toContain('不应展示的阶段结论')
   expect(text).not.toContain('不应展示的总体结论')
@@ -124,8 +126,8 @@ it('uses the same business themes for legacy snapshots as exports', () => {
   }
   render(<ReportView report={data} />)
   const text = screen.getByTestId('business-document').textContent
-  expect(text).toContain('待核实：分包内容。')
-  expect(text).toContain('明确缺少材料：营业执照。')
+  expect(text).toContain('分包内容需要核实。')
+  expect(text).toContain('营业执照材料缺失。')
   expect(text).toContain('已采纳；补充说明')
   expect(text).not.toContain('规则一')
   expect(text).not.toContain('规则二')

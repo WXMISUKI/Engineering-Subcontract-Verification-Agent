@@ -171,7 +171,7 @@ def test_historical_pdf_export_preserves_frozen_summary_and_access(tmp_path):
     assert response.content.startswith(b"%PDF-")
     pdf = fitz.open(stream=response.content, filetype="pdf")
     text = "".join(page.get_text() for page in pdf)
-    assert "历史工程" in text and "待核实：人员资料" in text and "历史备注" in text
+    assert "历史工程" in text and "人员资料需要核实" in text and "历史备注" in text
     assert "不显示的忽略项" not in text
     assert all(pdf.extract_font(font[0])[3] for page in pdf for font in page.get_fonts())
     word_response = client.get(f"/api/plus/blockchain-supervision/tasks/{task_id}/report/export",
@@ -180,7 +180,7 @@ def test_historical_pdf_export_preserves_frozen_summary_and_access(tmp_path):
     word = Document(BytesIO(word_response.content))
     word_text = "\n".join([p.text for p in word.paragraphs] +
                           [cell.text for table in word.tables for row in table.rows for cell in row.cells])
-    assert "历史工程" in word_text and "待核实：人员资料" in word_text and "历史备注" in word_text
+    assert "历史工程" in word_text and "人员资料需要核实" in word_text and "历史备注" in word_text
     assert "不显示的忽略项" not in word_text
     with Session(engine) as db:
         saved = db.query(BsReviewVersion).filter_by(task_id=task_id, version_no=1).one()

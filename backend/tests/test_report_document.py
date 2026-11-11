@@ -82,8 +82,9 @@ def test_word_pdf_present_key_points_and_grouped_limitations():
     pdf_text = "\n".join(page.get_text() for page in pdf)
     for text in (word_text, pdf_text):
         assert "事项定性" in text and "负面清单" in text and "主体资格" in text
-        assert "依据与合同范围" in text and "证照与外部核验" in text
-        assert "总包合同未提供" in text and "金额占比" in text and "外部信用" in text
+        normalized = text.replace("\n", "")
+        assert "五、核查说明" not in text
+        assert "总包合同未提供" in normalized and "金额占比" in normalized and "外部信用" in normalized
 
 
 def test_key_point_report_omits_generic_conclusions_but_keeps_specific_limitations():
@@ -99,11 +100,37 @@ def test_key_point_report_omits_generic_conclusions_but_keeps_specific_limitatio
     word_text = "\n".join([p.text for p in word.paragraphs] + [c.text for t in word.tables for r in t.rows for c in r.cells])
     pdf = fitz.open(stream=export.pdf_bytes(report), filetype="pdf")
     for text in (word_text, "\n".join(page.get_text() for page in pdf)):
-        assert "负面清单" in text and "总包合同未提供" in text
+        assert "负面清单" in text and "总包合同未提供" in text.replace("\n", "")
         assert "本次核查尚未覆盖全部适用范围" not in text
         assert "本类核查尚未完成，当前发现" not in text
         assert "总体核查结论及说明" not in text
     assert report["business_document"]["conclusion"]["status"] == "incomplete"
+
+
+def test_report_has_two_columns_and_places_relevant_limitations_in_key_points():
+    import fitz
+    report = _report([_item("negative_list", "undecidable", "负面清单", "合同范围需核实")], selected=["a1"])
+    report["meta"].update({"title": "示例", "scope": {}})
+    report["scope_statements"] = ["总包合同未提供。", "报审材料第20页识别质量存疑。"]
+    report["business_document"] = build_report_document(report)
+    word = Document(BytesIO(export.word_bytes(report)))
+    text = "\n".join([p.text for p in word.paragraphs] + [c.text for t in word.tables for r in t.rows for c in r.cells])
+    review_tables = [t for t in word.tables if t.rows[0].cells[0].text == "审查要点"]
+    assert len(review_tables) == 5 and all(len(t.columns) == 2 for t in review_tables)
+    assert all(t.rows[0].cells[0].paragraphs[0].paragraph_format.keep_with_next for t in review_tables)
+    pdf = fitz.open(stream=export.pdf_bytes(report), filetype="pdf")
+    for rendered in (text, "\n".join(page.get_text() for page in pdf)):
+        assert "五、核查说明" not in rendered and "状态未标注" not in rendered
+        normalized = rendered.replace("\n", "")
+        assert "总包合同未提供" in normalized and "第20页识别质量存疑" in normalized
+
+
+def test_legacy_snapshot_without_sections_still_shows_specific_limitation():
+    from app.plus.blockchain_supervision.report_document import report_display_sections
+    document = {"sections": [], "conclusion": {"limitations": ["总包合同未提供。"]}}
+    rendered = report_display_sections(document)
+    assert "总包合同未提供" in str(rendered)
+    assert document["sections"] == []
 
 
 def test_ignored_items_are_excluded_but_unreviewed_and_undecidable_remain():

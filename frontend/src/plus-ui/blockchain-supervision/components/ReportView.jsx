@@ -67,13 +67,43 @@ function legacyReportSummaries(issues) {
   return { pending: [...groups.values()].map(({ category, status, labels }) => ({ category, status, text: `${status}：${labels.join('、')}。` })), notes }
 }
 
+function reportDisplaySections(document) {
+  const sections = (document.sections || []).map((section) => ({ ...section,
+    displayPoints: (section.key_points ?? section.fields ?? []).map((point) => ({ ...point })) }))
+  const limitations = document.conclusion?.limitations || []
+  if (limitations.length && !sections.some((section) => section.displayPoints.length)) {
+    sections.push({ title: '材料与核查范围', displayPoints: [{ label: '材料与核查范围', summary: '' }] })
+  }
+  const points = new Map(sections.flatMap((section) => section.displayPoints.map((point) => [point.label, point])))
+  for (const value of limitations) {
+    const text = String(value)
+    let target = '报审资料'
+    if (['ocr', '未读', '读取', '识别质量', '文字质量', '可读正文', '存疑页'].some((word) => text.toLowerCase().includes(word))) target = '报审资料'
+    else if (text.includes('AI') || text.includes('模型')) target = '报审资料'
+    else if (text.includes('信用') || text.includes('事故')) target = '内部信用与事故记录'
+    else if (['证照', '证件', '真实性', '官方'].some((word) => text.includes(word))) target = '证照真实性'
+    else if (text.includes('金额') || text.includes('工程量')) target = '合同及清单'
+    else if (['合同', '依据', '分包范围'].some((word) => text.includes(word))) target = '负面清单'
+    const point = points.get(target) || sections.flatMap((section) => section.displayPoints)[0]
+    if (point && !String(point.summary || '').includes(text)) point.summary = [point.summary, text].filter(Boolean).join(' ')
+  }
+  return sections
+}
+
+function pendingSummaryText(row) {
+  const text = String(row.text || '')
+  for (const [prefix, suffix] of [['待核实：', '需要核实。'], ['需关注：', '需要关注。'], ['明确缺少材料：', '材料缺失。']]) {
+    if (text.startsWith(prefix)) return text.slice(prefix.length).replace(/。+$/, '') + suffix
+  }
+  return text
+}
+
 function BusinessDocument({ document, basicInformation, onOpenSource, onShowBasicInformation }) {
   if (!document) return null
   const legacy = legacyReportSummaries(document.issues)
   const pending = document.pending_summaries ?? legacy.pending
   const humanNotes = document.human_notes ?? legacy.notes
-  const conclusion = document.conclusion || {}
-  const limitationGroups = conclusion.limitation_groups ?? ((conclusion.limitations || []).length ? [{ label: '核查范围及限制', items: conclusion.limitations }] : [])
+  const displaySections = reportDisplaySections(document)
   const sourceKeys = { '工程名称': 'project_name', '标段': 'contract_section', '施工总承包单位': 'general_contractor', '建设单位（业主）': 'employer', '分包单位': 'subcontractor', '拟分包范围': 'subcontract_scope', '拟分包金额': 'subcontract_amount' }
   const needsAttention = Object.entries(document.basic_information || {}).some(([label, value]) =>
     sourceKeys[label] && (value == null || value === '' || ['conflict', 'unresolved'].includes(document.basic_information_status?.[label])))
@@ -88,15 +118,14 @@ function BusinessDocument({ document, basicInformation, onOpenSource, onShowBasi
       })}</dl>
     </section>
     <section><h2 className="text-base font-semibold text-[#1A1A1A]">二、核查摘要</h2>
-      {(document.sections || []).map((section, index) => <section key={section.title} className="mt-4"><h3 className="font-semibold">{index + 1}. {section.title}</h3><div className="overflow-x-auto"><table className="mt-2 w-full border-collapse text-left"><thead><tr><th className="border p-2">审查要点</th><th className="border p-2">核查摘要</th><th className="border p-2">状态</th></tr></thead><tbody>{(section.key_points ?? section.fields ?? []).map((field) => <tr key={field.label}><td className="border p-2">{field.label}</td><td className="border p-2">{field.summary}</td><td className="border p-2">{field.status || '状态未标注'}</td></tr>)}</tbody></table></div></section>)}
+      {displaySections.map((section, index) => <section key={section.title} className="mt-4"><h3 className="font-semibold">{index + 1}. {section.title}</h3><div className="overflow-x-auto"><table className="mt-2 w-full border-collapse text-left"><thead><tr><th className="border p-2">审查要点</th><th className="border p-2">核查摘要</th></tr></thead><tbody>{section.displayPoints.map((field) => <tr key={field.label}><td className="border p-2">{field.label}</td><td className="border p-2">{field.summary}</td></tr>)}</tbody></table></div></section>)}
     </section>
     <section><h2 className="text-base font-semibold text-[#1A1A1A]">三、待处理事项摘要</h2>
-      {pending.length ? pending.map((row, index) => <p key={`${row.category}-${row.status}-${index}`}><b>{row.category}：</b>{row.text}</p>) : <p>当前无未经人工处理的事项。</p>}
+      {pending.length ? pending.map((row, index) => <p key={`${row.category}-${row.status}-${index}`}><b>{row.category}：</b>{pendingSummaryText(row)}</p>) : <p>当前无未经人工处理的事项。</p>}
     </section>
     <section><h2 className="text-base font-semibold text-[#1A1A1A]">四、人工处理意见</h2>
       {humanNotes.length ? humanNotes.map((row, index) => <p key={`${row.category}-${row.label}-${index}`}><b>{row.category}｜{row.label}：</b>已采纳；{row.note}</p>) : <p>当前未形成需单独说明的人工处理意见。</p>}
     </section>
-    {limitationGroups.length > 0 && <section><h2 className="text-base font-semibold text-[#1A1A1A]">五、核查说明</h2>{limitationGroups.map((group, index) => <div key={`${group.label}-${index}`}><p className="font-medium">{group.label}</p><ul className="list-inside list-disc">{(group.items || []).map((line, itemIndex) => <li key={itemIndex}>{line}</li>)}</ul></div>)}</section>}
   </article>
 }
 

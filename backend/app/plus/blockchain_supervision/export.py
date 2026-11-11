@@ -34,7 +34,7 @@ from .extract import FIELD_LABELS
 from .models import STATUS_LABELS, BsMaterial, BsReviewVersion, BsTask, BsTaskEvent
 from .reference_output import reference_lines
 from .reporting import page_ranges
-from .report_document import summarize_report_issues
+from .report_document import summarize_report_issues, report_display_sections
 from .service import add_event, event_dto, get_review_version, list_review_versions
 from . import reference_visibility
 from .supplement_generation import generation_metadata
@@ -391,16 +391,16 @@ def _business_summary_rows(document: dict) -> tuple[list[dict], list[dict]]:
     return pending, notes
 
 
-def _business_limitation_groups(conclusion: dict) -> list[dict]:
-    groups = conclusion.get("limitation_groups")
-    if groups is not None:
-        return groups
-    limitations = conclusion.get("limitations") or []
-    return [{"label": "核查范围及限制", "items": limitations}] if limitations else []
-
-
 def _business_key_points(section: dict) -> list[dict]:
-    return section.get("key_points", section.get("fields")) or []
+    return section.get("display_points", section.get("key_points", section.get("fields"))) or []
+
+
+def _pending_summary_text(row: dict) -> str:
+    text = str(row.get("text") or "")
+    for prefix, suffix in (("待核实：", "需要核实。"), ("需关注：", "需要关注。"), ("明确缺少材料：", "材料缺失。")):
+        if text.startswith(prefix):
+            return text[len(prefix):].rstrip("。") + suffix
+    return text
 
 
 def _business_document_lines(report: dict) -> list[tuple[str, str, bool]]:
@@ -412,14 +412,14 @@ def _business_document_lines(report: dict) -> list[tuple[str, str, bool]]:
     for label, value in _business_information_rows(document):
         lines.append(("field", "%s：%s" % (label, value), False))
     lines.append(("heading", "二、核查摘要", True))
-    for index, section in enumerate(document.get("sections") or [], 1):
+    for index, section in enumerate(report_display_sections(document), 1):
         lines.append(("subheading", "%s. %s" % (index, section.get("title") or "核查"), True))
         for field in _business_key_points(section):
-            lines.append(("text", "%s（%s）：%s" % (field.get("label"), field.get("status") or "状态未标注", field.get("summary")), False))
+            lines.append(("text", "%s：%s" % (field.get("label"), field.get("summary")), False))
     pending, notes = _business_summary_rows(document)
     lines.append(("heading", "三、待处理事项摘要", True))
     for row in pending:
-        lines.append(("text", "%s：%s" % (row["category"], row["text"]), False))
+        lines.append(("text", "%s：%s" % (row["category"], _pending_summary_text(row)), False))
     if not pending:
         lines.append(("text", "当前无未经人工处理的事项。", False))
     lines.append(("heading", "四、人工处理意见", True))
@@ -427,12 +427,6 @@ def _business_document_lines(report: dict) -> list[tuple[str, str, bool]]:
         lines.append(("text", "%s｜%s：已采纳；%s" % (row["category"], row["label"], row["note"]), False))
     if not notes:
         lines.append(("text", "当前未形成需单独说明的人工处理意见。", False))
-    conclusion = document.get("conclusion") or {}
-    groups = _business_limitation_groups(conclusion)
-    if groups:
-        lines.append(("heading", "五、核查说明", True))
-    for group in groups:
-        lines.append(("text", "%s：%s" % (group["label"], "；".join(group["items"])), False))
     return lines
 
 
@@ -455,6 +449,7 @@ def _add_business_document_word(doc, report: dict) -> bool:
         result.rows[0]._tr.get_or_add_trPr().append(repeat_header)
         for cell, title in zip(result.rows[0].cells, headers):
             cell.text = title
+            cell.paragraphs[0].paragraph_format.keep_with_next = True
         for row in rows:
             cells = result.add_row().cells
             for cell, value in zip(cells, row):
@@ -473,16 +468,16 @@ def _add_business_document_word(doc, report: dict) -> bool:
     _add_para(doc, "一、项目与分包基本信息", size=13, bold=True, keep_with_next=True)
     table(("字段", "内容"), _business_information_rows(document), (0.30, 0.70))
     _add_para(doc, "二、核查摘要", size=13, bold=True, keep_with_next=True)
-    for index, section in enumerate(document.get("sections") or [], 1):
+    for index, section in enumerate(report_display_sections(document), 1):
         _add_para(doc, "%s. %s" % (index, section.get("title") or "核查"), size=11, bold=True, keep_with_next=True)
-        rows = [(row.get("label"), row.get("summary"), row.get("status") or "状态未标注")
+        rows = [(row.get("label"), row.get("summary"))
                 for row in _business_key_points(section)]
         if rows:
-            table(("审查要点", "核查摘要", "状态"), rows, (0.22, 0.64, 0.14))
+            table(("审查要点", "核查摘要"), rows, (0.25, 0.75))
     pending, notes = _business_summary_rows(document)
     _add_para(doc, "三、待处理事项摘要", size=13, bold=True, keep_with_next=True)
     if pending:
-        table(("核查类别", "待处理摘要"), [(row["category"], row["text"]) for row in pending], (0.28, 0.72))
+        table(("核查类别", "待处理摘要"), [(row["category"], _pending_summary_text(row)) for row in pending], (0.28, 0.72))
     else:
         _add_para(doc, "当前无未经人工处理的事项。", size=9.5)
     _add_para(doc, "四、人工处理意见", size=13, bold=True, keep_with_next=True)
@@ -491,12 +486,6 @@ def _add_business_document_word(doc, report: dict) -> bool:
                                       "已采纳；%s" % row["note"]) for row in notes], (0.28, 0.72))
     else:
         _add_para(doc, "当前未形成需单独说明的人工处理意见。", size=9.5)
-    conclusion = document.get("conclusion") or {}
-    groups = _business_limitation_groups(conclusion)
-    if groups:
-        _add_para(doc, "五、核查说明", size=13, bold=True, keep_with_next=True)
-    for group in groups:
-        _add_para(doc, "%s：%s" % (group["label"], "；".join(group["items"])), size=9.5)
     return True
 
 
@@ -754,24 +743,19 @@ def _draw_business_pdf(doc, page, y, document):
     heading("一、项目与分包基本信息")
     table(("字段", "内容"), _business_information_rows(document))
     heading("二、核查摘要")
-    for index, section in enumerate(document.get("sections") or [], 1):
+    for index, section in enumerate(report_display_sections(document), 1):
         heading("%s. %s" % (index, section.get("title") or "核查"))
-        rows = [("%s\n%s" % (row.get("label"), row.get("status") or "状态未标注"), row.get("summary"))
+        rows = [(row.get("label"), row.get("summary"))
                 for row in _business_key_points(section)]
         if rows:
-            table(("审查要点及状态", "核查摘要"), rows)
+            table(("审查要点", "核查摘要"), rows)
     pending, notes = _business_summary_rows(document)
     heading("三、待处理事项摘要")
-    rows = [(row["category"], row["text"]) for row in pending]
+    rows = [(row["category"], _pending_summary_text(row)) for row in pending]
     table(("核查类别", "待处理摘要"), rows or [("核查事项", "当前无未经人工处理的事项。")])
     heading("四、人工处理意见")
     rows = [("%s｜%s" % (row["category"], row["label"]), "已采纳；%s" % row["note"]) for row in notes]
     table(("核查事项", "人工意见"), rows or [("人工处理", "当前未形成需单独说明的人工处理意见。")])
-    conclusion = document.get("conclusion") or {}
-    groups = _business_limitation_groups(conclusion)
-    if groups:
-        heading("五、核查说明")
-        table(("项目", "内容"), [(group["label"], "\n".join(group["items"])) for group in groups])
     return page, y
 
 

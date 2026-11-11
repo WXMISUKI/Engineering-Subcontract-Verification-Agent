@@ -76,7 +76,43 @@ def _key_point_status(items: list[dict], complete: bool, reading_incomplete: boo
 def _key_point_summary(value: str) -> str:
     if value == "核查尚未完成或不在本次范围。":
         return "暂无可展示的核查结果，需核实。"
-    return value.replace("；本类核查尚未完成", "")
+    return (value.replace("；本类核查尚未完成", "")
+            .replace("需关注或核实：", "需核对：")
+            .replace("，详见待处理事项摘要及人工意见", ""))
+
+
+def report_display_sections(document: dict) -> list[dict]:
+    """Place relevant limitations next to review points without changing frozen data."""
+    sections = [{**section, "display_points": [dict(row) for row in
+                 (section.get("key_points", section.get("fields")) or [])]}
+                for section in document.get("sections") or []]
+    limitations = (document.get("conclusion") or {}).get("limitations") or []
+    if limitations and not any(section["display_points"] for section in sections):
+        sections.append({"title": "材料与核查范围", "display_points": [{"label": "材料与核查范围", "summary": ""}]})
+    targets = {point.get("label"): point for section in sections for point in section["display_points"]}
+    for text in limitations:
+        text = str(text)
+        lower = text.lower()
+        if any(word in lower for word in ("ocr", "未读", "读取", "识别质量", "文字质量", "可读正文", "存疑页")):
+            target = "报审资料"
+        elif "AI" in text or "模型" in text:
+            target = "报审资料"
+        elif "信用" in text or "事故" in text:
+            target = "内部信用与事故记录"
+        elif any(word in text for word in ("证照", "证件", "真实性", "官方")):
+            target = "证照真实性"
+        elif any(word in text for word in ("金额", "工程量")):
+            target = "合同及清单"
+        elif any(word in text for word in ("合同", "依据", "分包范围")):
+            target = "负面清单"
+        else:
+            target = "报审资料"
+        point = targets.get(target)
+        if point is None:
+            point = next((p for s in sections for p in s["display_points"]), None)
+        if point is not None and text not in str(point.get("summary") or ""):
+            point["summary"] = " ".join(filter(None, [point.get("summary"), text]))
+    return sections
 
 
 def _field_summary(label: str, items: list[dict], complete: bool) -> str:
