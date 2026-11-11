@@ -30,6 +30,113 @@ def _report(items, *, completed=None, selected=None):
     }
 
 
+def test_key_point_summary_contains_distinct_findings_and_real_human_note():
+    first = _item("internal_records", "hit", "信用材料", "信用记录存在限制")
+    second = _item("internal_records", "hit", "事故材料", "事故记录缺少处理结果")
+    second["human_disposition"] = {"code": "accepted", "note": "已联系相关部门补充"}
+    ignored = _item("internal_records", "hit", "忽略项", "不得出现在正文", "ignored")
+    report = _report([first, second, ignored], completed=["internal_records"], selected=["internal_records"])
+    report["meta"].update({"title": "示例", "scope": {}})
+    report["business_document"] = build_report_document(report)
+    point = report["business_document"]["sections"][4]["key_points"][0]["summary"]
+    assert "信用记录存在限制" in point
+    assert "事故记录缺少处理结果" in point
+    assert "已联系相关部门补充" in point
+    assert "不得出现在正文" not in point
+    assert first["human_disposition"] is None
+    word = Document(BytesIO(export.word_bytes(report)))
+    text = "\n".join([p.text for p in word.paragraphs] + [c.text for t in word.tables for r in t.rows for c in r.cells])
+    assert "待处理事项摘要" not in text
+    assert "报告校验码" not in text and "导出时间" not in text
+
+
+def test_key_point_basis_and_verdict_are_grounded_in_selected_findings():
+    passed = {**_item("internal_records", "miss", "信用记录", "已核查"),
+              "source": "内部信用管理办法第六条",
+              "decision_trace": {"evidence_status": "precise"},
+              "evidence": {"material_id": 1, "page": 1, "location_mode": "precise", "quote": "信用记录"}}
+    report = _report([passed], completed=["internal_records"], selected=["internal_records"])
+    point = build_report_document(report)["sections"][4]["key_points"][0]
+    assert point["basis"] == ["内部信用管理办法第六条"]
+    assert point["verdict"] == "符合"
+    unanchored = {**passed, "evidence": None}
+    missing_evidence = _report([unanchored], completed=["internal_records"], selected=["internal_records"])
+    assert build_report_document(missing_evidence)["sections"][4]["key_points"][0]["verdict"] == "待核实"
+    report["meta"].update({"title": "示例", "scope": {}})
+    report["business_document"] = build_report_document(report)
+    doc = Document(BytesIO(export.word_bytes(report)))
+    row = next(row for table in doc.tables for row in table.rows if row.cells[0].text.startswith("内部信用与事故记录"))
+    assert len(row.cells) == 3
+    assert "内部信用管理办法第六条" in row.cells[0].text
+    assert row.cells[2].text == "符合"
+    assert row.cells[0].paragraphs[1].runs[0].font.size < row.cells[0].paragraphs[0].runs[0].font.size
+    import fitz
+    pdf = fitz.open(stream=export.pdf_bytes(report), filetype="pdf")
+    assert "内部信用管理办法第六条" in "".join(page.get_text() for page in pdf)
+    warning = {**_item("internal_records", "hit", "信用记录", "存在预警"),
+               "source": "内部信用管理办法第六条", "severity": "low"}
+    report = _report([warning], completed=["internal_records"], selected=["internal_records"])
+    point = build_report_document(report)["sections"][4]["key_points"][0]
+    assert point["verdict"] == "待核实"
+    report = _report([passed], selected=["internal_records"])
+    assert build_report_document(report)["sections"][4]["key_points"][0]["verdict"] == "待核实"
+
+
+def test_related_uncertain_findings_group_evidence_gaps_without_repeating_raw_rules():
+    one = {**_item("transfer_scope", "undecidable", "规则一", "原始规则一的冗长描述"),
+           "missing": {"labels": ["总包合同", "施工范围"]}}
+    two = {**_item("transfer_scope", "undecidable", "规则二", "原始规则二的冗长描述"),
+           "missing": {"labels": ["总包合同", "实际实施证据"]}}
+    report = _report([one, two], completed=["a1"], selected=["a1"])
+    point = next(row for row in build_report_document(report)["sections"][1]["key_points"] if row["label"] == "再分包与挂靠")
+    assert all(value in point["summary"] for value in ("总包合同", "施工范围", "实际实施证据"))
+    assert point["summary"].count("总包合同") == 1
+    assert "原始规则一的冗长描述" not in point["summary"]
+    assert "原始规则二的冗长描述" not in point["summary"]
+
+
+def test_main_basis_groups_rule_catalog_subclauses_by_document_and_article():
+    from app.plus.blockchain_supervision.report_document import _point_basis
+    items = [{"source": "《示例细则》第十五条（一）；PDF 第7页（规则目录 T15-01）"},
+             {"source": "《示例细则》第十五条（二）；PDF 第7页（规则目录 T15-02）"},
+             {"source": "《示例细则》第十六条（一）；PDF 第9页（规则目录 W16-01）"}]
+    assert _point_basis(items) == ["《示例细则》第十五条、第十六条"]
+
+
+def test_confirmed_missing_required_checklist_material_is_nonconforming():
+    missing = {**_item("completeness", "hit", "资质证书", "明确缺少资质证书"),
+               "item_id": "RC-A03", "material_missing": True, "source": "报审附件清单第3项"}
+    report = _report([missing], completed=["completeness", "signature_chain"], selected=["completeness", "signature_chain"])
+    point = next(row for row in build_report_document(report)["sections"][0]["key_points"] if row["label"] == "主体资料")
+    assert point["verdict"] == "不符合"
+    report["reading_coverage"] = [{"suspect_pages": [1]}]
+    point = next(row for row in build_report_document(report)["sections"][0]["key_points"] if row["label"] == "主体资料")
+    assert point["verdict"] == "待核实"
+
+
+def test_cross_stage_personnel_reference_does_not_repeat_human_note():
+    item = {**_item("completeness", "hit", "主要管理人员名单", "人员名单缺少签名"),
+            "item_id": "RC-A09", "human_disposition": {"code": "accepted", "note": "已联系补充签名"}}
+    result = build_report_document(_report([item], completed=["completeness", "signature_chain", "a2"],
+                                          selected=["completeness", "signature_chain", "a2"]))
+    primary = next(p for p in result["sections"][0]["key_points"] if p["label"] == "人员资料")
+    cross = next(p for p in result["sections"][2]["key_points"] if p["label"] == "关键岗位")
+    assert "人员名单缺少签名" in primary["summary"] and "已联系补充签名" in primary["summary"]
+    assert "已联系补充签名" not in cross["summary"]
+    assert "详见要素完整性核查" in cross["summary"]
+
+
+def test_existing_unmapped_check_remains_visible_without_a_sixth_stage():
+    item = {**_item("amount_ratio", "hit", "金额占比", "金额占比超过约定阈值"),
+            "human_disposition": {"code": "accepted", "note": "已联系核实"}}
+    report = _report([], completed=["completeness"], selected=["completeness"])
+    report["sections"].append({"kind": "amount_ratio", "title": "金额占比", "items": [item]})
+    document = build_report_document(report)
+    assert len(document["sections"]) == 5
+    points = [point for section in document["sections"] for point in section["key_points"]]
+    assert any("金额占比超过约定阈值" in p["summary"] and "已联系核实" in p["summary"] for p in points)
+
+
 def test_document_has_five_business_categories_and_fixed_fields():
     projected = build_report_document(_report([], completed=["completeness", "signature_chain", "a1", "a2", "internal_records"],
                                               selected=["completeness", "signature_chain", "a1", "a2", "internal_records"]))
@@ -107,7 +214,7 @@ def test_key_point_report_omits_generic_conclusions_but_keeps_specific_limitatio
     assert report["business_document"]["conclusion"]["status"] == "incomplete"
 
 
-def test_report_has_two_columns_and_places_relevant_limitations_in_key_points():
+def test_report_has_three_columns_and_places_relevant_limitations_in_key_points():
     import fitz
     report = _report([_item("negative_list", "undecidable", "负面清单", "合同范围需核实")], selected=["a1"])
     report["meta"].update({"title": "示例", "scope": {}})
@@ -115,8 +222,8 @@ def test_report_has_two_columns_and_places_relevant_limitations_in_key_points():
     report["business_document"] = build_report_document(report)
     word = Document(BytesIO(export.word_bytes(report)))
     text = "\n".join([p.text for p in word.paragraphs] + [c.text for t in word.tables for r in t.rows for c in r.cells])
-    review_tables = [t for t in word.tables if t.rows[0].cells[0].text == "审查要点"]
-    assert len(review_tables) == 5 and all(len(t.columns) == 2 for t in review_tables)
+    review_tables = [t for t in word.tables if t.rows[0].cells[0].text == "审查要点及主要依据"]
+    assert len(review_tables) == 5 and all(len(t.columns) == 3 for t in review_tables)
     assert all(t.rows[0].cells[0].paragraphs[0].paragraph_format.keep_with_next for t in review_tables)
     pdf = fitz.open(stream=export.pdf_bytes(report), filetype="pdf")
     for rendered in (text, "\n".join(page.get_text() for page in pdf)):
@@ -169,8 +276,8 @@ def test_specific_certificate_warning_maps_without_classifying_aggregate():
     aggregate = {**_item('cert_validity', 'miss', '证件有效期', '共核对 2 条证件有效期记录，均在有效期内'), 'item_id': 'A2-02'}
     report = _report([enterprise, person, aggregate], completed=['a2'], selected=['a2'])
     fields = {field['label']: field['summary'] for field in build_report_document(report)['sections'][3]['fields']}
-    assert '需关注或核实' in fields['企业证照有效期']
-    assert '需关注或核实' in fields['人员证件有效期']
+    assert '已超过有效期' in fields['企业证照有效期']
+    assert '有效期不明确' in fields['人员证件有效期']
     assert '已核查符合' not in fields['企业证照有效期']
     assert '已核查符合' not in fields['人员证件有效期']
 
@@ -199,7 +306,7 @@ def test_word_and_pdf_render_same_business_content_without_ignored_items():
     assert "人工复核意见" in pdf_text
     opinion = {"meta": report["meta"], "business_document": report["business_document"]}
     opinion_doc = Document(BytesIO(export.opinion_word_bytes(opinion)))
-    opinion_text = "\n".join(cell.text for table in opinion_doc.tables for row in table.rows for cell in row.cells)
+    opinion_text = "\n".join([p.text for p in opinion_doc.paragraphs] + [cell.text for table in opinion_doc.tables for row in table.rows for cell in row.cells])
     assert "内部信用与事故材料核查" in opinion_text
     assert "不应出现在报告" not in opinion_text
     assert "人工复核意见" in opinion_text
@@ -240,8 +347,8 @@ def test_summary_groups_unprocessed_and_preserves_accepted_note_without_ignored(
     doc = Document(BytesIO(export.word_bytes(report)))
     text = "\n".join([p.text for p in doc.paragraphs] + [c.text for t in doc.tables for r in t.rows for c in r.cells])
     assert "已联系补充材料" in text
-    assert "不应逐条展开的原始长文" not in text
-    assert "人工采纳的原始长文" not in text
+    assert "不应逐条展开的原始长文" in text
+    assert "人工采纳的原始长文" in text
 
 
 def test_summary_combines_rules_under_business_theme():
@@ -338,7 +445,7 @@ def test_business_pdf_tables_repeat_headers_and_keep_long_human_note():
         pdf = fitz.open(stream=payload, filetype="pdf")
         text = "\n".join(page.get_text() for page in pdf)
         assert len(pdf) > 2
-        assert text.count("人工意见") >= 2
+        assert text.count("核查情况") >= 2
         assert "备注末尾" in text and "复核意见" in text
         assert "末尾标识" not in text
         assert sum(len(page.get_drawings()) for page in pdf) > 10
@@ -350,8 +457,8 @@ def test_word_summary_rows_allow_pagination_and_repeat_headers():
     report['meta'].update({'title': '示例', 'scope': {}})
     report['business_document'] = build_report_document(report)
     doc = Document(BytesIO(export.word_bytes(report)))
-    issue_table = next(table for table in doc.tables if table.rows[0].cells[1].text == '待处理摘要')
-    issue_heading = next(p for p in doc.paragraphs if p.text == '三、待处理事项摘要')
+    issue_table = next(table for table in doc.tables if any('内部信用与事故记录' in row.cells[0].text for row in table.rows))
+    issue_heading = next(p for p in doc.paragraphs if '内部信用与事故材料核查' in p.text)
     assert issue_heading.paragraph_format.keep_with_next is True
     assert issue_table.rows[0]._tr.trPr.find('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}tblHeader') is not None
     assert issue_table.rows[1]._tr.trPr is None or issue_table.rows[1]._tr.trPr.find('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}cantSplit') is None
@@ -439,6 +546,19 @@ def test_conclusion_identifies_attention_and_unresolved_categories_without_ignor
     assert '待核实：证件证照有效性核查' in text
     assert '要素完整性核查' not in text
     assert '7 天' not in text and '暂停支付' not in text
+
+
+def test_expiring_certificate_remains_pending_even_when_other_check_passes():
+    warning = {**_item("cert_validity", "hit", "证件有效期", "「营业执照」临近到期，请人工复核"),
+               "item_id": "A2-02", "severity": "low", "source": "证照有效期核对规则"}
+    passed = {**_item("cert_validity", "miss", "企业证照", "有效"), "item_id": "A2-02",
+              "source": "证照有效期核对规则", "decision_trace": {"evidence_status": "precise"},
+              "evidence": {"material_id": 1, "page": 1, "location_mode": "precise", "quote": "有效期"}}
+    report = _report([warning, passed], completed=["a2"], selected=["a2"])
+    point = next(row for row in build_report_document(report)["sections"][3]["key_points"]
+                 if row["label"] == "企业证照有效期")
+    assert point["verdict"] == "待核实"
+    assert "临近到期" in point["summary"]
 
 
 def test_warning_is_not_described_as_noncompliance():

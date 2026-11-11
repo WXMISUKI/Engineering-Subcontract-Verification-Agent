@@ -70,6 +70,21 @@ function legacyReportSummaries(issues) {
 function reportDisplaySections(document) {
   const sections = (document.sections || []).map((section) => ({ ...section,
     displayPoints: (section.key_points ?? section.fields ?? []).map((point) => ({ ...point })) }))
+  if (document.schema_version !== 'bs.business-report-document.v2') {
+    const legacy = legacyReportSummaries(document.issues)
+    const sectionFor = (category) => {
+      let section = sections.find((entry) => entry.title === category)
+      if (!section) { section = { title: category, displayPoints: [] }; sections.push(section) }
+      return section
+    }
+    for (const row of document.pending_summaries ?? legacy.pending) {
+      sectionFor(row.category || '其他核查').displayPoints.push({ label: '其他核查事项', summary: pendingSummaryText(row) })
+    }
+    for (const row of document.human_notes ?? legacy.notes) {
+      const note = String(row.note || '').trim()
+      if (note && note !== '未填写补充说明') sectionFor(row.category || '其他核查').displayPoints.push({ label: row.label || '人工补充', summary: `人工补充：${note}` })
+    }
+  }
   const limitations = document.conclusion?.limitations || []
   if (limitations.length && !sections.some((section) => section.displayPoints.length)) {
     sections.push({ title: '材料与核查范围', displayPoints: [{ label: '材料与核查范围', summary: '' }] })
@@ -100,9 +115,6 @@ function pendingSummaryText(row) {
 
 function BusinessDocument({ document, basicInformation, onOpenSource, onShowBasicInformation }) {
   if (!document) return null
-  const legacy = legacyReportSummaries(document.issues)
-  const pending = document.pending_summaries ?? legacy.pending
-  const humanNotes = document.human_notes ?? legacy.notes
   const displaySections = reportDisplaySections(document)
   const sourceKeys = { '工程名称': 'project_name', '标段': 'contract_section', '施工总承包单位': 'general_contractor', '建设单位（业主）': 'employer', '分包单位': 'subcontractor', '拟分包范围': 'subcontract_scope', '拟分包金额': 'subcontract_amount' }
   const needsAttention = Object.entries(document.basic_information || {}).some(([label, value]) =>
@@ -118,13 +130,7 @@ function BusinessDocument({ document, basicInformation, onOpenSource, onShowBasi
       })}</dl>
     </section>
     <section><h2 className="text-base font-semibold text-[#1A1A1A]">二、核查摘要</h2>
-      {displaySections.map((section, index) => <section key={section.title} className="mt-4"><h3 className="font-semibold">{index + 1}. {section.title}</h3><div className="overflow-x-auto"><table className="mt-2 w-full border-collapse text-left"><thead><tr><th className="border p-2">审查要点</th><th className="border p-2">核查摘要</th></tr></thead><tbody>{section.displayPoints.map((field) => <tr key={field.label}><td className="border p-2">{field.label}</td><td className="border p-2">{field.summary}</td></tr>)}</tbody></table></div></section>)}
-    </section>
-    <section><h2 className="text-base font-semibold text-[#1A1A1A]">三、待处理事项摘要</h2>
-      {pending.length ? pending.map((row, index) => <p key={`${row.category}-${row.status}-${index}`}><b>{row.category}：</b>{pendingSummaryText(row)}</p>) : <p>当前无未经人工处理的事项。</p>}
-    </section>
-    <section><h2 className="text-base font-semibold text-[#1A1A1A]">四、人工处理意见</h2>
-      {humanNotes.length ? humanNotes.map((row, index) => <p key={`${row.category}-${row.label}-${index}`}><b>{row.category}｜{row.label}：</b>已采纳；{row.note}</p>) : <p>当前未形成需单独说明的人工处理意见。</p>}
+      {displaySections.map((section, index) => <section key={section.title} className="mt-4"><h3 className="font-semibold">{index + 1}. {section.title}</h3><div className="overflow-x-auto"><table className="mt-2 w-full border-collapse text-left"><thead><tr><th className="border p-2">审查要点及主要依据</th><th className="border p-2">核查情况</th><th className="border p-2">判定</th></tr></thead><tbody>{section.displayPoints.map((field, pointIndex) => <tr key={`${field.label}-${pointIndex}`}><td className="border p-2 align-top"><div>{field.label}</div><div className="text-xs text-[#6B7280]">主要依据：{field.basis?.length ? field.basis.join('；') : '暂无可展示依据'}</div></td><td className="border p-2 align-top">{field.summary}</td><td className="border p-2 align-top">{field.verdict || '待核实'}</td></tr>)}</tbody></table></div></section>)}
     </section>
   </article>
 }

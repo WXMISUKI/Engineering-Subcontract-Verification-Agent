@@ -84,7 +84,7 @@ it('renders projected themes and human notes instead of raw issue text', () => {
   render(<ReportView report={data} />)
   const text = screen.getByTestId('business-document').textContent
   expect(text).toContain('人员资料需要核实')
-  expect(text).toContain('已采纳；已联系补充材料')
+  expect(text).toContain('人工补充：已联系补充材料')
   expect(text).not.toContain('不应展开的原始长文')
 })
 
@@ -111,6 +111,22 @@ it('renders projected review key points and grouped limitations', () => {
   expect(text).not.toContain('不应展示的总体结论')
 })
 
+it('shows the basis and grounded verdict beside each current review point', () => {
+  const data = report()
+  data.business_document = { schema_version: 'bs.business-report-document.v2', basic_information: {},
+    sections: [{ title: '内部记录核查', key_points: [{ label: '信用记录',
+      basis: ['内部信用管理办法第六条'], summary: '已查阅信用记录。', verdict: '符合' }] }],
+    conclusion: { limitations: [] }, pending_summaries: [{ category: '不展示的章节', text: '不应展示' }] }
+  render(<ReportView report={data} />)
+  const text = screen.getByTestId('business-document').textContent
+  expect(text).toContain('内部信用管理办法第六条')
+  expect(text).toContain('已查阅信用记录')
+  expect(screen.getByRole('columnheader', { name: '判定' })).toBeTruthy()
+  expect(text).toContain('符合')
+  expect(text).not.toContain('待处理事项摘要')
+  expect(text).not.toContain('不应展示')
+})
+
 it('uses the same business themes for legacy snapshots as exports', () => {
   const data = report()
   data.business_document = {
@@ -128,7 +144,7 @@ it('uses the same business themes for legacy snapshots as exports', () => {
   const text = screen.getByTestId('business-document').textContent
   expect(text).toContain('分包内容需要核实。')
   expect(text).toContain('营业执照材料缺失。')
-  expect(text).toContain('已采纳；补充说明')
+  expect(text).toContain('人工补充：补充说明')
   expect(text).not.toContain('规则一')
   expect(text).not.toContain('规则二')
   expect(text).not.toContain('忽略事项')

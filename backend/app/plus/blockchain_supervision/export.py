@@ -3,8 +3,7 @@
 纪律：
 - 导出只渲染 reporting.build_report 的聚合结果，**不重算**（与报告侧同纪律）；
 - 简化存证 = 报告 canonical JSON 的 sha256 + 导出时间戳 + 证据包 zip；
-  校验码 = 内容指纹（meta.generated_at 不参与哈希），Word/PDF 页脚、
-  界面报告头、证据包三处同源可比对；
+  校验码是内容指纹（meta.generated_at 不参与哈希），留存在事件和证据包；
   证据包内清单写入逐文件 sha256，拿到包即可自证完整性（不依赖包外记录）；
 - 报告哈希针对「不含存证块」的报告体计算：证据包里的 report.json 附带
   attestation 块，校验方对其余部分重算 canonical 哈希（generated_at 置空）
@@ -63,8 +62,7 @@ def report_digest(report: dict) -> str:
     """报告体 canonical JSON 的 sha256 十六进制。
 
     边界（对外要说清）：meta.generated_at 不参与哈希——校验码 = 内容指纹，
-    同一结论集在任何时间生成/导出/查看，校验码一致；导出时间单独随行打印。
-    证据包、Word/PDF 页脚、界面报告头三处因此可比对。
+    同一结论集在任何时间生成/导出/查看，校验码一致；导出时间另存于事件及证据包。
     """
     body = json.loads(json.dumps(report))
     body.setdefault("meta", {})["generated_at"] = ""
@@ -416,17 +414,6 @@ def _business_document_lines(report: dict) -> list[tuple[str, str, bool]]:
         lines.append(("subheading", "%s. %s" % (index, section.get("title") or "核查"), True))
         for field in _business_key_points(section):
             lines.append(("text", "%s：%s" % (field.get("label"), field.get("summary")), False))
-    pending, notes = _business_summary_rows(document)
-    lines.append(("heading", "三、待处理事项摘要", True))
-    for row in pending:
-        lines.append(("text", "%s：%s" % (row["category"], _pending_summary_text(row)), False))
-    if not pending:
-        lines.append(("text", "当前无未经人工处理的事项。", False))
-    lines.append(("heading", "四、人工处理意见", True))
-    for row in notes:
-        lines.append(("text", "%s｜%s：已采纳；%s" % (row["category"], row["label"], row["note"]), False))
-    if not notes:
-        lines.append(("text", "当前未形成需单独说明的人工处理意见。", False))
     return lines
 
 
@@ -453,7 +440,13 @@ def _add_business_document_word(doc, report: dict) -> bool:
         for row in rows:
             cells = result.add_row().cells
             for cell, value in zip(cells, row):
-                cell.text = str(value or "待核实")
+                if isinstance(value, tuple):
+                    label, basis = value
+                    cell.text = str(label or "")
+                    para = cell.add_paragraph()
+                    para.add_run("主要依据：" + ("；".join(basis) if basis else "暂无可展示依据"))
+                else:
+                    cell.text = str(value or "待核实")
         for row in result.rows:
             if proportions:
                 for cell, proportion in zip(row.cells, proportions):
@@ -463,6 +456,10 @@ def _add_business_document_word(doc, report: dict) -> bool:
                     for run in para.runs:
                         _cjk(run)
                         run.font.size = Pt(9)
+        for row in result.rows[1:]:
+            if len(headers) == 3 and len(row.cells[0].paragraphs) > 1:
+                for run in row.cells[0].paragraphs[1].runs:
+                    run.font.size = Pt(7.5)
         return result
 
     _add_para(doc, "一、项目与分包基本信息", size=13, bold=True, keep_with_next=True)
@@ -470,22 +467,10 @@ def _add_business_document_word(doc, report: dict) -> bool:
     _add_para(doc, "二、核查摘要", size=13, bold=True, keep_with_next=True)
     for index, section in enumerate(report_display_sections(document), 1):
         _add_para(doc, "%s. %s" % (index, section.get("title") or "核查"), size=11, bold=True, keep_with_next=True)
-        rows = [(row.get("label"), row.get("summary"))
+        rows = [((row.get("label"), row.get("basis") or []), row.get("summary"), row.get("verdict") or "待核实")
                 for row in _business_key_points(section)]
         if rows:
-            table(("审查要点", "核查摘要"), rows, (0.25, 0.75))
-    pending, notes = _business_summary_rows(document)
-    _add_para(doc, "三、待处理事项摘要", size=13, bold=True, keep_with_next=True)
-    if pending:
-        table(("核查类别", "待处理摘要"), [(row["category"], _pending_summary_text(row)) for row in pending], (0.28, 0.72))
-    else:
-        _add_para(doc, "当前无未经人工处理的事项。", size=9.5)
-    _add_para(doc, "四、人工处理意见", size=13, bold=True, keep_with_next=True)
-    if notes:
-        table(("核查事项", "人工意见"), [("%s｜%s" % (row["category"], row["label"]),
-                                      "已采纳；%s" % row["note"]) for row in notes], (0.28, 0.72))
-    else:
-        _add_para(doc, "当前未形成需单独说明的人工处理意见。", size=9.5)
+            table(("审查要点及主要依据", "核查情况", "判定"), rows, (0.30, 0.58, 0.12))
     return True
 
 
@@ -561,10 +546,6 @@ def word_bytes(report: dict, digest: str = None, exported_at: str = None) -> byt
 
     if _business_document_lines(report):
         _add_business_document_word(doc, report)
-        digest = digest or report_digest(report)
-        exported_at = exported_at or datetime.now().isoformat(timespec="seconds")
-        _add_para(doc, "报告校验码：%s（sha256 前 16 位，完整值见证据包）　|　导出时间：%s"
-                  % (digest[:16], exported_at), size=8.5, space_after=0)
         bio = io.BytesIO()
         doc.save(bio)
         return bio.getvalue()
@@ -637,12 +618,6 @@ def word_bytes(report: dict, digest: str = None, exported_at: str = None) -> byt
         for line in advisory_lines:
             _add_para(doc, line, size=9, space_after=3)
 
-    # 校验码 + 导出时间（P2-1：纸面报告的防篡改标记，与证据包/界面可比对）
-    digest = digest or report_digest(report)
-    exported_at = exported_at or datetime.now().isoformat(timespec="seconds")
-    _add_para(doc, "报告校验码：%s（sha256 前 16 位，完整值见证据包）　|　导出时间：%s"
-              % (digest[:16], exported_at), size=8.5, space_after=0)
-
     bio = io.BytesIO()
     doc.save(bio)
     return bio.getvalue()
@@ -679,7 +654,7 @@ def _pdf_insert_text(page, point, text, fontsize):
 def _draw_business_pdf(doc, page, y, document):
     """Render business tables, splitting oversized rows and repeating their header."""
     margin, page_w, page_h = 48.0, 595.0, 842.0
-    split, right = margin + 135, page_w - margin
+    right = page_w - margin
     size, line_height, padding = 9.5, 14.0, 5.0
 
     def new_page():
@@ -696,30 +671,39 @@ def _draw_business_pdf(doc, page, y, document):
 
     def table(headers, rows):
         nonlocal page, y
+        widths = ([0.30, 0.58, 0.12] if len(headers) == 3 else [135 / (right - margin), 1 - 135 / (right - margin)])
+        edges = [margin]
+        for width in widths:
+            edges.append(edges[-1] + width * (right - margin))
 
-        def draw_cells(left_lines, right_lines, header=False):
+        def draw_cells(columns, header=False):
             nonlocal y
-            height = max(len(left_lines), len(right_lines)) * line_height + 2 * padding
-            for x0, x1, lines in ((margin, split, left_lines), (split, right, right_lines)):
+            height = max(map(len, columns)) * line_height + 2 * padding
+            for x0, x1, lines in zip(edges, edges[1:], columns):
                 page.draw_rect(fitz.Rect(x0, y, x1, y + height), color=(0.35, 0.35, 0.35), width=0.5,
                                fill=(0.94, 0.94, 0.94) if header else None)
-                for index, line in enumerate(lines):
+                for index, (line, font_size) in enumerate(lines):
                     _pdf_insert_text(page, (x0 + padding, y + padding + size + index * line_height), line,
-                                     fontsize=size)
+                                     fontsize=font_size)
             y += height
 
         def header():
-            draw_cells([headers[0]], [headers[1]], True)
+            draw_cells([[(label, size)] for label in headers], True)
 
         if y + 2 * (line_height + 2 * padding) > page_h - margin:
             page, y = new_page()
         header()
-        for left, content in rows:
+        for row in rows:
             columns = []
-            for value, width in ((left, split - margin), (content, right - split)):
+            for value, x0, x1 in zip(row, edges, edges[1:]):
                 lines = []
-                for raw in str(value or "待核实").splitlines() or [""]:
-                    lines.extend(_wrap(raw, size, width - 2 * padding))
+                values = [(str(value or "待核实"), size)]
+                if isinstance(value, tuple):
+                    label, basis = value
+                    values = [(str(label or ""), size), ("主要依据：" + ("；".join(basis) if basis else "暂无可展示依据"), 7.5)]
+                for content, font_size in values:
+                    for raw in content.splitlines() or [""]:
+                        lines.extend((line, font_size) for line in _wrap(raw, font_size, x1 - x0 - 2 * padding))
                 columns.append(lines)
             offset = 0
             total = max(map(len, columns))
@@ -736,7 +720,7 @@ def _draw_business_pdf(doc, page, y, document):
                     header()
                     continue
                 end = min(total, offset + available)
-                draw_cells(columns[0][offset:end], columns[1][offset:end])
+                draw_cells([column[offset:end] for column in columns])
                 offset = end
         y += 4
 
@@ -745,17 +729,10 @@ def _draw_business_pdf(doc, page, y, document):
     heading("二、核查摘要")
     for index, section in enumerate(report_display_sections(document), 1):
         heading("%s. %s" % (index, section.get("title") or "核查"))
-        rows = [(row.get("label"), row.get("summary"))
+        rows = [((row.get("label"), row.get("basis") or []), row.get("summary"), row.get("verdict") or "待核实")
                 for row in _business_key_points(section)]
         if rows:
-            table(("审查要点", "核查摘要"), rows)
-    pending, notes = _business_summary_rows(document)
-    heading("三、待处理事项摘要")
-    rows = [(row["category"], _pending_summary_text(row)) for row in pending]
-    table(("核查类别", "待处理摘要"), rows or [("核查事项", "当前无未经人工处理的事项。")])
-    heading("四、人工处理意见")
-    rows = [("%s｜%s" % (row["category"], row["label"]), "已采纳；%s" % row["note"]) for row in notes]
-    table(("核查事项", "人工意见"), rows or [("人工处理", "当前未形成需单独说明的人工处理意见。")])
+            table(("审查要点及主要依据", "核查情况", "判定"), rows)
     return page, y
 
 
@@ -793,10 +770,6 @@ def pdf_bytes(report: dict, digest: str = None, exported_at: str = None) -> byte
     business_lines = _business_document_lines(report)
     if business_lines:
         page, y = _draw_business_pdf(doc, page, y, report["business_document"])
-        digest = digest or report_digest(report)
-        exported_at = exported_at or datetime.now().isoformat(timespec="seconds")
-        write("报告校验码：%s（sha256 前 16 位，完整值见证据包）" % digest[:16], 8.5)
-        write("导出时间：%s" % exported_at, 8.5)
         bio = io.BytesIO()
         doc.save(bio, deflate=True)
         doc.close()
@@ -852,13 +825,6 @@ def pdf_bytes(report: dict, digest: str = None, exported_at: str = None) -> byte
         write("AI 辅助意见", size_h2, bold=True)
         for line in advisory_lines:
             write(line, 9)
-
-    # 校验码 + 导出时间（P2-1：纸面报告的防篡改标记，与证据包/界面可比对）。
-    # 校验码与导出时间分行展示，便于纸面核对。
-    digest = digest or report_digest(report)
-    exported_at = exported_at or datetime.now().isoformat(timespec="seconds")
-    write("报告校验码：%s（sha256 前 16 位，完整值见证据包）" % digest[:16], 8.5)
-    write("导出时间：%s" % exported_at, 8.5)
 
     bio = io.BytesIO()
     doc.save(bio, deflate=True)
