@@ -321,7 +321,7 @@ def review_readiness(snapshot: dict | None) -> dict | None:
             "all_completed": not pending}
 
 
-def get_reference_snapshot(db: Session, task: BsTask) -> dict | None:
+def get_reference_snapshot(db: Session, task: BsTask, *, current_read: bool = False) -> dict | None:
     """只读本代seed与各组精确run；不按最近事件推测、不重读依据、不触网。"""
     options = task.options_snapshot_json or {}
     review_id = options.get(REVIEW_POINTER)
@@ -330,9 +330,10 @@ def get_reference_snapshot(db: Session, task: BsTask) -> dict | None:
     snapshot = {"schema_version": "bs-reference-snapshot.v1", "review_run_id": review_id,
                 "state": "running", "steps": [], "runs": [], "pending_groups": [],
                 "missing_groups": [], "limitations": []}
-    seeds = (db.query(BsTaskEvent).filter(
+    seed_query = (db.query(BsTaskEvent).filter(
         BsTaskEvent.task_id == task.id, BsTaskEvent.event_type == REVIEW_EVENT,
-        BsTaskEvent.payload_json["review_run_id"].as_string() == review_id).all())
+        BsTaskEvent.payload_json["review_run_id"].as_string() == review_id))
+    seeds = (seed_query.with_for_update() if current_read else seed_query).all()
     if len(seeds) != 1:
         snapshot["limitations"].append({"code": "review_seed_unavailable",
             "message": "本代固定依据快照缺失或身份不唯一，请重新核查"})
@@ -340,6 +341,13 @@ def get_reference_snapshot(db: Session, task: BsTask) -> dict | None:
     seed = deepcopy(seeds[0].payload_json)
     snapshot.update({key: value for key, value in seed.items()
                      if key not in {"schema_version", "steps", "state", "runs", "limitations"}})
+    policy_query = (db.query(BsTaskEvent).filter(
+        BsTaskEvent.task_id == task.id, BsTaskEvent.event_type == "report.policy_activated",
+        BsTaskEvent.payload_json["review_run_id"].as_string() == review_id)
+        .order_by(BsTaskEvent.sequence.desc()))
+    policy_event = (policy_query.with_for_update() if current_read else policy_query).first()
+    if policy_event is not None:
+        snapshot["report_policy"] = deepcopy((policy_event.payload_json or {}).get("report_policy"))
     snapshot["limitations"] = deepcopy(seed.get("limitations") or [])
     pointers = options.get(GROUP_POINTERS) or {}
     events = (db.query(BsTaskEvent).filter(

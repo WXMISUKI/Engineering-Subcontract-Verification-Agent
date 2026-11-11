@@ -82,6 +82,80 @@ def test_key_point_basis_and_verdict_are_grounded_in_selected_findings():
     assert build_report_document(report)["sections"][4]["key_points"][0]["verdict"] == "待核实"
 
 
+def test_preliminary_qualification_text_match_does_not_imply_full_qualification():
+    item = {**_item("qualification_match", "miss", "资质匹配", "分包工程内容均见于证照类别表述"),
+            "item_id": "A2-04", "source": "分包人应当具备的条件",
+            "decision_trace": {"evidence_status": "precise"},
+            "evidence": {"material_id": 1, "page": 1, "location_mode": "precise", "quote": "资质类别"}}
+    report = _report([item], completed=["a2"], selected=["a2"])
+    point = next(row for row in build_report_document(report)["sections"][1]["key_points"] if row["label"] == "主体资格")
+    assert point["verdict"] == "待核实"
+    assert "初步" in point["summary"] and "等级" in point["summary"] and "真实性" in point["summary"]
+    assert "已核查符合" not in point["summary"]
+
+
+def test_single_negative_list_miss_cannot_establish_full_list_coverage():
+    item = {**_item("negative_list", "miss", "桥梁清单一项", "该项未触发"),
+            "item_id": "NL-01", "source": "分包负面清单",
+            "decision_trace": {"evidence_status": "precise"},
+            "evidence": {"material_id": 1, "page": 1, "location_mode": "precise", "quote": "分包范围"}}
+    report = _report([item], completed=["a1"], selected=["a1"])
+    point = next(row for row in build_report_document(report)["sections"][1]["key_points"] if row["label"] == "负面清单")
+    assert point["verdict"] == "待核实"
+    assert "覆盖" in point["summary"]
+
+
+def test_unrelated_ai_group_failure_does_not_override_an_independent_verified_point():
+    item = {**_item("internal_records", "miss", "信用记录", "已核查"),
+            "source": "内部信用管理办法第六条", "decision_trace": {"evidence_status": "precise"},
+            "evidence": {"material_id": 1, "page": 1, "location_mode": "precise", "quote": "信用记录"}}
+    report = _report([item], completed=["internal_records", "a1"], selected=["internal_records", "a1"])
+    complete = {"not_started": 0, "pending": 0, "completed": 1, "partial": 0, "failed": 0, "not_run": 0}
+    report["ai_coverage"] = {"state": "available", "groups": [
+        {"group_id": "a1", "state": "available", "counts": {**complete, "failed": 1}, "skipped": 0},
+        {"group_id": "internal_records", "state": "available", "counts": complete, "skipped": 0},
+    ]}
+    point = build_report_document(report)["sections"][4]["key_points"][0]
+    assert point["verdict"] == "符合"
+    report["ai_coverage"]["groups"][1]["counts"] = {**complete, "failed": 1}
+    assert build_report_document(report)["sections"][4]["key_points"][0]["verdict"] == "待核实"
+    report["ai_coverage"]["groups"][0].pop("group_id")
+    report["ai_coverage"]["groups"][1]["counts"] = complete
+    assert build_report_document(report)["sections"][4]["key_points"][0]["verdict"] == "待核实"
+    report["ai_coverage"]["groups"][0]["group_id"] = "a1"
+    report["ai_coverage"]["groups"][1]["counts"] = {"completed": 1}
+    assert build_report_document(report)["sections"][4]["key_points"][0]["verdict"] == "待核实"
+
+
+def test_skipped_ai_reference_links_make_only_relevant_group_uncertain():
+    item = {**_item("internal_records", "miss", "信用记录", "已核查"),
+            "source": "内部信用管理办法第六条", "decision_trace": {"evidence_status": "precise"},
+            "evidence": {"material_id": 1, "page": 1, "location_mode": "precise", "quote": "信用记录"}}
+    report = _report([item], completed=["internal_records", "a1"], selected=["internal_records", "a1"])
+    complete = {"not_started": 0, "pending": 0, "completed": 1, "partial": 0, "failed": 0, "not_run": 0}
+    report["ai_coverage"] = {"state": "available", "groups": [
+        {"group_id": "a1", "state": "available", "counts": complete, "skipped": 1},
+        {"group_id": "internal_records", "state": "available", "counts": complete, "skipped": 0}]}
+    point = build_report_document(report)["sections"][4]["key_points"][0]
+    assert point["verdict"] == "符合"
+    report["ai_coverage"]["groups"][1]["skipped"] = 1
+    point = build_report_document(report)["sections"][4]["key_points"][0]
+    assert point["verdict"] == "待核实"
+    assert "辅助核查" in point["summary"]
+    del report["ai_coverage"]["groups"][1]["skipped"]
+    assert build_report_document(report)["sections"][4]["key_points"][0]["verdict"] == "待核实"
+
+
+def test_ai_group_limitation_is_not_repeated_for_every_point_in_stage():
+    report = _report([], completed=["a1"], selected=["a1"])
+    complete = {"not_started": 0, "pending": 0, "completed": 1, "partial": 0, "failed": 1, "not_run": 0}
+    report["ai_coverage"] = {"state": "available", "groups": [
+        {"group_id": "a1", "state": "available", "counts": complete, "skipped": 0}]}
+    points = build_report_document(report)["sections"][1]["key_points"]
+    assert sum("辅助核查" in point["summary"] for point in points) == 1
+    assert all(point["verdict"] == "待核实" for point in points if point["label"] in {"负面清单", "再分包与挂靠"})
+
+
 def test_related_uncertain_findings_group_evidence_gaps_without_repeating_raw_rules():
     one = {**_item("transfer_scope", "undecidable", "规则一", "原始规则一的冗长描述"),
            "missing": {"labels": ["总包合同", "施工范围"]}}
@@ -95,12 +169,77 @@ def test_related_uncertain_findings_group_evidence_gaps_without_repeating_raw_ru
     assert "原始规则二的冗长描述" not in point["summary"]
 
 
+def test_many_uncertain_items_are_summarized_without_hiding_confirmed_fact_or_note():
+    items = [{**_item("completeness", "undecidable", f"人员资料{n}", f"第{n}项人员资料存在详细未核实信息"),
+              "item_id": f"RC-P{n}"} for n in range(11, 16)]
+    items.append({**_item("completeness", "hit", "特殊工种人员名单", "名单明确缺失"),
+                  "item_id": "RC-P16", "human_disposition": {"code": "accepted", "note": "已联系补充名单"}})
+    report = _report(items, completed=["completeness"], selected=["completeness"])
+    point = next(row for row in build_report_document(report)["sections"][0]["key_points"] if row["label"] == "人员资料")
+    assert "名单明确缺失" in point["summary"] and "已联系补充名单" in point["summary"]
+    assert "第14项人员资料存在详细未核实信息" not in point["summary"]
+    assert "人员资料11" in point["summary"] and "等" in point["summary"]
+
+
+def test_many_missing_fact_labels_show_representative_examples_not_exhaustive_list():
+    items = [{**_item("transfer_scope", "undecidable", f"规则{n}", "需核对"),
+              "missing": {"labels": [f"资料{n}"]}} for n in range(8)]
+    report = _report(items, completed=["a1"], selected=["a1"])
+    point = next(row for row in build_report_document(report)["sections"][1]["key_points"] if row["label"] == "再分包与挂靠")
+    assert "资料0" in point["summary"] and "资料3" in point["summary"]
+    assert "资料7" not in point["summary"] and "等" in point["summary"]
+
+
 def test_main_basis_groups_rule_catalog_subclauses_by_document_and_article():
     from app.plus.blockchain_supervision.report_document import _point_basis
     items = [{"source": "《示例细则》第十五条（一）；PDF 第7页（规则目录 T15-01）"},
              {"source": "《示例细则》第十五条（二）；PDF 第7页（规则目录 T15-02）"},
              {"source": "《示例细则》第十六条（一）；PDF 第9页（规则目录 W16-01）"}]
     assert _point_basis(items) == ["《示例细则》第十五条、第十六条"]
+
+
+def test_authorization_basis_in_report_names_the_confirmed_applicable_packet_type():
+    source = "《2025 分包报审附件要求》①10/②10；第一现场指挥部 2025.6.20"
+    item = {**_item("completeness", "undecidable", "授权书", "授权材料待核实"),
+            "item_id": "RC-A10", "subject_id": 8, "source": source}
+    for subject_type, expected in (("labor", "劳务分包附件第10项"), ("professional", "专业分包附件第10项")):
+        report = _report([item], completed=["completeness", "signature_chain"], selected=["completeness", "signature_chain"])
+        report["checklist_summary"] = {"subjects": [{"subject_id": 8, "subject_type": subject_type,
+                                                       "status": "ready", "type_confirmed": True, "type_conflict": False}]}
+        point = next(p for p in build_report_document(report)["sections"][0]["key_points"] if p["label"] == "审批程序")
+        assert any(expected in text for text in point["basis"])
+        assert all("①10/②10" not in text for text in point["basis"])
+        assert item["source"] == source
+    report["checklist_summary"]["subjects"][0]["type_conflict"] = True
+    point = next(p for p in build_report_document(report)["sections"][0]["key_points"] if p["label"] == "审批程序")
+    assert any("类型待确认" in text and "专业" in text and "劳务" in text for text in point["basis"])
+
+
+def test_attachment_basis_combines_items_and_names_types_without_internal_symbols():
+    from app.plus.blockchain_supervision.report_document import _point_basis
+    sources = [{"item_id": f"RC-A0{i}", "subject_id": 8,
+                "source": f"《2025 分包报审附件要求》①{i}/②{i}；第一现场指挥部 2025.6.20"} for i in (2, 3, 4)]
+    combined = _point_basis(sources, {8: "labor"})
+    assert len(combined) == 1
+    assert "劳务分包附件第2、3、4项" in combined[0]
+    assert "①" not in combined[0] and "②" not in combined[0]
+    unknown = _point_basis(sources, {})
+    assert "类型待确认" in unknown[0] and "专业" in unknown[0] and "劳务" in unknown[0]
+    specific = _point_basis([{"item_id": "RC-L11", "subject_id": 8,
+                              "source": "《2025 分包报审附件要求》②11；第一现场指挥部 2025.6.20"}], {8: "professional"})
+    assert "劳务分包附件第11项" in specific[0] and "类型不一致" in specific[0]
+
+
+def test_seal_technical_source_is_rephrased_as_a_check_scope_limit():
+    source = "《实施细则》附件3/4签字栏；盖章判断仅适用于本地判章口径，不承诺主链路表现"
+    item = {**_item("signature_chain", "undecidable", "签章", "签章情况需核对"), "source": source}
+    report = _report([item], completed=["completeness", "signature_chain"], selected=["completeness", "signature_chain"])
+    point = next(p for p in build_report_document(report)["sections"][0]["key_points"] if p["label"] == "审批程序")
+    assert "本地判章口径" not in str(point["basis"])
+    assert "主链路" not in str(point["basis"])
+    assert "《实施细则》附件3/4签字栏" in str(point["basis"])
+    assert "签章情况需结合原件核实" in point["summary"]
+    assert item["source"] == source
 
 
 def test_confirmed_missing_required_checklist_material_is_nonconforming():
@@ -112,6 +251,125 @@ def test_confirmed_missing_required_checklist_material_is_nonconforming():
     report["reading_coverage"] = [{"suspect_pages": [1]}]
     point = next(row for row in build_report_document(report)["sections"][0]["key_points"] if row["label"] == "主体资料")
     assert point["verdict"] == "待核实"
+
+
+def test_all_three_required_certificates_follow_same_missing_verdict():
+    for item_id, label in (("RC-A02", "营业执照"), ("RC-A03", "资质证书"), ("RC-A04", "安全生产许可证")):
+        missing = {**_item("completeness", "hit", label, f"报审资料缺{label}"),
+                   "item_id": item_id, "material_missing": True, "source": "报审附件要求"}
+        report = _report([missing], completed=["completeness"], selected=["completeness"])
+        point = next(row for row in build_report_document(report)["sections"][0]["key_points"] if row["label"] == "主体资料")
+        assert point["verdict"] == "不符合"
+        report["reading_coverage"] = [{"suspect_pages": [1]}]
+        point = next(row for row in build_report_document(report)["sections"][0]["key_points"] if row["label"] == "主体资料")
+        assert point["verdict"] == "待核实"
+
+
+def test_applicable_pending_checklist_item_prevents_whole_point_pass():
+    found = {**_item("completeness", "miss", "营业执照", "已查见"),
+             "item_id": "RC-A02", "subject_id": 8, "source": "报审附件清单第2项",
+             "decision_trace": {"evidence_status": "precise"},
+             "evidence": {"material_id": 1, "page": 1, "location_mode": "precise", "quote": "营业执照"}}
+    report = _report([found], completed=["completeness"], selected=["completeness"])
+    report["checklist_summary"] = {"subjects": [{"subject_id": 8, "status": "ready",
+        "checklist_items": [{"item_id": "RC-A02", "status": "miss", "finding_id": 1},
+                            {"item_id": "RC-A03", "label": "资质证书", "status": "pending", "finding_id": None}]}]}
+    point = next(row for row in build_report_document(report)["sections"][0]["key_points"] if row["label"] == "主体资料")
+    assert point["verdict"] == "待核实"
+    assert "资质证书" in point["summary"] and "未完成" in point["summary"]
+    report["checklist_summary"]["subjects"][0]["checklist_items"][1] = {
+        "item_id": "RC-A04", "label": "安全生产许可证", "status": "pending", "finding_id": None}
+    report["sections"][0]["items"].append({**_item("completeness", "hit", "资质证书", "资质证书明确缺失"),
+        "item_id": "RC-A03", "subject_id": 8, "material_missing": True, "source": "报审附件清单第3项"})
+    point = next(row for row in build_report_document(report)["sections"][0]["key_points"] if row["label"] == "主体资料")
+    assert point["verdict"] == "不符合"
+    assert "未完成" in point["summary"]
+
+
+def test_unconfirmed_subject_or_absent_checklist_cannot_prove_completeness():
+    found = {**_item("completeness", "miss", "营业执照", "已查见"),
+             "item_id": "RC-A02", "subject_id": 8, "source": "报审附件清单第2项",
+             "decision_trace": {"evidence_status": "precise"},
+             "evidence": {"material_id": 1, "page": 1, "location_mode": "precise", "quote": "营业执照"}}
+    report = _report([found], completed=["completeness"], selected=["completeness"])
+    for summary in (None, {"subjects": []}, {"subjects": [{"subject_id": 8, "status": "unconfirmed", "checklist_items": []}]},
+                    {"subjects": [{"subject_id": 8, "status": "ready"}]}):
+        report["checklist_summary"] = summary
+        point = next(row for row in build_report_document(report)["sections"][0]["key_points"] if row["label"] == "主体资料")
+        assert point["verdict"] == "待核实"
+        assert "范围" in point["summary"] and "确认" in point["summary"]
+
+
+def test_checklist_result_must_match_visible_findings_before_pass():
+    found = {**_item("completeness", "miss", "营业执照", "已查见"),
+             "finding_id": 1, "item_id": "RC-A02", "subject_id": 8, "source": "报审附件清单第2项",
+             "decision_trace": {"evidence_status": "precise"},
+             "evidence": {"material_id": 1, "page": 1, "location_mode": "precise", "quote": "营业执照"}}
+    report = _report([found], completed=["completeness"], selected=["completeness"])
+    subject = {"subject_id": 8, "status": "ready", "checklist_items": [
+        {"item_id": "RC-A02", "status": "miss", "finding_id": 1},
+        {"item_id": "RC-A03", "status": "miss", "finding_id": 2}]}
+    report["checklist_summary"] = {"subjects": [subject]}
+    point = next(row for row in build_report_document(report)["sections"][0]["key_points"] if row["label"] == "主体资料")
+    assert point["verdict"] == "待核实"
+    assert "范围" in point["summary"]
+    subject["checklist_items"].pop()
+    point = next(row for row in build_report_document(report)["sections"][0]["key_points"] if row["label"] == "主体资料")
+    assert point["verdict"] == "符合"
+
+
+def test_proven_nonconformity_is_not_hidden_by_a_separate_unknown_with_note():
+    missing = {**_item("completeness", "hit", "资质证书", "资质证书明确缺失"),
+               "item_id": "RC-A03", "material_missing": True, "source": "报审附件清单第3项"}
+    unknown = {**_item("completeness", "undecidable", "安全生产许可证", "证照真实性无法核实"),
+               "item_id": "RC-A04", "human_disposition": {"code": "accepted", "note": "正在联系核对"}}
+    report = _report([missing, unknown], completed=["completeness", "signature_chain"],
+                     selected=["completeness", "signature_chain"])
+    point = next(row for row in build_report_document(report)["sections"][0]["key_points"] if row["label"] == "主体资料")
+    assert point["verdict"] == "不符合"
+    assert "资质证书明确缺失" in point["summary"]
+    assert "证照真实性无法核实" in point["summary"]
+    assert "正在联系核对" in point["summary"]
+
+
+def test_proven_missing_document_remains_nonconforming_when_ai_group_incomplete():
+    missing = {**_item("completeness", "hit", "资质证书", "资质证书明确缺失"),
+               "item_id": "RC-A03", "material_missing": True, "source": "报审附件清单第3项"}
+    report = _report([missing], completed=["completeness"], selected=["completeness"])
+    counts = {"not_started": 0, "pending": 0, "completed": 1, "partial": 0, "failed": 1, "not_run": 0}
+    report["ai_coverage"] = {"state": "available", "groups": [
+        {"group_id": "completeness", "state": "available", "counts": counts, "skipped": 0}]}
+    point = next(row for row in build_report_document(report)["sections"][0]["key_points"] if row["label"] == "主体资料")
+    assert point["verdict"] == "不符合"
+    assert "资质证书明确缺失" in point["summary"]
+    assert "辅助核查" in point["summary"]
+
+
+def test_unselected_review_point_shows_dash_and_explains_not_performed():
+    report = _report([], completed=["internal_records"], selected=["internal_records"])
+    document = build_report_document(report)
+    point = next(row for row in document["sections"][0]["key_points"] if row["label"] == "人员资料")
+    assert point["verdict"] == "—"
+    assert "未开展" in point["summary"] or "未选择" in point["summary"]
+    nature = next(row for row in document["sections"][1]["key_points"] if row["label"] == "事项定性")
+    assert nature["verdict"] == "—"
+    assert "未开展" in nature["summary"]
+    report["meta"].update({"title": "示例", "scope": {}})
+    report["business_document"] = document
+    word = Document(BytesIO(export.word_bytes(report)))
+    row = next(r for t in word.tables for r in t.rows if r.cells[0].text.startswith("人员资料"))
+    assert row.cells[2].text == "—"
+    import fitz
+    pdf = fitz.open(stream=export.pdf_bytes(report), filetype="pdf")
+    assert "未开展" in "".join(page.get_text() for page in pdf)
+
+
+def test_partially_selected_stage_marks_only_unselected_points_as_unperformed():
+    document = build_report_document(_report([], completed=["a1"], selected=["a1"]))
+    points = {row["label"]: row for row in document["sections"][1]["key_points"]}
+    assert points["主体资格"]["verdict"] == "—"
+    assert "未开展" in points["主体资格"]["summary"]
+    assert points["负面清单"]["verdict"] == "待核实"
 
 
 def test_cross_stage_personnel_reference_does_not_repeat_human_note():
@@ -164,7 +422,7 @@ def test_report_uses_business_key_points_and_groups_all_limitations():
 
 
 def test_key_point_type_does_not_invent_a_classification():
-    report = _report([])
+    report = _report([], selected=["a1"])
     points = {p["label"]: p["summary"] for p in build_report_document(report)["sections"][1]["key_points"]}
     assert "待核实" in points["事项定性"]
     assert "劳务" not in points["事项定性"]
@@ -225,7 +483,16 @@ def test_report_has_three_columns_and_places_relevant_limitations_in_key_points(
     review_tables = [t for t in word.tables if t.rows[0].cells[0].text == "审查要点及主要依据"]
     assert len(review_tables) == 5 and all(len(t.columns) == 3 for t in review_tables)
     assert all(t.rows[0].cells[0].paragraphs[0].paragraph_format.keep_with_next for t in review_tables)
+    from docx.oxml.ns import qn
+    first = review_tables[0]
+    assert first.rows[0].cells[0]._tc.tcPr.find(qn("w:shd")).get(qn("w:fill")) == "173A64"
+    assert str(first.rows[0].cells[0].paragraphs[0].runs[0].font.color.rgb) == "FFFFFF"
+    assert first.rows[1].cells[0]._tc.tcPr.find(qn("w:shd")).get(qn("w:fill")) == "F2F5F9"
+    assert first.rows[1].cells[0].paragraphs[0].runs[0].bold is True
+    assert first.rows[1]._tr.trPr.find(qn("w:cantSplit")) is not None
     pdf = fitz.open(stream=export.pdf_bytes(report), filetype="pdf")
+    assert any(d.get("fill") and d["fill"][2] > d["fill"][0] * 1.2
+               and max(d["fill"]) < 0.6 for page in pdf for d in page.get_drawings())
     for rendered in (text, "\n".join(page.get_text() for page in pdf)):
         assert "五、核查说明" not in rendered and "状态未标注" not in rendered
         normalized = rendered.replace("\n", "")
@@ -453,6 +720,7 @@ def test_business_pdf_tables_repeat_headers_and_keep_long_human_note():
 
 def test_word_summary_rows_allow_pagination_and_repeat_headers():
     item = _item('internal_records', 'hit', '内部记录', '风险内容' * 1200 + '末尾标识')
+    item['human_disposition'] = {'code': 'accepted', 'note': '人工说明' * 1200 + '备注末尾'}
     report = _report([item], completed=['internal_records'], selected=['internal_records'])
     report['meta'].update({'title': '示例', 'scope': {}})
     report['business_document'] = build_report_document(report)
@@ -464,6 +732,7 @@ def test_word_summary_rows_allow_pagination_and_repeat_headers():
     assert issue_table.rows[1]._tr.trPr is None or issue_table.rows[1]._tr.trPr.find('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}cantSplit') is None
     assert '内部记录' in issue_table.rows[1].cells[1].text
     assert '末尾标识' not in issue_table.rows[1].cells[1].text
+    assert '备注末尾' in issue_table.rows[1].cells[1].text
 
 
 def test_report_digest_ignores_projected_generation_date():

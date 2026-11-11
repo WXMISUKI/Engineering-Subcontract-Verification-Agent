@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 import re
+from . import report_policy
 
 _CATEGORIES = (
     ("要素完整性核查", {"completeness", "signature_chain"},
@@ -17,6 +18,7 @@ _CATEGORIES = (
      ("核查材料情况", "内部记录核查情况", "核查范围及限制")),
 )
 _KIND_GROUP = {kind: group for group, kinds, _fields in _CATEGORIES for kind in kinds}
+_SEAL_SOURCE_LIMIT = "；盖章判断仅适用于本地判章口径，不承诺主链路表现"
 
 _KEY_POINTS = (
     (("报审资料", "报审资料"), ("主体资料", "主体资料"), ("人员资料", "人员资料"),
@@ -73,13 +75,39 @@ def _key_point_status(items: list[dict], complete: bool, reading_incomplete: boo
     return "已核查"
 
 
-def _point_basis(items: list[dict]) -> list[str]:
+def _point_basis(items: list[dict], subject_types: dict | None = None) -> list[str]:
     groups = {}
+    annex_groups = {}
     result = []
     for item in items:
         source = " ".join(str(item.get("source") or "").split())
         if not source:
             continue
+        if item.get("kind") == "signature_chain" and _SEAL_SOURCE_LIMIT in source:
+            source = source.replace(_SEAL_SOURCE_LIMIT, "")
+        match_annex = re.fullmatch(
+            r"《2025 分包报审附件要求》(?:①(\d+)(?:/②(\d+))?|②(\d+))；第一现场指挥部 2025\.6\.20", source)
+        if match_annex:
+            professional, labor_pair, labor_only = match_annex.groups()
+            subject_type = (subject_types or {}).get(item.get("subject_id"))
+            item_id = str(item.get("item_id") or "")
+            shared = professional and labor_pair and professional == labor_pair and item_id == f"RC-A{int(professional):02d}"
+            specific = (professional and not labor_pair and item_id == f"RC-P{int(professional):02d}") or (
+                labor_only and item_id == f"RC-L{int(labor_only):02d}")
+            if shared or specific:
+                source_type = None if shared else "professional" if professional else "labor"
+                selected_type = subject_type if shared and subject_type in {"professional", "labor"} else source_type
+                label = {"professional": "专业分包", "labor": "劳务分包"}.get(selected_type, "专业分包和劳务分包")
+                suffix = ("（主体类型待确认）" if subject_type not in {"professional", "labor"} else
+                          "（与主体类型不一致，需核实）" if source_type and source_type != subject_type else "")
+                key = (label, suffix)
+                if key not in annex_groups:
+                    annex_groups[key] = []
+                    result.append(("annex", key))
+                number = professional or labor_only
+                if number not in annex_groups[key]:
+                    annex_groups[key].append(number)
+                continue
         match = re.match(r"^(《[^》]+》)(第[一二三四五六七八九十百零〇0-9]+条).*（规则目录 [^）]+）$", source)
         if match:
             title, article = match.groups()
@@ -90,22 +118,48 @@ def _point_basis(items: list[dict]) -> list[str]:
                 groups[title].append(article)
         elif ("source", source) not in result:
             result.append(("source", source))
-    return [value + "、".join(groups[value]) if kind == "group" else value for kind, value in result]
+    return [(value + "、".join(groups[value]) if kind == "group" else
+             "《2025 分包报审附件要求》%s附件第%s项%s；第一现场指挥部 2025.6.20" %
+             (value[0], "、".join(annex_groups[value]), value[1]) if kind == "annex" else value)
+            for kind, value in result]
 
 
-def _point_verdict(items: list[dict], complete: bool, reading_incomplete: bool) -> str:
+def _proven_required_material_missing(items: list[dict], policy=None, subject_types=None, baseline_date=None) -> bool:
+    def allowed(item):
+        if policy is None:
+            return item.get("item_id") in {"RC-A02", "RC-A03", "RC-A04"}
+        subject_type = (subject_types or {}).get(item.get("subject_id"))
+        return any(rule["item_id"] == item.get("item_id") and rule["kind"] == item.get("kind")
+                   and subject_type in rule["subject_types"] and report_policy.rule_applies_on(rule, baseline_date)
+                   for rule in policy["rules"])
+    return any(item.get("kind") == "completeness" and allowed(item)
+           and item.get("status") == "hit" and item.get("material_missing") is True
+           and not item.get("reading_limited") and str(item.get("source") or "").strip()
+           and not ((item.get("human_disposition") or {}).get("code") == "accepted"
+                    and str((item.get("human_disposition") or {}).get("note") or "").strip())
+           for item in items)
+
+
+def _point_verdict(items: list[dict], complete: bool, reading_incomplete: bool, scope_pending: bool = False,
+                   policy=None, subject_types=None, baseline_date=None) -> str:
     # hit 包括预警，severity 是排序档位，均不足以判断不符合或基本符合。
     if not items or not complete or reading_incomplete:
         return "待核实"
+    # 三类必需证照采用用户确认的缺件口径；不扩展至其他材料。
+    if _proven_required_material_missing(items, policy, subject_types, baseline_date):
+        return "不符合"
     if any((item.get("human_disposition") or {}).get("code") == "accepted"
            and str((item.get("human_disposition") or {}).get("note") or "").strip() for item in items):
         return "待核实"
-    # RC-A03 是报审附件清单中的资质证书；明确缺件代表该要点未满足资料要求。
-    if any(item.get("kind") == "completeness" and item.get("item_id") == "RC-A03"
-           and item.get("status") == "hit" and item.get("material_missing") is True
-           and not item.get("reading_limited") and str(item.get("source") or "").strip()
+    if scope_pending:
+        return "待核实"
+    # A2-04 仅做证照文字类别比对，不覆盖等级、规模及真实性。
+    if any(item.get("kind") == "qualification_match" and item.get("item_id") == "A2-04"
            for item in items):
-        return "不符合"
+        return "待核实"
+    # 负面清单内核只对召回条目产出结果，单条未命中不证明整个适用清单已覆盖。
+    if any(item.get("kind") == "negative_list" for item in items):
+        return "待核实"
     def precise_evidence(item):
         ref = item.get("evidence")
         return (isinstance(ref, dict) and ref.get("material_id") is not None
@@ -220,8 +274,12 @@ def _field_summary(label: str, items: list[dict], complete: bool) -> str:
         statements = []
         suggestions = []
         grouped_gaps = []
+        unresolved_labels = []
         grouped_uncertain = sum(1 for item in pending if item.get("status") == "undecidable"
                                 and (item.get("missing") or {}).get("labels")) > 1
+        group_plain_uncertain = sum(1 for item in pending if item.get("status") == "undecidable"
+                                    and not (item.get("missing") or {}).get("labels")
+                                    and not str((item.get("human_disposition") or {}).get("note") or "").strip()) > 3
         for item in pending:
             message = " ".join(str(item.get("message") or "").split())
             item_label = pending_label(item)
@@ -239,6 +297,10 @@ def _field_summary(label: str, items: list[dict], complete: bool) -> str:
                     gap = str(gap).strip()
                     if gap and gap not in grouped_gaps:
                         grouped_gaps.append(gap)
+            elif (group_plain_uncertain and item.get("status") == "undecidable" and not missing
+                  and not str((item.get("human_disposition") or {}).get("note") or "").strip()):
+                if item_label not in unresolved_labels:
+                    unresolved_labels.append(item_label)
             elif statement and statement not in statements:
                 statements.append(statement)
             suggestion = " ".join(str(item.get("recommendation") or "").split()).rstrip("。； ")
@@ -247,11 +309,18 @@ def _field_summary(label: str, items: list[dict], complete: bool) -> str:
         if statements:
             parts.append("核查情况：" + "；".join(statements))
         if grouped_gaps:
-            parts.append("相关事项因以下资料或事实不足尚无法判断：" + "、".join(grouped_gaps))
+            parts.append("相关事项因以下资料或事实不足尚无法判断：" + "、".join(grouped_gaps[:4])
+                         + ("等相关资料或事实" if len(grouped_gaps) > 4 else ""))
+        if unresolved_labels:
+            parts.append("尚需核实：" + "、".join(unresolved_labels[:3])
+                         + ("等事项" if len(unresolved_labels) > 3 else ""))
         if suggestions:
             parts.append("核查建议：" + "；".join(suggestions))
     if notes:
         parts.append("人工补充：" + "；".join(notes))
+    if any(item.get("kind") == "signature_chain" and _SEAL_SOURCE_LIMIT in str(item.get("source") or "")
+           for item in items):
+        parts.append("签章情况需结合原件核实")
     if not complete:
         parts.append("本类核查尚未完成")
     return "；".join(parts) + "。"
@@ -265,10 +334,14 @@ def _cross_stage_reference(item: dict, category: str, point: str) -> dict:
             "recommendation": None, "missing": None, "human_disposition": None}
 
 
-def _field_matches(field: str, item: dict) -> bool:
+def _field_matches(field: str, item: dict, policy=None) -> bool:
     kind = item.get("kind")
     item_id = str(item.get("item_id") or "")
     label = str(item.get("label") or "")
+    if policy is not None and "bindings" in policy and not (kind == "cert_validity" and item_id == "A2-02"):
+        return any(row["kind"] == kind and row["field"] == field
+                   and ("*" in row["item_ids"] or item_id in row["item_ids"])
+                   for row in policy["bindings"])
     if kind == "signature_chain":
         return field == "签字盖章及审批资料"
     if kind == "completeness":
@@ -344,6 +417,94 @@ def _kind_completed(kind: str, completed: set[str]) -> bool:
     return group in completed
 
 
+def _field_groups(title: str, field: str) -> set[str]:
+    if title == "要素完整性核查":
+        groups = {"completeness", "signature_chain"} if field == "签字盖章及审批资料" else {"completeness"}
+    elif title == "资质与内容合规性审查":
+        groups = {"a2"} if field == "分包性质与资质匹配" else {"a1"}
+    elif title == "关键岗位人员核查":
+        groups = {"completeness"} if field in {"主要人员及岗位", "特殊工种人员"} else {"a2"}
+    elif title == "证件证照有效性核查":
+        groups = {"a2"}
+    else:
+        groups = {"internal_records"}
+    return groups
+
+
+def _field_selected(title: str, field: str, selected: set[str]) -> bool:
+    return bool(_field_groups(title, field).intersection(selected))
+
+
+def _pending_checklist_labels(report: dict, title: str, field: str, policy=None) -> list[str]:
+    if "completeness" not in _field_groups(title, field):
+        return []
+    labels = []
+    for subject in (report.get("checklist_summary") or {}).get("subjects") or []:
+        for row in subject.get("checklist_items") or []:
+            if row.get("status") != "pending":
+                continue
+            item = {**row, "kind": "completeness"}
+            if _field_matches(field, item, policy):
+                label = str(row.get("label") or "适用资料")
+                if label not in labels:
+                    labels.append(label)
+    return labels
+
+
+def _checklist_scope_unavailable(report: dict, title: str, field: str, items: list[dict], policy=None) -> bool:
+    if "completeness" not in _field_groups(title, field):
+        return False
+    summary = report.get("checklist_summary")
+    if not isinstance(summary, dict):
+        return True
+    subjects = summary.get("subjects")
+    if not isinstance(subjects, list) or not subjects:
+        return True
+    projected = {(item.get("subject_id"), item.get("item_id"), item.get("finding_id"))
+                 for item in items if item.get("kind") == "completeness"}
+    for subject in subjects:
+        if (not isinstance(subject, dict) or subject.get("status") != "ready"
+                or not isinstance(subject.get("checklist_items"), list)):
+            return True
+        for row in subject["checklist_items"]:
+            if not isinstance(row, dict):
+                return True
+            if row.get("status") == "pending" or not _field_matches(field, {**row, "kind": "completeness"}, policy):
+                continue
+            key = (subject.get("subject_id"), row.get("item_id"), row.get("finding_id"))
+            if row.get("finding_id") is None or key not in projected:
+                return True
+    return False
+
+
+def _point_ai_incomplete(ai_coverage, groups: set[str]) -> bool:
+    """仅使用可确认归属的 AI 分组；覆盖结构不完整时保持保守。"""
+    if ai_coverage is None:
+        return False
+    if not isinstance(ai_coverage, dict) or ai_coverage.get("state") != "available":
+        return True
+    rows = ai_coverage.get("groups")
+    known = {"a1", "a2", "completeness", "signature_chain", "internal_records"}
+    if not isinstance(rows, list) or any(not isinstance(row, dict) or row.get("group_id") not in known for row in rows):
+        return True
+    if len({row["group_id"] for row in rows}) != len(rows):
+        return True
+    for row in rows:
+        if row["group_id"] not in groups:
+            continue
+        counts = row.get("counts")
+        required = {"not_started", "pending", "completed", "partial", "failed", "not_run"}
+        if (row.get("state") != "available" or not isinstance(counts, dict) or not required.issubset(counts)
+                or any(type(counts[key]) is not int or counts[key] < 0 for key in required)):
+            return True
+        skipped = row.get("skipped")
+        if type(skipped) is not int or skipped < 0 or skipped:
+            return True
+        if any(counts[state] for state in ("not_started", "pending", "partial", "failed", "not_run")):
+            return True
+    return False
+
+
 def _merge_duplicate_issues(items: list[dict]) -> list[dict]:
     """Only merge identical statements with a confirmed subject and source location."""
     merged = []
@@ -407,10 +568,10 @@ def summarize_report_issues(issues: list[dict]) -> tuple[list[dict], list[dict]]
     return pending, notes
 
 
-def _summary_theme(item: dict) -> str:
+def _summary_theme(item: dict, policy=None) -> str:
     for _title, kinds, fields in _CATEGORIES:
         if item.get("kind") in kinds:
-            return next((field for field in fields if _field_matches(field, item)),
+            return next((field for field in fields if _field_matches(field, item, policy)),
                         str(item.get("label") or "核查事项"))
     return str(item.get("label") or "核查事项")
 
@@ -420,7 +581,14 @@ def build_report_document(report: dict) -> dict:
     basic = report.get("basic_information") or {}
     meta = report.get("meta") or {}
     coverage = report.get("coverage") or {}
+    reference = report.get("reference_snapshot") or {}
+    policy = report_policy.read_frozen_policy(reference["report_policy"]) if "report_policy" in reference else None
     selected, completed = _selected_groups(coverage), _complete_groups(coverage)
+    subject_types = {row.get("subject_id"): row.get("subject_type")
+                     for row in (report.get("checklist_summary") or {}).get("subjects") or []
+                     if row.get("subject_id") is not None and row.get("status") == "ready"
+                     and row.get("type_confirmed") is True and not row.get("type_conflict")
+                     and row.get("subject_type") in {"labor", "professional"}}
     reading_incomplete = any(
         isinstance(row, dict) and (row.get("summary_text") or row.get("unread_pages") or row.get("suspect_pages"))
         for row in report.get("reading_coverage") or []
@@ -441,7 +609,7 @@ def build_report_document(report: dict) -> dict:
                      and not item.get("open_term")
                      and item.get("status") in {"hit", "undecidable"}]
     categories = []
-    for title, kinds, fields in _CATEGORIES:
+    for category_index, (title, kinds, fields) in enumerate(_CATEGORIES):
         selected_kinds = {kind for kind in kinds if _kind_selected(kind, selected)}
         rows = [item for item in visible_items if item.get("kind") in kinds]
         category_items = [item for item in all_items if item.get("kind") in kinds
@@ -454,7 +622,7 @@ def build_report_document(report: dict) -> dict:
         active_category_items = [item for item in category_items
                                  if (item.get("human_disposition") or {}).get("code") != "ignored"
                                  and (item.get("review") or {}).get("decision") != "ignored"]
-        by_label = {field: [row for row in active_category_items if _field_matches(field, row)] for field in fields}
+        by_label = {field: [row for row in active_category_items if _field_matches(field, row, policy)] for field in fields}
         if title == "关键岗位人员核查":
             supporting = [item for item in all_items if not item.get("open_term")
                           and item.get("status") in {"hit", "miss", "undecidable"}
@@ -467,6 +635,13 @@ def build_report_document(report: dict) -> dict:
             by_label["人员与证件对应"].extend(_cross_stage_reference(item, "证件证照有效性核查", "证件信息一致性") for item in supporting
                 if item.get("kind") == "cert_validity" and item.get("item_id") == "A2-05")
         summaries = {field: _field_summary(field, by_label[field], complete) for field in fields}
+        if title == "资质与内容合规性审查" and any(
+                item.get("item_id") == "A2-04" for item in by_label["分包性质与资质匹配"]):
+            field = "分包性质与资质匹配"
+            summaries[field] = summaries[field].replace("已核查符合：", "已完成初步文字比对：")
+            summaries[field] += "该比对未核定资质等级、工程规模及证照真实性。"
+        if title == "资质与内容合规性审查" and by_label["拟分包内容与负面清单"]:
+            summaries["拟分包内容与负面清单"] += "现有结果仅覆盖已识别事项，适用清单覆盖完整性需核实。"
         if title == "关键岗位人员核查":
             field_groups = {"主要人员及岗位": "completeness", "特殊工种人员": "completeness",
                             "人员与证件对应": "a2", "劳动关系及社保": "a2"}
@@ -479,6 +654,23 @@ def build_report_document(report: dict) -> dict:
             summaries["证照真实性及核验情况"] = "当前报告未提供可单独归纳的原件或官方真实性核验结果。"
         if title == "内部信用与事故材料核查":
             summaries["核查范围及限制"] = "本项依据本次提供的内部材料，未开展外部信用渠道查询。"
+        displayed_fields = {source for _label, source in _KEY_POINTS[category_index]}
+        disclosed_ai_groups = set()
+        for field in fields:
+            if not _field_selected(title, field, selected):
+                summaries[field] = "本次未选择，未开展该项核查。"
+            else:
+                pending_labels = _pending_checklist_labels(report, title, field, policy)
+                if pending_labels:
+                    summaries[field] += "适用资料%s尚未完成核查。" % "、".join(pending_labels)
+                if _checklist_scope_unavailable(report, title, field, by_label[field], policy):
+                    summaries[field] += "主体或适用资料范围尚未确认。"
+                ai_groups = frozenset(_field_groups(title, field))
+                if (field in displayed_fields and (ai_groups not in disclosed_ai_groups
+                        or _proven_required_material_missing(by_label[field], policy, subject_types, meta.get("baseline_date")))
+                        and _point_ai_incomplete(ai_coverage, set(ai_groups))):
+                    summaries[field] += "本阶段相关辅助核查未完成或依据关联不足，需结合相关资料核实。"
+                    disclosed_ai_groups.add(ai_groups)
         summary = _status_sentence(rows, complete, bool(category_items))
         if selected_kinds and reading_incomplete:
             if complete and category_items and not rows:
@@ -489,10 +681,15 @@ def build_report_document(report: dict) -> dict:
             "status": "complete" if complete and category_items and not reading_incomplete else "incomplete" if applicable else "not_selected",
             "summary": summary,
             "fields": [{"label": field, "summary": summaries[field],
-                        "basis": _point_basis(by_label[field]),
-                        "verdict": _point_verdict(by_label[field],
-                            ((field_groups.get(field) in completed) if title == "关键岗位人员核查" and field in field_groups else complete),
-                            reading_incomplete or ai_incomplete),
+                        "basis": _point_basis(by_label[field], subject_types),
+                        "verdict": ("—" if not _field_selected(title, field, selected)
+                            else _point_verdict(by_label[field],
+                            _field_groups(title, field).issubset(selected) and _field_groups(title, field).issubset(completed),
+                            reading_incomplete,
+                            _point_ai_incomplete(ai_coverage, _field_groups(title, field))
+                            or bool(_pending_checklist_labels(report, title, field, policy))
+                            or _checklist_scope_unavailable(report, title, field, by_label[field], policy),
+                            policy, subject_types, meta.get("baseline_date"))),
                         "status": _key_point_status(by_label[field],
                             ((field_groups.get(field) in completed) if title == "关键岗位人员核查" and field in field_groups else complete),
                             reading_incomplete)}
@@ -507,28 +704,31 @@ def build_report_document(report: dict) -> dict:
                                  for label, source in _KEY_POINTS[index]]
         title, kinds, field_names = _CATEGORIES[index]
         unmapped = [item for item in visible_items if item.get("kind") in kinds
-                    and not any(_field_matches(field, item) for field in field_names)]
+                    and not any(_field_matches(field, item, policy) for field in field_names)]
         if unmapped:
             section["key_points"].append({"label": "其他核查事项",
                 "summary": _field_summary("其他核查事项", unmapped, section["status"] == "complete"),
                 "status": _key_point_status(unmapped, section["status"] == "complete", reading_incomplete),
-                "basis": _point_basis(unmapped),
+                "basis": _point_basis(unmapped, subject_types),
                 "verdict": _point_verdict(unmapped, section["status"] == "complete", reading_incomplete or ai_incomplete)})
     # 配置开启的其他核查结果仍需展示，不能随待处理章节删除而丢失；不扩充核查范围。
     other_items = [item for item in visible_items if item.get("kind") not in _KIND_GROUP]
     if other_items:
         categories[0]["key_points"].append({"label": "其他已执行核查事项",
             "summary": _field_summary("其他核查事项", other_items, False),
-            "status": "待核实", "basis": _point_basis(other_items), "verdict": "待核实"})
+            "status": "待核实", "basis": _point_basis(other_items, subject_types), "verdict": "待核实"})
     subcontract_type = basic.get("subcontract_type")
     type_summary = ("当前识别类型：%s；事项性质及适用要求需结合合同核实。" % subcontract_type
                     if isinstance(subcontract_type, str) and subcontract_type.strip()
                     else "事项类型及性质待核实。")
-    categories[1]["key_points"].insert(0, {"label": "事项定性", "summary": type_summary, "status": "待核实", "basis": [], "verdict": "待核实"})
+    type_selected = bool({"a1", "a2"}.intersection(selected))
+    categories[1]["key_points"].insert(0, {"label": "事项定性",
+        "summary": type_summary if type_selected else "本次未选择，未开展该项核查。",
+        "status": "待核实", "basis": [], "verdict": "待核实" if type_selected else "—"})
     issues = _merge_duplicate_issues([{
         "category": item.get("category") or item.get("kind"),
         "label": item.get("label") or item.get("item_id"),
-        "summary_theme": _summary_theme(item),
+        "summary_theme": _summary_theme(item, policy),
         "status": item.get("status"),
         "material_missing": item.get("material_missing") is True,
         "missing": item.get("missing"),

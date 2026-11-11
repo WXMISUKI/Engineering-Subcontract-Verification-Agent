@@ -20,6 +20,7 @@ from . import report_contract_type
 from .models import (STATUS_CODES, STATUS_LABELS, STATUS_UNDECIDABLE,
                      BsFinding, BsMaterial, BsSubject, BsTask, BsTaskEvent,
                      BsReviewVersion)
+from .basis_subject_projection import SHARED_ATTACHMENT_IDS, subject_basis_view
 from .rules import (basis_lookup, configured_basis_lookup, load_config, load_report_checklist, load_signature_chains,
                     load_transfer_rules, negative_list_rules)
 from .severity import SEVERITY_LABELS
@@ -1616,8 +1617,13 @@ def build_opinion(db: Session, task: BsTask) -> dict:
                     basis.append(dict(view))
     else:
         lookup = configured_basis_lookup(as_of=task.baseline_date)
+        subject_ids = {item.get("subject_id") for item in items
+                       if item.get("item_id") in SHARED_ATTACHMENT_IDS and item.get("subject_id") is not None}
+        subjects_by_id = {subject.id: subject for subject in db.query(BsSubject).filter(
+            BsSubject.task_id == task.id, BsSubject.id.in_(subject_ids)).all()} if subject_ids else {}
         for item in items:
-            view = lookup.get(item["item_id"])
+            view = subject_basis_view(item["item_id"], lookup, subjects_by_id.get(item.get("subject_id")),
+                                      as_of=task.baseline_date)
             if not view or view["clause_id"] in seen:
                 continue
             seen.add(view["clause_id"])

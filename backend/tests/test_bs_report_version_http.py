@@ -59,6 +59,107 @@ def _seed_version(engine, task_id):
         return material.id
 
 
+def test_confirmed_report_gate_keeps_unresolved_review_blocking(tmp_path):
+    import pytest
+    from fastapi import HTTPException
+    from app.plus.blockchain_supervision.models import BsFinding
+    from app.plus.blockchain_supervision.router import _require_no_pending_hits
+
+    _client_instance, engine, task_id = _client(tmp_path)
+    with Session(engine) as db:
+        finding = BsFinding(task_id=task_id, item_id="A2-04", kind="qualification_match",
+                            status="undecidable", message="资质匹配无法核实")
+        db.add(finding)
+        db.commit()
+        _require_no_pending_hits(db, task_id, "draft")
+        with pytest.raises(HTTPException) as blocked:
+            _require_no_pending_hits(db, task_id, "confirmed")
+        assert blocked.value.status_code == 409
+        assert blocked.value.detail["code"] == "pending_undecidable_review"
+        assert finding.id in blocked.value.detail["finding_ids"]
+        finding.review_json = {"decision": "accepted", "note": "经人工核实"}
+        db.commit()
+        _require_no_pending_hits(db, task_id, "confirmed")
+
+
+def test_report_policy_activation_http_requires_owner_and_matching_versions(tmp_path, monkeypatch):
+    import copy
+    from app.plus.blockchain_supervision import knowledge_runs, reference_snapshots, report_policy, service
+
+    client, engine, task_id = _client(tmp_path)
+    policy = report_policy.load_current_policy()
+    monkeypatch.setattr(report_policy, "load_current_policy", lambda: copy.deepcopy(policy))
+    monkeypatch.setattr(knowledge_runs, "load_reference_package", lambda **kwargs: {"version": "test"})
+    monkeypatch.setattr(reference_snapshots, "build_review_seed", lambda *args, **kwargs: {
+        "review_run_id": kwargs["review_run_id"], "expected_groups": [], "steps": []})
+    with Session(engine) as db:
+        task = db.get(BsTask, task_id)
+        seed = service.initialize_reference_review(db, task)
+        db.commit()
+    policy["version"] = "1.0.1"
+    next(row for row in policy["bindings"] if row["kind"] == "completeness" and row["field"] == "主体资料")["item_ids"].remove("RC-A05")
+    next(row for row in policy["bindings"] if row["kind"] == "completeness" and row["field"] == "合同及清单")["item_ids"].append("RC-A05")
+    url = f"/api/plus/blockchain-supervision/tasks/{task_id}/report-policy"
+    preview = client.get(url)
+    assert preview.status_code == 200
+    data = preview.json()
+    assert data["review_run_id"] == seed["review_run_id"]
+    assert data["current"]["sha256"] == seed["report_policy"]["sha256"]
+    assert data["target"]["version"] == "1.0.1"
+    assert any(row["item_id"] == "RC-A05" and row["before"] == "主体资料" and row["after"] == "合同及清单"
+               for row in data["changed_bindings"])
+    body = {"expected_review_id": data["review_run_id"],
+            "expected_previous_sha256": data["current"]["sha256"],
+            "expected_target_sha256": data["target"]["sha256"]}
+    changed = client.post(url + "/activate", json=body)
+    assert changed.status_code == 200, changed.text
+    assert client.post(url + "/activate", json=body).status_code == 409
+    assert client.post("/api/login", json={"username": "bob", "password": "Bob-pass-123"}).status_code == 200
+    assert client.get(url).status_code in (403, 404)
+    assert client.post(url + "/activate", json=body).status_code in (403, 404)
+
+
+def test_corrupted_frozen_policy_returns_explainable_conflict_for_report_outputs(tmp_path, monkeypatch):
+    import copy
+    from app.plus.blockchain_supervision import knowledge_runs, reference_snapshots, service
+    from app.plus.blockchain_supervision import router as bs_router
+    from app.plus.blockchain_supervision.models import BsTaskEvent
+
+    client, engine, task_id = _client(tmp_path)
+    monkeypatch.setattr(knowledge_runs, "load_reference_package", lambda **kwargs: {"version": "test"})
+    monkeypatch.setattr(reference_snapshots, "build_review_seed", lambda *args, **kwargs: {
+        "review_run_id": kwargs["review_run_id"], "expected_groups": [], "steps": []})
+    monkeypatch.setattr(bs_router, "_require_current_output_ready", lambda *args, **kwargs: None)
+    with Session(engine) as db:
+        task = db.get(BsTask, task_id)
+        service.initialize_reference_review(db, task)
+        db.flush()
+        event = db.query(BsTaskEvent).filter_by(task_id=task_id, event_type=reference_snapshots.REVIEW_EVENT).one()
+        payload = copy.deepcopy(event.payload_json)
+        payload["report_policy"]["content"]["version"] = "2.0.0"
+        event.payload_json = payload
+        db.commit()
+    base = f"/api/plus/blockchain-supervision/tasks/{task_id}"
+    for suffix in ("/report", "/opinion", "/report/export?fmt=pdf", "/report/evidence-bundle"):
+        response = client.get(base + suffix)
+        assert response.status_code == 409, (suffix, response.text)
+        assert "报告规则快照" in response.json()["detail"]
+
+
+def test_start_reports_invalid_policy_as_conflict_and_keeps_task_state(tmp_path, monkeypatch):
+    from app.plus.blockchain_supervision import knowledge_runs, report_policy, service
+    client, engine, task_id = _client(tmp_path)
+    monkeypatch.setattr(knowledge_runs, "load_reference_package", lambda **kwargs: {"version": "test"})
+    def invalid_start(*args, **kwargs):
+        raise report_policy.InvalidReportPolicy("报告策略文件无法读取或解析")
+    monkeypatch.setattr(service, "start_review", invalid_start)
+    response = client.post(f"/api/plus/blockchain-supervision/tasks/{task_id}/start")
+    assert response.status_code == 409
+    assert "报告规则" in response.json()["detail"]
+    with Session(engine) as db:
+        assert db.get(BsTask, task_id).state == "setup"
+
+
 def test_history_version_and_page_are_read_only_and_cross_user_is_hidden(tmp_path):
     client, engine, task_id = _client(tmp_path)
     material_id = _seed_version(engine, task_id)

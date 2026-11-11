@@ -1,0 +1,26 @@
+{
+  "schema_version": "bs-report-policy.v1",
+  "policy_id": "confirmed-certificate-baseline",
+  "version": "1.0.0",
+  "bindings": [
+    {"kind":"completeness", "item_ids":["RC-08"], "field":"报审资料"},
+    {"kind":"completeness", "item_ids":["RC-A02","RC-A03","RC-A04","RC-A05","RC-A06"], "field":"主体资料"},
+    {"kind":"completeness", "item_ids":["RC-A01"], "field":"合同及清单"},
+    {"kind":"completeness", "item_ids":["RC-09","RC-A10"], "field":"签字盖章及审批资料"},
+    {"kind":"completeness", "item_ids":["RC-A07","RC-A08","RC-A09","RC-P11","RC-P12","RC-P13","RC-P14","RC-P15","RC-P16","RC-L11","RC-L12","RC-L13","RC-L14"], "field":"人员资料"},
+    {"kind":"signature_chain", "item_ids":["*"], "field":"签字盖章及审批资料"},
+    {"kind":"qualification_match", "item_ids":["*"], "field":"分包性质与资质匹配"},
+    {"kind":"negative_list", "item_ids":["*"], "field":"拟分包内容与负面清单"},
+    {"kind":"transfer_scope", "item_ids":["*"], "field":"转包与违法分包情形"},
+    {"kind":"illegal_subcontract", "item_ids":["*"], "field":"转包与违法分包情形"},
+    {"kind":"a1_dependency", "item_ids":["*"], "field":"审批及责任约定"},
+    {"kind":"person_consistency", "item_ids":["*"], "field":"劳动关系及社保"},
+    {"kind":"cert_validity", "item_ids":["A2-03","A2-05"], "field":"证件信息一致性"},
+    {"kind":"internal_records", "item_ids":["*"], "field":"内部记录核查情况"}
+  ],
+  "rules": [
+    {"id": "certificate-A02", "kind": "completeness", "item_id": "RC-A02", "point": "主体资料", "subject_types": ["professional", "labor"], "predicate": "required_certificate_missing", "verdict": "不符合", "basis": "2025年分包报审资料附件要求第2项", "approved": true},
+    {"id": "certificate-A03", "kind": "completeness", "item_id": "RC-A03", "point": "主体资料", "subject_types": ["professional", "labor"], "predicate": "required_certificate_missing", "verdict": "不符合", "basis": "2025年分包报审资料附件要求第3项", "approved": true},
+    {"id": "certificate-A04", "kind": "completeness", "item_id": "RC-A04", "point": "主体资料", "subject_types": ["professional", "labor"], "predicate": "required_certificate_missing", "verdict": "不符合", "basis": "2025年分包报审资料附件要求第4项", "approved": true}
+  ]
+}

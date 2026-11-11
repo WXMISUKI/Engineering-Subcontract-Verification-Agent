@@ -28,7 +28,7 @@ from . import (a1_check, a2_check, a3_check, extract, internal_records, parsing,
                ruleset, rule_item_catalog, checklist, knowledge, material_versions, supplement_impact,
                supplement_generation, ai_guarded_review, ai_advisory_snapshots, ai_review_batch, reference_visibility,
                personnel_evidence, certificate_number_check, identity_observation, negative_candidate_plan,
-               section_projection, material_confirmation)
+               section_projection, material_confirmation, report_policy)
 from ..startup_conditions_check.llm import client_from_env, run_sync
 from .classify import ROLE_LABELS, classify_material, validate_materials
 from .finding_text import bounded_finding_message
@@ -2748,6 +2748,7 @@ def run_a1_checks(db: Session, task: BsTask) -> list:
 def initialize_reference_review(db: Session, task: BsTask, *, rule_fingerprint: str = None,
                                 ai_auto_groups: list[str] | None = None) -> dict:
     """调用方持有任务锁且已flush业务输入；新代及固定依据在业务事务内冻结。"""
+    frozen_report_policy = report_policy.freeze_policy(report_policy.load_current_policy())
     knowledge_runs.clear_reference_run(task)
     review_id = uuid.uuid4().hex
     frozen_rule_fingerprint = rule_fingerprint or knowledge_runs.rule_fingerprint()
@@ -2756,12 +2757,44 @@ def initialize_reference_review(db: Session, task: BsTask, *, rule_fingerprint: 
         material_fingerprint=knowledge_runs.material_fingerprint(db, task),
         rule_fingerprint=frozen_rule_fingerprint,
         package=knowledge_runs.load_reference_package(as_of=task.baseline_date))
+    seed["report_policy"] = frozen_report_policy
     seed["ai_auto_enabled"] = True
     seed["ai_auto_groups"] = list(seed["expected_groups"] if ai_auto_groups is None else ai_auto_groups)
     task.options_snapshot_json = {**(task.options_snapshot_json or {}),
         reference_snapshots.REVIEW_POINTER: review_id, reference_snapshots.GROUP_POINTERS: {}}
     add_event(db, task.id, reference_snapshots.REVIEW_EVENT, stage="check", payload=seed, commit=False)
     return seed
+
+
+def activate_report_policy(db: Session, task: BsTask, *, expected_review_id: str,
+                           expected_previous_sha256: str | None, expected_target_sha256: str,
+                           operator_id, operator_type) -> dict:
+    """受控切换当前报告策略；不更改核查输入、历史快照或触发模型。"""
+    locked = db.query(BsTask).filter(BsTask.id == task.id).populate_existing().with_for_update().one()
+    if supplement_active(locked):
+        raise ValueError("补件进行中，不能切换报告规则")
+    if locked.state == "done":
+        raise ValueError("任务已完成，请通过新一轮核查重新生成确认报告")
+    snapshot = reference_snapshots.get_reference_snapshot(db, locked, current_read=True)
+    if (not snapshot or snapshot.get("review_run_id") != expected_review_id
+            or any(row.get("code") == "review_seed_unavailable" for row in snapshot.get("limitations") or [])):
+        raise ValueError("审查代已变化，请刷新后重试")
+    old = snapshot.get("report_policy")
+    if old is not None:
+        report_policy.read_frozen_policy(old)
+    if (old or {}).get("sha256") != expected_previous_sha256:
+        raise ValueError("当前报告规则已变化，请刷新后重试")
+    target = report_policy.freeze_policy(report_policy.load_current_policy())
+    if target["sha256"] != expected_target_sha256:
+        raise ValueError("目标报告规则已变化，请刷新后重试")
+    if target["sha256"] == expected_previous_sha256:
+        raise ValueError("当前已使用此报告规则")
+    add_event(db, locked.id, "report.policy_activated", stage="report", payload={
+        "review_run_id": expected_review_id, "previous_sha256": expected_previous_sha256,
+        "report_policy": target, "operator_id": operator_id, "operator_type": operator_type,
+    }, commit=False)
+    return {"review_run_id": expected_review_id, "sha256": target["sha256"],
+            "version": target["content"]["version"]}
 
 
 def recover_reference_runs(db: Session, task: BsTask) -> int:
@@ -3988,6 +4021,15 @@ def _prepare_zip_background(task_id: int, bind, operator=None) -> None:
                 "container_count": len(task_zip_containers(session, task)),
                 "operator": operator if operator is not None else "system",
             })
+    except report_policy.InvalidReportPolicy:
+        logger.warning("[bs] 报告规则配置不可用，准备任务退回 task=%s", task_id)
+        try:
+            session.rollback()
+            _reset_to_setup(session, task_id, "container_failed", {
+                "reason": "report_policy_invalid", "containers": [], "operator": operator,
+            })
+        except Exception:  # pragma: no cover
+            logger.exception("[bs] 报告规则异常复位未能写入 task=%s", task_id)
     except Exception:
         logger.exception("[bs] ZIP 准备后台失败 task=%s", task_id)
         try:
@@ -4587,6 +4629,30 @@ def create_review_version(db: Session, task: BsTask, *, trigger: str,
     db.add(version)
     db.flush()
     return version
+
+
+def current_output_version_no(db: Session, task: BsTask, reference_snapshot: dict | None) -> int | None:
+    """当前报告只有与最近冻结版本的规则快照一致时才能引用该版本号。"""
+    if supplement_active(task):
+        return None
+    latest = (db.query(BsReviewVersion).filter(BsReviewVersion.task_id == task.id)
+              .order_by(BsReviewVersion.version_no.desc()).first())
+    if latest is None:
+        return None
+    frozen_reference = (latest.snapshot_json or {}).get("reference_snapshot") or {}
+    current_reference = reference_snapshot if isinstance(reference_snapshot, dict) else {}
+    old_policy = frozen_reference.get("report_policy") if isinstance(frozen_reference, dict) else None
+    current_policy = current_reference.get("report_policy")
+    if old_policy is not None or current_policy is not None:
+        if not isinstance(old_policy, dict) or not isinstance(current_policy, dict):
+            return None
+        if not old_policy.get("sha256") or old_policy.get("sha256") != current_policy.get("sha256"):
+            return None
+    old_review = frozen_reference.get("review_run_id") if isinstance(frozen_reference, dict) else None
+    current_review = current_reference.get("review_run_id")
+    if old_review and current_review and old_review != current_review:
+        return None
+    return latest.version_no
 
 
 def list_review_versions(db: Session, task: BsTask) -> list[dict]:
@@ -6489,6 +6555,8 @@ def _event_message(ev: BsTaskEvent) -> str | None:
         first = (gaps[0].get("message") if gaps else None)
         return "材料准备未完成：%s" % (first or "仍有主体类型待确认，请确认后重新开始核查")
     if t == "zip.preparation_failed":
+        if p.get("reason") == "report_policy_invalid":
+            return "报告规则配置不可用，请联系管理员核对后重新开始核查"
         containers = p.get("containers") or []
         first = (containers[0].get("message") if containers else None)
         if p.get("reason") == "service_restart":
@@ -6516,6 +6584,8 @@ def event_dto(ev: BsTaskEvent) -> dict:
                          "check.ai_batch_checkpoint", "check.negative_candidate_checkpoint"} and raw.get("run_id") and raw.get("request_id"):
         progress_key = hashlib.sha256(f'{raw["run_id"]}:{raw["request_id"]}'.encode()).hexdigest()[:16]
     label = EVENT_LABELS.get(ev.event_type, "任务动态")
+    if ev.event_type == "zip.preparation_failed" and raw.get("reason") == "report_policy_invalid":
+        label = "报告规则配置待核对"
     if ev.event_type == "check.ai_advisory_completed":
         if raw.get("execution_status") == "partial":
             label = "AI 辅助核查部分结果待核实"

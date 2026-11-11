@@ -21,8 +21,9 @@ from . import (access, admission, ai_advisory_snapshots, checklist, contract_par
 from . import source_manifest, finding_text, background_ai_review
 from . import reference_visibility
 from . import material_versions, supplement_generation, section_projection, material_confirmation, report_basic_facts
-from . import parsing
+from . import parsing, report_policy
 from .rules import load_report_checklist
+from .basis_subject_projection import subject_basis_view
 from .reference_access import read_reference_original
 from .ai_current_guard import AiContextChanged, assert_ai_context_current
 from .classify import ROLE_LABELS
@@ -85,6 +86,12 @@ class EmployerConfirmationIn(BaseModel):
     material_id: StrictInt
     page: StrictInt
     value: str
+
+
+class ReportPolicyActivationIn(BaseModel):
+    expected_review_id: str
+    expected_previous_sha256: Optional[str] = None
+    expected_target_sha256: str
 
 
 class MaterialIn(BaseModel):
@@ -650,6 +657,58 @@ def get_task_ruleset(task_id: int, db: Session = Depends(get_db),
     return ruleset.task_ruleset_view(db, task)
 
 
+@router.get("/tasks/{task_id}/report-policy")
+def get_task_report_policy(task_id: int, db: Session = Depends(get_db),
+                           user=Depends(get_current_any_user)):
+    task = _get_task(db, task_id, user)
+    snapshot = reference_snapshots.get_reference_snapshot(db, task)
+    if (not snapshot or any(row.get("code") == "review_seed_unavailable"
+                            for row in snapshot.get("limitations") or [])):
+        raise HTTPException(status_code=409, detail="当前审查代不可用，无法比较报告规则")
+    try:
+        old = snapshot.get("report_policy")
+        current = report_policy.read_frozen_policy(old) if old is not None else None
+        target = report_policy.freeze_policy(report_policy.load_current_policy())
+    except report_policy.InvalidReportPolicy as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    before = {rule["id"]: rule for rule in (current or {}).get("rules", [])}
+    after = {rule["id"]: rule for rule in target["content"]["rules"]}
+    changes = [{"id": key, "before": before.get(key), "after": after.get(key)}
+               for key in sorted(set(before) | set(after)) if before.get(key) != after.get(key)]
+    def binding_index(policy):
+        return {(row["kind"], item_id): row["field"] for row in policy.get("bindings", [])
+                for item_id in row["item_ids"]}
+    comparable = current is not None and "bindings" in current
+    old_bindings = binding_index(current) if comparable else {}
+    new_bindings = binding_index(target["content"])
+    binding_changes = [{"kind": kind, "item_id": item_id,
+                        "before": old_bindings.get((kind, item_id)), "after": new_bindings.get((kind, item_id))}
+                       for kind, item_id in sorted(set(old_bindings) | set(new_bindings))
+                       if old_bindings.get((kind, item_id)) != new_bindings.get((kind, item_id))] if comparable else []
+    return {"review_run_id": snapshot["review_run_id"],
+            "current": {"sha256": old["sha256"] if old else None,
+                        "version": current["version"] if current else None, "legacy": current is None},
+            "target": {"sha256": target["sha256"], "version": target["content"]["version"]},
+            "changed_rules": changes, "changed_bindings": binding_changes,
+            "binding_comparison": "available" if comparable else "legacy_unavailable"}
+
+
+@router.post("/tasks/{task_id}/report-policy/activate")
+def activate_task_report_policy(task_id: int, body: ReportPolicyActivationIn,
+                                db: Session = Depends(get_db), user=Depends(get_current_any_user)):
+    task = _get_task(db, task_id, user)
+    try:
+        result = service.activate_report_policy(db, task, expected_review_id=body.expected_review_id,
+            expected_previous_sha256=body.expected_previous_sha256,
+            expected_target_sha256=body.expected_target_sha256, operator_id=user.id,
+            operator_type=getattr(user, "user_type", None))
+        db.commit()
+        return result
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @router.get("/tasks/{task_id}/versions")
 def list_review_versions(task_id: int, db: Session = Depends(get_db),
                          user=Depends(get_current_any_user)):
@@ -962,6 +1021,9 @@ def start_review(task_id: int, response: Response,
     # 契约 v3 §三：启动锁定事件的 operator 必须是当前认证用户（不得为 None）
     try:
         result = service.start_review(db, task, operator=user.id)
+    except report_policy.InvalidReportPolicy as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="报告规则配置不可用，请联系管理员核对") from exc
     except knowledge_runs.ReferenceRunSuperseded as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail=str(exc))
@@ -1582,15 +1644,15 @@ def _findings_payload(db: Session, findings: list, *, as_of=None, negative_cover
     subject_ids = {f.subject_id for f in findings if getattr(f, "subject_id", None) is not None}
     subjects_by_id = ({subject.id: subject for subject in db.query(BsSubject)
                        .filter(BsSubject.id.in_(subject_ids)).all()} if subject_ids else {})
-    return {"findings": [_finding_dto(f, basis_map, subjects_by_id, negative_coverage, timeout_ids) for f in findings]}
+    return {"findings": [_finding_dto(f, basis_map, subjects_by_id, negative_coverage, timeout_ids, as_of=as_of) for f in findings]}
 
 
-def _finding_dto(f: BsFinding, basis_map: dict = None, subjects_by_id: dict = None, negative_coverage=None, timeout_ids=None) -> dict:
+def _finding_dto(f: BsFinding, basis_map: dict = None, subjects_by_id: dict = None, negative_coverage=None, timeout_ids=None, *, as_of=None) -> dict:
     # 刀D（设计 104 §3）：条款视图=条目→依据库坐标（文号/条号/原文/校对状态）。
     # 查不到就是 None，前端如实显示“该条目未建立条款坐标”，不猜条款。
-    basis = (basis_map or {}).get(f.item_id) if basis_map is not None else None
     open_term = reporting.is_open_term(f)
     subject = (subjects_by_id or {}).get(getattr(f, "subject_id", None))
+    basis = subject_basis_view(f.item_id, basis_map, subject, as_of=as_of) if basis_map is not None else None
     item = next((row for row in load_report_checklist() if row.get("id") == f.item_id), None)
     supplement_hint = ({"label": item["label"], "category": "submission_packet", "item_id": f.item_id}
                        if f.kind == "completeness" and f.status == "undecidable"
@@ -1826,11 +1888,11 @@ def _attach_generation_identity(payload: dict, *, task: BsTask,
     if not isinstance(options, dict):
         options = task.options_snapshot_json or {}
     plan = supplement_generation.output_generation_plan(options)
-    versions = service.list_review_versions(db, task)
-    latest_version = max(versions, key=lambda row: row.get("version_no", 0)) if versions else None
-    meta["review_version_no"] = version_no if version_no is not None else (
-        None if service.supplement_active(task) else latest_version.get("version_no") if latest_version else None
-    )
+    reference = payload.get("reference_snapshot") or {}
+    report_policy_snapshot = reference.get("report_policy") if isinstance(reference, dict) else None
+    meta["report_policy_sha256"] = report_policy_snapshot.get("sha256") if isinstance(report_policy_snapshot, dict) else None
+    meta["review_version_no"] = (version_no if version_no is not None
+        else service.current_output_version_no(db, task, reference))
     meta.update(supplement_generation.generation_metadata(plan))
     payload["meta"] = meta
     return payload
@@ -1868,7 +1930,10 @@ def _output_payload(db: Session, task: BsTask, kind: str, stage: str,
                 or reference_visibility.run_restricted(db, task, knowledge_runs.get_reference_run(db, task), user)):
             raise HTTPException(status_code=409, detail="参考依据授权已变化，请联系管理员核对后再查看或导出报告")
         builder = reporting.build_report if kind == "report" else reporting.build_opinion
-        output = builder(db, task)
+        try:
+            output = builder(db, task)
+        except report_policy.InvalidReportPolicy as exc:
+            raise HTTPException(status_code=409, detail="报告规则快照不可用，请联系管理员核对") from exc
         if "reference_snapshot" in output:
             output["reference_snapshot"] = reference_visibility.visible_snapshot(db, task, output["reference_snapshot"], user)
         return _attach_generation_identity(
@@ -1955,7 +2020,10 @@ def download_evidence_bundle(task_id: int, stage: str = "draft",
     if (reference_visibility.snapshot_restricted(db, task, reference_snapshots.get_reference_snapshot(db, task), user)
             or reference_visibility.run_restricted(db, task, knowledge_runs.get_reference_run(db, task), user)):
         raise HTTPException(status_code=409, detail="参考依据授权已变化，请联系管理员核对后再导出证据包")
-    data, digest, exported_at = export.evidence_bundle_bytes(db, task, stage=stage, user=user)
+    try:
+        data, digest, exported_at = export.evidence_bundle_bytes(db, task, stage=stage, user=user)
+    except report_policy.InvalidReportPolicy as exc:
+        raise HTTPException(status_code=409, detail="报告规则快照不可用，请联系管理员核对") from exc
     export.record_export(db, task, "evidence-bundle", digest, exported_at)
     safe_title = export.safe_filename(task.title)
     return _attachment_response(data, "application/zip",

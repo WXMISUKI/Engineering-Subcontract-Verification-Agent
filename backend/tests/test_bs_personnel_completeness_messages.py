@@ -7,6 +7,22 @@ from app.plus.blockchain_supervision import pinning, reporting, service
 from app.plus.blockchain_supervision.router import _finding_dto
 
 
+def test_qualification_missing_requires_readable_packet_without_certificate_clues():
+    for item_id in ('RC-A02', 'RC-A03', 'RC-A04'):
+        item = next(item for item in load_report_checklist() if item['id'] == item_id)
+        material = SimpleNamespace(
+            id=1, role='packet', file_name='报审.pdf', parse_state='done',
+            pages_json=[{'page': 1, 'text': '专业分包报审表'}, {'page': 2, 'text': '工程量表'}],
+            degradations_json=[])
+        task = SimpleNamespace(id=1)
+        assert run_completeness_check(task, [material], items=[item])[0].status == 'hit'
+        material.degradations_json = [{'kind': 'parse_incomplete', 'ocr_suspect_pages': [2]}]
+        assert run_completeness_check(task, [material], items=[item])[0].status == 'undecidable'
+        material.degradations_json = []
+        material.pages_json[1]['text'] = '证照目录：' + item['keywords'][0] + '（请核对原件）'
+        assert run_completeness_check(task, [material], items=[item])[0].status == 'undecidable'
+
+
 def test_personnel_uncertainty_does_not_list_unrelated_unread_pages():
     item = next(item for item in load_report_checklist() if item['id'] == 'RC-A07')
     material = SimpleNamespace(

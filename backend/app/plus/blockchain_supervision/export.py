@@ -26,7 +26,7 @@ import fitz
 from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Mm, Pt
+from docx.shared import Mm, Pt, RGBColor
 from sqlalchemy.orm import Session
 
 from .extract import FIELD_LABELS
@@ -34,7 +34,7 @@ from .models import STATUS_LABELS, BsMaterial, BsReviewVersion, BsTask, BsTaskEv
 from .reference_output import reference_lines
 from .reporting import page_ranges
 from .report_document import summarize_report_issues, report_display_sections
-from .service import add_event, event_dto, get_review_version, list_review_versions
+from .service import add_event, event_dto, get_review_version, list_review_versions, current_output_version_no
 from . import reference_visibility
 from .supplement_generation import generation_metadata
 
@@ -438,7 +438,10 @@ def _add_business_document_word(doc, report: dict) -> bool:
             cell.text = title
             cell.paragraphs[0].paragraph_format.keep_with_next = True
         for row in rows:
-            cells = result.add_row().cells
+            table_row = result.add_row()
+            if len(headers) == 3 and sum(len(str(value or "")) for value in row) < 500:
+                table_row._tr.get_or_add_trPr().append(OxmlElement("w:cantSplit"))
+            cells = table_row.cells
             for cell, value in zip(cells, row):
                 if isinstance(value, tuple):
                     label, basis = value
@@ -459,7 +462,26 @@ def _add_business_document_word(doc, report: dict) -> bool:
         for row in result.rows[1:]:
             if len(headers) == 3 and len(row.cells[0].paragraphs) > 1:
                 for run in row.cells[0].paragraphs[1].runs:
-                    run.font.size = Pt(7.5)
+                    run.font.size = Pt(8.5)
+                    run.font.color.rgb = RGBColor.from_string("536477")
+        if len(headers) == 3:
+            for index, row in enumerate(result.rows):
+                for cell in row.cells:
+                    shading = OxmlElement("w:shd")
+                    shading.set(qn("w:fill"), "173A64" if index == 0 else "F2F5F9" if index % 2 else "FFFFFF")
+                    cell._tc.get_or_add_tcPr().append(shading)
+                if index == 0:
+                    for cell in row.cells:
+                        for run in cell.paragraphs[0].runs:
+                            run.bold = True
+                            run.font.color.rgb = RGBColor.from_string("FFFFFF")
+                else:
+                    for run in row.cells[0].paragraphs[0].runs:
+                        run.bold = True
+                        run.font.color.rgb = RGBColor.from_string("173A64")
+                    for run in row.cells[2].paragraphs[0].runs:
+                        run.bold = True
+                        run.font.color.rgb = RGBColor.from_string("A52B27" if row.cells[2].text in {"不符合", "待核实"} else "173A64")
         return result
 
     _add_para(doc, "一、项目与分包基本信息", size=13, bold=True, keep_with_next=True)
@@ -644,11 +666,11 @@ def _wrap(text: str, size: float, max_width: float) -> list:
     return lines or [""]
 
 
-def _pdf_insert_text(page, point, text, fontsize):
+def _pdf_insert_text(page, point, text, fontsize, color=(0, 0, 0)):
     """Embed the available CJK font so readers do not depend on local fonts."""
     if not any(font[4] == "EmbeddedCJK" for font in page.get_fonts()):
         page.insert_font(fontname="EmbeddedCJK", fontbuffer=fitz.Font("cjk").buffer)
-    page.insert_text(point, text, fontname="EmbeddedCJK", fontsize=fontsize)
+    page.insert_text(point, text, fontname="EmbeddedCJK", fontsize=fontsize, color=color)
 
 
 def _draw_business_pdf(doc, page, y, document):
@@ -676,15 +698,21 @@ def _draw_business_pdf(doc, page, y, document):
         for width in widths:
             edges.append(edges[-1] + width * (right - margin))
 
-        def draw_cells(columns, header=False):
+        def draw_cells(columns, header=False, row_index=0, verdict=""):
             nonlocal y
             height = max(map(len, columns)) * line_height + 2 * padding
-            for x0, x1, lines in zip(edges, edges[1:], columns):
+            for column_index, (x0, x1, lines) in enumerate(zip(edges, edges[1:], columns)):
+                fill = ((23/255, 58/255, 100/255) if header and len(headers) == 3 else
+                        (0.94, 0.94, 0.94) if header else
+                        (242/255, 245/255, 249/255) if len(headers) == 3 and row_index % 2 == 0 else None)
                 page.draw_rect(fitz.Rect(x0, y, x1, y + height), color=(0.35, 0.35, 0.35), width=0.5,
-                               fill=(0.94, 0.94, 0.94) if header else None)
+                               fill=fill)
                 for index, (line, font_size) in enumerate(lines):
+                    color = ((1, 1, 1) if header and len(headers) == 3 else
+                             (165/255, 43/255, 39/255) if len(headers) == 3 and column_index == 2 and verdict in {"不符合", "待核实"} else
+                             (23/255, 58/255, 100/255) if len(headers) == 3 and column_index == 0 else (0, 0, 0))
                     _pdf_insert_text(page, (x0 + padding, y + padding + size + index * line_height), line,
-                                     fontsize=font_size)
+                                     fontsize=font_size, color=color)
             y += height
 
         def header():
@@ -693,14 +721,14 @@ def _draw_business_pdf(doc, page, y, document):
         if y + 2 * (line_height + 2 * padding) > page_h - margin:
             page, y = new_page()
         header()
-        for row in rows:
+        for row_index, row in enumerate(rows):
             columns = []
             for value, x0, x1 in zip(row, edges, edges[1:]):
                 lines = []
                 values = [(str(value or "待核实"), size)]
                 if isinstance(value, tuple):
                     label, basis = value
-                    values = [(str(label or ""), size), ("主要依据：" + ("；".join(basis) if basis else "暂无可展示依据"), 7.5)]
+                    values = [(str(label or ""), size), ("主要依据：" + ("；".join(basis) if basis else "暂无可展示依据"), 8.5)]
                 for content, font_size in values:
                     for raw in content.splitlines() or [""]:
                         lines.extend((line, font_size) for line in _wrap(raw, font_size, x1 - x0 - 2 * padding))
@@ -720,7 +748,8 @@ def _draw_business_pdf(doc, page, y, document):
                     header()
                     continue
                 end = min(total, offset + available)
-                draw_cells([column[offset:end] for column in columns])
+                draw_cells([column[offset:end] for column in columns], row_index=row_index,
+                           verdict=str(row[2]) if len(row) == 3 else "")
                 offset = end
         y += 4
 
@@ -859,11 +888,11 @@ def evidence_bundle_bytes(db: Session, task: BsTask, stage: str = "draft", *, us
         report["reference_snapshot"] = reference_visibility.visible_snapshot(db, task, report["reference_snapshot"], user)
     # 证据包不经过 router._attach_generation_identity，需在这里同步当前代身份，
     # 确保 report.json 与 PDF/Word 以及 review-versions.json 指向同一最新版本。
-    review_versions = list_review_versions(db, task)
-    latest_version = (max(review_versions, key=lambda row: row.get("version_no", 0))
-                      if review_versions else None)
     meta = report.setdefault("meta", {})
-    meta["review_version_no"] = latest_version.get("version_no") if latest_version else None
+    reference = report.get("reference_snapshot") or {}
+    policy_snapshot = reference.get("report_policy") if isinstance(reference, dict) else None
+    meta["report_policy_sha256"] = policy_snapshot.get("sha256") if isinstance(policy_snapshot, dict) else None
+    meta["review_version_no"] = current_output_version_no(db, task, reference)
     from .supplement_generation import output_generation_plan
     meta.update(generation_metadata(output_generation_plan(task.options_snapshot_json)))
     exported_at = datetime.now().isoformat(timespec="seconds")
@@ -911,6 +940,9 @@ def evidence_bundle_bytes(db: Session, task: BsTask, stage: str = "draft", *, us
     opinion = reporting.build_opinion(db, task)
     if "reference_snapshot" in opinion:
         opinion["reference_snapshot"] = reference_visibility.visible_snapshot(db, task, opinion["reference_snapshot"], user)
+    opinion_meta = opinion.setdefault("meta", {})
+    opinion_meta["review_version_no"] = meta["review_version_no"]
+    opinion_meta["report_policy_sha256"] = meta["report_policy_sha256"]
     opinion_payload = {
         "schema_version": "bs.opinion.v1",
         "task_id": task.id,

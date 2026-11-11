@@ -122,6 +122,8 @@ it('shows the basis and grounded verdict beside each current review point', () =
   expect(text).toContain('内部信用管理办法第六条')
   expect(text).toContain('已查阅信用记录')
   expect(screen.getByRole('columnheader', { name: '判定' })).toBeTruthy()
+  expect(screen.getByRole('columnheader', { name: '判定' }).className).toContain('bg-[#173A64]')
+  expect(screen.getByText('信用记录').className).toContain('font-semibold')
   expect(text).toContain('符合')
   expect(text).not.toContain('待处理事项摘要')
   expect(text).not.toContain('不应展示')
