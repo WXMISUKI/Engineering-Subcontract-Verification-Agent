@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-11-10
+goal: Identify the concrete cause of 120-second AI batch timeouts before
+  changing batch size, concurrency, retry, or timeout behavior.
