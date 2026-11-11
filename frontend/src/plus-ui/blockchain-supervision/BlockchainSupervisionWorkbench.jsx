@@ -5,6 +5,7 @@ import { usePlusContentReport } from '../usePlusContentReport'
 import ReviewWorkbenchLayout from './components/ReviewWorkbenchLayout'
 import useReviewWorkbench from './hooks/useReviewWorkbench'
 import ReportView from './components/ReportView'
+import ProjectBasicInformation from './components/ProjectBasicInformation'
 import ReferenceSnapshot from './components/ReferenceSnapshot'
 import MaterialPreviewModal from './components/MaterialPreviewModal'
 import AiAdvisorySummary from './components/AiAdvisorySummary'
@@ -30,7 +31,7 @@ import {
   BS_EVENT_TYPES, bsEventsUrl, completeBsTask,
   createBsTask,
   deleteBsMaterial, downloadBsReport, downloadBsOpinion, previewBsOpinion,
-  activateBsSupplementPlan, confirmBsMaterial, createBsSupplementPlan, enterBsMaterialEdit, getBsReport, getBsOpinion, getBsTask, getBsTodo, getBsReviewVersion, getBsRuleset,
+  activateBsSupplementPlan, confirmBsMaterial, confirmBsEmployer, createBsSupplementPlan, enterBsMaterialEdit, getBsReport, getBsOpinion, getBsTask, getBsTodo, getBsReviewVersion, getBsRuleset,
   listBsFindings, listBsTasks, pingBs, reviewBsFinding, rerunBsTask, saveBlob, downloadBsReferenceFile,
   assignBsMaterialSubject, patchBsSection, runBsCheck, setBsMaterialRole, startBsReview, startBsSupplementEdit, uploadBsMaterial,
   startBsBackgroundAiReview, getBsBackgroundAiReview,
@@ -1128,6 +1129,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
   const [reportGates, setReportGates] = useState({ draft: null, confirmed: null })
   const [reportStageErrors, setReportStageErrors] = useState({ draft: '', confirmed: '' })
   const [reportLoading, setReportLoading] = useState({ draft: false, confirmed: false })
+  const [confirmingEmployer, setConfirmingEmployer] = useState(false)
   const [reportRefreshMessage, setReportRefreshMessage] = useState('')
   const reportContext = useRef({ active: true, epoch: 0, runId: null })
   // 两稿别各自的请求代，切换稿别/重核查时互不干扰（旧响应不得覆盖新稿别）。
@@ -1744,6 +1746,19 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
   const [exporting, setExporting] = useState(null)
   const [versionExporting, setVersionExporting] = useState(null)
   const refreshReport = () => loadReport(reportStage, true)
+  const confirmEmployer = async (candidate) => {
+    if (!taskId || confirmingEmployer) return
+    setConfirmingEmployer(true)
+    try {
+      await confirmBsEmployer(taskId, candidate)
+      setReports({ draft: null, confirmed: null })
+      await reload()
+      if (!['setup', 'preparing'].includes(detail?.state)) await loadReport(reportStage, true)
+    } catch (e) {
+      onError(e.message)
+      await reload()
+    } finally { setConfirmingEmployer(false) }
+  }
   const generateOpinion = async () => {
     if (!taskId || opinionLoading) return
     const context = { ...reportContext.current }
@@ -1788,9 +1803,11 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
     setOpinionMarkdown(null)
     setReportStage(stage)
   }
-  const exportReport = async (fmt = 'docx') => {
+  const exportReport = async (stageOrFmt = 'docx', requestedFmt) => {
     const context = { ...reportContext.current }
-    const stage = reportStage
+    const isStage = stageOrFmt === 'draft' || stageOrFmt === 'confirmed'
+    const stage = requestedFmt ? stageOrFmt : (isStage ? stageOrFmt : reportStage)
+    const fmt = requestedFmt || (isStage ? 'docx' : stageOrFmt)
     if (reportGates[stage]) return
     try {
       setExporting(fmt)
@@ -2205,6 +2222,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
 
       {activeView === 'materials' ? (
         <div className="min-h-0 flex-1 overflow-y-auto pt-4">
+          <ProjectBasicInformation report={report} detail={detail} onOpenSource={openSource} onConfirmEmployer={confirmEmployer} confirmingEmployer={confirmingEmployer} />
           <PrototypeMaterialsWorkspace
             detail={detail}
               checklistSummary={todo?.checklist_summary}
@@ -2276,6 +2294,11 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
             refreshing={reportLoading[reportStage]}
             refreshMessage={reportRefreshMessage}
             onDownloadReference={downloadReference}
+            onOpenSource={openSource}
+            onShowBasicInformation={() => {
+              setActiveView('materials')
+              requestAnimationFrame(() => document.getElementById('project-basic-information')?.focus())
+            }}
             onComplete={!done ? completeTask : undefined}
             completing={completing}
             completeDisabled={pendingProblems > 0 || checking}

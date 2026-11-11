@@ -38,6 +38,165 @@ function dispositionCode(item) {
   return item?.human_disposition?.code || item?.review?.decision || 'unprocessed'
 }
 
+function summaryItems(summary, key) {
+  const rows = summary?.sections?.[key]
+  return Array.isArray(rows) ? rows : []
+}
+
+function legacyReportSummaries(issues) {
+  const groups = new Map()
+  const notes = []
+  for (const issue of issues || []) {
+    const code = issue.human_disposition?.code
+    if (code === 'ignored') continue
+    const category = issue.category || '其他核查'
+    const label = issue.label || '核查事项'
+    if (code === 'accepted') {
+      notes.push({ category, label, note: issue.human_disposition?.note || '未填写补充说明' })
+      continue
+    }
+    const explicitMissing = issue.status === 'hit' && issue.material_missing === true
+    const status = explicitMissing ? '明确缺少材料' : issue.status === 'hit' ? '需关注' : '待核实'
+    const missingLabels = explicitMissing && Array.isArray(issue.missing?.labels) ? issue.missing.labels.filter(Boolean).map(String) : []
+    const themes = missingLabels.length ? missingLabels : [explicitMissing ? label : (issue.summary_theme || label)]
+    const key = JSON.stringify([category, status])
+    if (!groups.has(key)) groups.set(key, { category, status, labels: [] })
+    const group = groups.get(key)
+    for (const theme of themes) if (!group.labels.includes(theme)) group.labels.push(theme)
+  }
+  return { pending: [...groups.values()].map(({ category, status, labels }) => ({ category, status, text: `${status}：${labels.join('、')}。` })), notes }
+}
+
+function BusinessDocument({ document, basicInformation, onOpenSource, onShowBasicInformation }) {
+  if (!document) return null
+  const legacy = legacyReportSummaries(document.issues)
+  const pending = document.pending_summaries ?? legacy.pending
+  const humanNotes = document.human_notes ?? legacy.notes
+  const conclusion = document.conclusion || {}
+  const limitationGroups = conclusion.limitation_groups ?? ((conclusion.limitations || []).length ? [{ label: '核查范围及限制', items: conclusion.limitations }] : [])
+  const sourceKeys = { '工程名称': 'project_name', '标段': 'contract_section', '施工总承包单位': 'general_contractor', '建设单位（业主）': 'employer', '分包单位': 'subcontractor', '拟分包范围': 'subcontract_scope', '拟分包金额': 'subcontract_amount' }
+  const needsAttention = Object.entries(document.basic_information || {}).some(([label, value]) =>
+    sourceKeys[label] && (value == null || value === '' || ['conflict', 'unresolved'].includes(document.basic_information_status?.[label])))
+  return <article data-testid="business-document" className="space-y-5 rounded border border-[#E5E5E5] bg-white px-5 py-5 text-sm leading-7 text-[#374151]">
+    <section><h2 className="text-base font-semibold text-[#1A1A1A]">一、项目与分包基本信息</h2>
+      {needsAttention && onShowBasicInformation && <p className="mt-2 text-xs text-[#92400E]">部分基本信息待核实。 <button type="button" className="underline" onClick={onShowBasicInformation}>查看项目基本信息</button></p>}
+      <dl className="mt-3 grid gap-x-6 gap-y-2 sm:grid-cols-2">{Object.entries(document.basic_information || {}).map(([label, value]) => {
+        const sources = (basicInformation?.[sourceKeys[label]]?.evidence || []).filter((row) => row?.material_id != null && Number.isInteger(row?.page) && row.page > 0)
+        const status = document.basic_information_status?.[label]
+        const display = value == null || value === '' ? (status === 'conflict' ? '待核实（材料冲突）' : '待核实') : `${value}${['conflict', 'unresolved'].includes(status) ? '（待核实）' : ''}`
+        return <div key={label} className="flex min-w-0 flex-wrap gap-x-2 border-b border-[#F3F4F6] py-1"><dt className="shrink-0 text-[#6B7280]">{label}</dt><dd className="min-w-0 break-words">{display}</dd>{onOpenSource && sources.map((evidence, index) => <button key={`${evidence.material_id}-${evidence.page}-${index}`} type="button" className="text-left text-xs text-[#315d79] underline" onClick={() => onOpenSource(evidence.material_id, evidence.page)}>{sources.length === 1 ? '查看原文' : `查看原文：${evidence.file_name || '材料'} 第${evidence.page}页${evidence.value ? `（${evidence.value}）` : ''}`}</button>)}</div>
+      })}</dl>
+    </section>
+    <section><h2 className="text-base font-semibold text-[#1A1A1A]">二、核查摘要</h2>
+      {(document.sections || []).map((section, index) => <section key={section.title} className="mt-4"><h3 className="font-semibold">{index + 1}. {section.title}</h3><div className="overflow-x-auto"><table className="mt-2 w-full border-collapse text-left"><thead><tr><th className="border p-2">审查要点</th><th className="border p-2">核查摘要</th><th className="border p-2">状态</th></tr></thead><tbody>{(section.key_points ?? section.fields ?? []).map((field) => <tr key={field.label}><td className="border p-2">{field.label}</td><td className="border p-2">{field.summary}</td><td className="border p-2">{field.status || '状态未标注'}</td></tr>)}</tbody></table></div></section>)}
+    </section>
+    <section><h2 className="text-base font-semibold text-[#1A1A1A]">三、待处理事项摘要</h2>
+      {pending.length ? pending.map((row, index) => <p key={`${row.category}-${row.status}-${index}`}><b>{row.category}：</b>{row.text}</p>) : <p>当前无未经人工处理的事项。</p>}
+    </section>
+    <section><h2 className="text-base font-semibold text-[#1A1A1A]">四、人工处理意见</h2>
+      {humanNotes.length ? humanNotes.map((row, index) => <p key={`${row.category}-${row.label}-${index}`}><b>{row.category}｜{row.label}：</b>已采纳；{row.note}</p>) : <p>当前未形成需单独说明的人工处理意见。</p>}
+    </section>
+    {limitationGroups.length > 0 && <section><h2 className="text-base font-semibold text-[#1A1A1A]">五、核查说明</h2>{limitationGroups.map((group, index) => <div key={`${group.label}-${index}`}><p className="font-medium">{group.label}</p><ul className="list-inside list-disc">{(group.items || []).map((line, itemIndex) => <li key={itemIndex}>{line}</li>)}</ul></div>)}</section>}
+  </article>
+}
+
+function QualificationSummaryCard({ summary, prototypeMode = false }) {
+  if (!summary || typeof summary !== 'object') return null
+  const contractor = summary.general_contractor || {}
+  const counts = summary.counts || {}
+  const groups = [
+    ['non_compliant', '不符合'],
+    ['missing', '缺件'],
+    ['undecidable', '无法核实'],
+  ]
+  const subjects = Array.isArray(summary.subjects) ? summary.subjects : []
+  const limitations = Array.isArray(summary.limitations) ? summary.limitations : []
+  return (
+    <section data-testid="qualification-summary" className={`${prototypeMode ? '' : 'mb-4'} rounded border border-[#DCE5EE] bg-[#F8FAFC] px-4 py-3`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-sm font-semibold text-[#1A1A1A]">资质合规摘要</h2>
+        {summary.publication?.state && <span data-testid="qualification-summary-publication" className="rounded border border-[#E5E5E5] px-1.5 py-0.5 text-[10px] text-[#6B7280]">{summary.publication.state}</span>}
+      </div>
+      <dl className="mt-3 grid gap-2 text-xs text-[#4B5563] sm:grid-cols-3">
+        <div>
+          <dt className="text-[#9CA3AF]">承包单位</dt>
+          <dd data-testid="qualification-summary-contractor" className="mt-0.5 font-medium">{contractor.company || contractor.candidate_company || contractor.label || '承包单位未识别，待核实'}</dd>
+        </div>
+        <div>
+          <dt className="text-[#9CA3AF]">主体</dt>
+          <dd data-testid="qualification-summary-subjects" className="mt-0.5 font-medium">{subjects.map((item) => item.name).filter(Boolean).join('、') || '未识别主体'}</dd>
+        </div>
+        <div>
+          <dt className="text-[#9CA3AF]">摘要计数</dt>
+          <dd data-testid="qualification-summary-counts" className="mt-0.5 font-medium">不符合 {counts.hit ?? 0} · 缺件 {summaryItems(summary, 'missing').length} · 待核实 {counts.undecidable ?? 0}</dd>
+        </div>
+      </dl>
+      <div className="mt-3 grid gap-3 md:grid-cols-3">
+        {groups.map(([key, label]) => {
+          const items = summaryItems(summary, key)
+          return (
+            <section key={key} data-testid={`qualification-summary-${key}`} className="rounded border border-[#E5E5E5] bg-white px-3 py-2">
+              <h3 className="text-xs font-medium text-[#6B7280]">{label}（{items.length}）</h3>
+              {items.length === 0 ? <p className="mt-1 text-[11px] text-[#9CA3AF]">暂无</p> : <ul className="mt-1 space-y-1 text-[11px] leading-relaxed text-[#4B5563]">
+                {items.slice(0, 5).map((item, index) => <li key={`${item.item_id || key}-${index}`}>
+                  <span>{item.label || item.item_id || '核查项'}</span>
+                  {item.evidence?.page ? <span className="ml-1 text-[#8B7355]">· 第 {item.evidence.page} 页</span> : null}
+                </li>)}
+                {items.length > 5 && <li className="text-[#9CA3AF]">其余 {items.length - 5} 项见机器审计明细</li>}
+              </ul>}
+            </section>
+          )
+        })}
+      </div>
+      {limitations.length > 0 && <div data-testid="qualification-summary-limitations" className="mt-3 rounded border border-[#F0DCB8] bg-[#FDFAF4] px-3 py-2 text-[11px] leading-relaxed text-[#92400E]">
+        <p className="font-medium">限制与人工核对提示</p>
+        <ul className="mt-1 list-disc space-y-1 pl-4">{limitations.slice(0, 5).map((item, index) => <li key={index}>{item}</li>)}</ul>
+      </div>}
+    </section>
+  )
+}
+
+function BusinessReportStructureCard({ businessReport }) {
+  if (!businessReport || typeof businessReport !== 'object') return null
+  const sections = Array.isArray(businessReport.sections) ? businessReport.sections : []
+  const attachments = Array.isArray(businessReport.attachment_register) ? businessReport.attachment_register : []
+  const statusClass = {
+    available: 'border-[#DDEBDD] bg-[#F8FCF8] text-[#2E7D32]',
+    partial: 'border-[#F0DCB8] bg-[#FDFAF4] text-[#92400E]',
+    not_covered: 'border-[#E5E5E5] bg-[#FAFAFA] text-[#6B7280]',
+  }
+  return (
+    <section data-testid="business-report-structure" className="mb-4 rounded border border-[#DCE5EE] bg-white px-4 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-sm font-semibold text-[#1A1A1A]">业务报告结构</h2>
+        <span data-testid="business-report-status" className={`rounded border px-1.5 py-0.5 text-[10px] ${statusClass[businessReport.overall_status] || statusClass.partial}`}>
+          {businessReport.overall_status_label || '部分覆盖'}
+        </span>
+      </div>
+      <p className="mt-1 text-[11px] leading-relaxed text-[#6B7280]">{businessReport.notice}</p>
+      <div className="mt-3 grid gap-2 md:grid-cols-2">
+        {sections.map((section) => (
+          <section key={section.code} data-testid={`business-report-module-${section.code}`} className="rounded border border-[#EFE6D8] px-3 py-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-xs font-medium text-[#374151]">{section.title}</h3>
+              <span className={`rounded border px-1.5 py-0.5 text-[10px] ${statusClass[section.status] || statusClass.partial}`}>{section.status_label}</span>
+            </div>
+            <p className="mt-1 text-[11px] leading-relaxed text-[#4B5563]">{section.conclusion}</p>
+            {section.limitations?.length > 0 && <p className="mt-1 text-[11px] leading-relaxed text-[#92400E]">{section.limitations[0]}</p>}
+          </section>
+        ))}
+      </div>
+      {attachments.length > 0 && <details className="mt-3 rounded border border-[#EFE6D8] px-3 py-2">
+        <summary className="cursor-pointer text-xs font-medium text-[#6B7280]">附件核对清单（{attachments.length} 项）</summary>
+        <ul className="mt-2 space-y-1 text-[11px] leading-relaxed text-[#4B5563]">
+          {attachments.map((item) => <li key={item.code}><span className="font-medium">{item.label}</span>：{item.state === 'provided' ? '已归入材料台账' : item.state === 'generated' ? '由系统过程记录生成' : '尚未明确归类'}；{item.note}</li>)}
+        </ul>
+      </details>}
+      {businessReport.process_trace && <p data-testid="business-report-process-trace" className="mt-3 text-[11px] leading-relaxed text-[#6B7280]">AI 核验过程：规则版本 {businessReport.process_trace.ruleset_version || '未记录'}；运行链路 {businessReport.process_trace.run_lineage_available ? '已记录' : '未记录'}；人工复核记录 {businessReport.process_trace.human_review_records || 0} 条。</p>}
+    </section>
+  )
+}
+
 /** 技术覆盖提示：列缺项（未完成组 / 进行中组），不把 409 说成网络错误。 */
 function ReportCoverageBlockingPanel({ blocking, onRefresh, refreshing }) {
   const missing = Array.isArray(blocking?.missingGroups) ? blocking.missingGroups : []
@@ -81,6 +240,8 @@ export default function ReportView({
   refreshDisabled = false,
   refreshMessage = '',
   onDownloadReference,
+  onOpenSource,
+  onShowBasicInformation,
   onComplete,
   completing = false,
   completeDisabled = false,
@@ -115,6 +276,9 @@ export default function ReportView({
     : (Array.isArray(coverage?.limitations) ? coverage.limitations : [])
   const runLineage = report?.run_lineage && typeof report.run_lineage === 'object'
     ? report.run_lineage
+    : null
+  const qualificationSummary = report?.qualification_summary && typeof report.qualification_summary === 'object'
+    ? report.qualification_summary
     : null
   const completeTitle = completed
     ? '本轮已收口，报告与结论为只读。'
@@ -222,17 +386,29 @@ export default function ReportView({
                     {opinion && <div className="flex flex-wrap gap-2" aria-label="正式意见书导出"><button type="button" data-testid="opinion-export-word" disabled={opinionExporting != null} onClick={() => onExportOpinion?.('docx')} className="min-h-8 rounded border border-[#E5E5E5] bg-white px-2.5 text-[11px] text-[#6B7280] disabled:opacity-60">{opinionExporting === 'docx' ? '导出中…' : '意见书 Word'}</button><button type="button" data-testid="opinion-export-pdf" disabled={opinionExporting != null} onClick={() => onExportOpinion?.('pdf')} className="min-h-8 rounded border border-[#E5E5E5] bg-white px-2.5 text-[11px] text-[#6B7280] disabled:opacity-60">{opinionExporting === 'pdf' ? '导出中…' : '意见书 PDF'}</button></div>}
                   </div>
                 </div>
+                <div data-testid="prototype-report-exports" className="mt-3 flex flex-wrap items-center gap-2 border-t border-[#F3EDE3] pt-3" aria-label="审查报告导出">
+                  <span className="mr-1 text-[11px] text-[#6B7280]">审查报告</span>
+                  <button type="button" data-testid="prototype-report-export-draft-docx" disabled={exporting != null || draftBlocked} onClick={() => onExport?.('draft', 'docx')} className="min-h-8 rounded border border-[#E5E5E5] bg-white px-2.5 text-[11px] text-[#6B7280] disabled:cursor-not-allowed disabled:opacity-60">{exporting === 'docx' ? '导出中…' : 'AI 初稿 Word'}</button>
+                  <button type="button" data-testid="prototype-report-export-draft-pdf" disabled={exporting != null || draftBlocked} onClick={() => onExport?.('draft', 'pdf')} className="min-h-8 rounded border border-[#E5E5E5] bg-white px-2.5 text-[11px] text-[#6B7280] disabled:cursor-not-allowed disabled:opacity-60">AI 初稿 PDF</button>
+                  <button type="button" data-testid="prototype-report-export-confirmed-docx" disabled={exporting != null || confirmedBlocked} onClick={() => onExport?.('confirmed', 'docx')} className="min-h-8 rounded border border-[#E5E5E5] bg-white px-2.5 text-[11px] text-[#6B7280] disabled:cursor-not-allowed disabled:opacity-60">确认稿 Word</button>
+                  <button type="button" data-testid="prototype-report-export-confirmed-pdf" disabled={exporting != null || confirmedBlocked} onClick={() => onExport?.('confirmed', 'pdf')} className="min-h-8 rounded border border-[#E5E5E5] bg-white px-2.5 text-[11px] text-[#6B7280] disabled:cursor-not-allowed disabled:opacity-60">确认稿 PDF</button>
+                </div>
                 {opinionError && <p data-testid="formal-opinion-error" role="alert" className="mt-2 rounded border border-[#F3C9C9] bg-[#FDF3F3] px-3 py-2 text-xs text-[#C62828]">正式意见书读取失败：{opinionError}</p>}
               </section>
             )}
-            {prototypeMode && <section data-testid="prototype-report-body" className="space-y-3">
+            {report.business_document && <BusinessDocument document={report.business_document} basicInformation={report.basic_information} onOpenSource={onOpenSource} onShowBasicInformation={onShowBasicInformation} />}
+            {!report.business_document && prototypeMode && <section data-testid="prototype-report-body" className="space-y-3">
+              <BusinessReportStructureCard businessReport={report?.business_report} />
+              <QualificationSummaryCard summary={qualificationSummary} prototypeMode />
               <p data-testid="report-overall-summary" className="sr-only">{allIssues.some((item) => item.material_only) ? '当前报告已形成，可查看逐项处置情况。' : (report.summary?.headline || '当前报告已形成，可查看逐项处置情况。')}</p>
               <section data-testid="report-disposition-summary" className="rounded border border-[#E5E5E5] bg-white px-4 py-3"><h2 className="text-sm font-semibold text-[#1A1A1A]">问题处置摘要</h2><div className="mt-3 grid gap-2 sm:grid-cols-4"><div className="rounded border border-[#EFE6D8] p-3 text-xs"><span className="text-[#9CA3AF]">发现问题</span><b className="mt-1 block text-lg text-[#1A1A1A]">{issues.length}</b><small className="text-[#9CA3AF]">合规项不列入</small></div><div className="rounded border border-[#DDEBDD] bg-[#F8FCF8] p-3 text-xs"><span className="text-[#6B7280]">已采纳</span><b className="mt-1 block text-lg text-[#2E7D32]">{issues.filter((item) => dispositionCode(item) === 'accepted').length}</b><small className="text-[#9CA3AF]">保留人工说明</small></div><div className="rounded border border-[#EFE6D8] p-3 text-xs"><span className="text-[#6B7280]">已忽略</span><b className="mt-1 block text-lg text-[#8B7355]">{issues.filter((item) => dispositionCode(item) === 'ignored').length}</b><small className="text-[#9CA3AF]">保留忽略理由</small></div><div className="rounded border border-[#F0DCB8] bg-[#FDFAF4] p-3 text-xs"><span className="text-[#92400E]">未经人工处理</span><b className="mt-1 block text-lg text-[#92400E]">{issues.filter((item) => dispositionCode(item) === 'unprocessed').length}</b><small className="text-[#9CA3AF]">报告逐项标注</small></div></div></section>
               {opinionMarkdown && <section data-testid="opinion-preview" className="rounded border border-[#E5E5E5] bg-white px-4 py-3"><h2 className="text-sm font-semibold text-[#1A1A1A]">意见书预览</h2><div className="markdown-body mt-4 text-sm leading-7 text-[#374151]"><ReactMarkdown remarkPlugins={[remarkGfm]} components={{ h1: ({ children }) => <h1 className="mb-4 text-center text-xl font-semibold">{children}</h1>, h2: ({ children }) => <h2 className="mb-2 mt-5 text-base font-semibold text-[#1A1A1A]">{children}</h2>, h3: ({ children }) => <h3 className="mb-2 mt-4 text-sm font-semibold text-[#1A1A1A]">{children}</h3>, p: ({ children }) => <p className="mb-2 whitespace-pre-wrap">{children}</p> }}>{opinionMarkdown}</ReactMarkdown></div></section>}
               <ReferenceSnapshot key={report.reference_snapshot?.review_run_id || 'no-reference'} snapshot={report.reference_snapshot ?? null} onDownload={onDownloadReference} />
               <div data-testid="report-prototype-banner" className="rounded border border-[#E5E5E5] bg-[#FAFAF7] px-4 py-3 text-xs leading-relaxed text-[#6B7280]">报告保留机器原始结论、依据、证据和自动核查覆盖限制；人工处置只作为独立记录，不覆盖机器事实。</div>
             </section>}
-            {!prototypeMode && <>
+            {!report.business_document && !prototypeMode && <>
+             <BusinessReportStructureCard businessReport={report?.business_report} />
+             <QualificationSummaryCard summary={qualificationSummary} />
              {coverage && (
                <section data-testid="report-coverage" className={`mb-4 rounded border px-4 py-3 ${coverage.complete ? 'border-[#DDEBDD] bg-[#F8FCF8]' : 'border-[#F0DCB8] bg-[#FDFAF4]'}`}>
                  <div className="flex flex-wrap items-center justify-between gap-2">

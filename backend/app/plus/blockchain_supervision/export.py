@@ -11,8 +11,7 @@
   即可比对；
 - 导出动作落事件流（report.exported），哈希与时间戳随事件可查（时间戳存证）。
 
-Word 用 python-docx（venv 已有 1.1.2）；PDF 用 fitz 内置简体中文字体
-（fontname="china-s"，零新增依赖）。
+Word 用 python-docx；PDF 嵌入 PyMuPDF 自带的中文字体。
 """
 import hashlib
 import io
@@ -26,14 +25,16 @@ from types import SimpleNamespace
 
 import fitz
 from docx import Document
+from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Pt
+from docx.shared import Mm, Pt
 from sqlalchemy.orm import Session
 
 from .extract import FIELD_LABELS
 from .models import STATUS_LABELS, BsMaterial, BsReviewVersion, BsTask, BsTaskEvent
 from .reference_output import reference_lines
 from .reporting import page_ranges
+from .report_document import summarize_report_issues
 from .service import add_event, event_dto, get_review_version, list_review_versions
 from . import reference_visibility
 from .supplement_generation import generation_metadata
@@ -67,6 +68,10 @@ def report_digest(report: dict) -> str:
     """
     body = json.loads(json.dumps(report))
     body.setdefault("meta", {})["generated_at"] = ""
+    # 业务正文中的报告日期由同一生成时间投影而来，不应破坏内容指纹稳定性。
+    document = body.get("business_document") or {}
+    if isinstance(document.get("basic_information"), dict):
+        document["basic_information"]["报告日期"] = ""
     return hashlib.sha256(_canonical_json(body)).hexdigest()
 
 
@@ -77,13 +82,25 @@ def _cjk(run, name="宋体"):
     run._element.rPr.rFonts.set(qn("w:eastAsia"), name)
 
 
-def _add_para(doc, text, size=11, bold=False, indent=0.0, space_after=4):
+def _configure_word_document(doc):
+    """Match the PDF exporter’s A4 portrait geometry for Word outputs."""
+    for section in doc.sections:
+        section.page_width = Mm(210)
+        section.page_height = Mm(297)
+        section.top_margin = Mm(17)
+        section.bottom_margin = Mm(17)
+        section.left_margin = Mm(17)
+        section.right_margin = Mm(17)
+
+
+def _add_para(doc, text, size=11, bold=False, indent=0.0, space_after=4, keep_with_next=False):
     p = doc.add_paragraph()
     run = p.add_run(text)
     run.font.size = Pt(size)
     run.bold = bold
     _cjk(run)
     p.paragraph_format.space_after = Pt(space_after)
+    p.paragraph_format.keep_with_next = keep_with_next
     if indent:
         p.paragraph_format.left_indent = Pt(indent)
     return p
@@ -115,6 +132,34 @@ def _section_cover_line(meta: dict) -> str:
         tail.append("签订日期：%s" % meta["contract_sign_date"])
     tail.append("核查基准日：%s" % (meta.get("baseline_date") or "未填写"))
     return "　|　".join(parts) + "\n" + "　|　".join(tail)
+
+
+def _contractor_summary_lines(report: dict) -> list[str]:
+    """摘要中的承包单位三态 → 纸面统一口径。"""
+    contractor = (report.get("qualification_summary") or {}).get("general_contractor")
+    if not isinstance(contractor, dict):
+        return []
+    status = contractor.get("status")
+    if status == "matched" and contractor.get("company"):
+        line = "施工总承包单位：%s" % contractor["company"]
+    else:
+        line = "施工总承包单位：%s" % (contractor.get("label") or "承包单位待核实")
+        if contractor.get("candidate_company"):
+            line += "（候选：%s）" % contractor["candidate_company"]
+        if contractor.get("reason_code"):
+            line += "（原因：%s）" % contractor["reason_code"]
+    evidence = contractor.get("evidence") or []
+    locations = []
+    for ref in evidence[:3]:
+        if not isinstance(ref, dict):
+            continue
+        location = ref.get("file_name") or "材料"
+        if ref.get("page"):
+            location += " 第%s页" % ref["page"]
+        locations.append(location)
+    if locations:
+        line += "；证据：%s" % "、".join(locations)
+    return [line]
 
 
 def _fact_value_text(f: dict) -> str:
@@ -193,13 +238,37 @@ def _source_line(item: dict) -> str:
     return ("依据：%s" % src) if src else ""
 
 
+def _summary_issue_keys(report: dict) -> set[tuple[str, str | None]] | None:
+    """从同源摘要取纸面问题白名单；旧报告无摘要时返回 None 保持兼容。"""
+    summary = report.get("qualification_summary")
+    if not isinstance(summary, dict):
+        return None
+    sections = summary.get("sections") or {}
+    keys: set[tuple[str, str | None]] = set()
+    for section_name in ("non_compliant", "missing", "undecidable"):
+        for item in sections.get(section_name) or []:
+            if not isinstance(item, dict) or not item.get("item_id"):
+                continue
+            subject = item.get("subject") or {}
+            subject_id = subject.get("subject_id") if isinstance(subject, dict) else None
+            keys.add((str(item["item_id"]), str(subject_id) if subject_id is not None else None))
+    return keys
+
+
 def _report_issues(report: dict) -> list:
-    """纸面整改报告只呈现命中/不可判定项；已通过和已忽略不铺开。"""
+    """纸面整改报告消费摘要白名单；机器 sections 只提供完整证据和审计细节。"""
+    summary_keys = _summary_issue_keys(report)
     issues = []
     for section in report.get("sections") or []:
         for item in section.get("items") or []:
             if item.get("status") not in ("hit", "undecidable"):
                 continue
+            if summary_keys is not None:
+                subject = item.get("subject") or {}
+                subject_id = subject.get("subject_id") if isinstance(subject, dict) else item.get("subject_id")
+                key = (str(item.get("item_id")), str(subject_id) if subject_id is not None else None)
+                if key not in summary_keys:
+                    continue
             item = dict(item)
             item.setdefault("category", section.get("title") or "核查项")
             item.setdefault(
@@ -301,6 +370,136 @@ def _coverage_lines(payload: dict) -> list:
     return lines
 
 
+def _business_information_rows(document: dict) -> list[tuple[str, str]]:
+    statuses = document.get("basic_information_status") or {}
+    rows = []
+    for label, value in (document.get("basic_information") or {}).items():
+        value = str(value) if value is not None and value != "" else "待核实"
+        if statuses.get(label) in {"conflict", "unresolved"} and value != "待核实":
+            value += "（待核实）"
+        rows.append((label, value))
+    return rows
+
+
+def _business_summary_rows(document: dict) -> tuple[list[dict], list[dict]]:
+    pending = document.get("pending_summaries")
+    notes = document.get("human_notes")
+    if pending is None or notes is None:
+        fallback_pending, fallback_notes = summarize_report_issues(document.get("issues") or [])
+        pending = fallback_pending if pending is None else pending
+        notes = fallback_notes if notes is None else notes
+    return pending, notes
+
+
+def _business_limitation_groups(conclusion: dict) -> list[dict]:
+    groups = conclusion.get("limitation_groups")
+    if groups is not None:
+        return groups
+    limitations = conclusion.get("limitations") or []
+    return [{"label": "核查范围及限制", "items": limitations}] if limitations else []
+
+
+def _business_key_points(section: dict) -> list[dict]:
+    return section.get("key_points", section.get("fields")) or []
+
+
+def _business_document_lines(report: dict) -> list[tuple[str, str, bool]]:
+    """将新的业务报告投影转换为简单的标题/正文行序列。"""
+    document = report.get("business_document")
+    if not isinstance(document, dict):
+        return []
+    lines: list[tuple[str, str, bool]] = [("heading", "一、项目与分包基本信息", True)]
+    for label, value in _business_information_rows(document):
+        lines.append(("field", "%s：%s" % (label, value), False))
+    lines.append(("heading", "二、核查摘要", True))
+    for index, section in enumerate(document.get("sections") or [], 1):
+        lines.append(("subheading", "%s. %s" % (index, section.get("title") or "核查"), True))
+        for field in _business_key_points(section):
+            lines.append(("text", "%s（%s）：%s" % (field.get("label"), field.get("status") or "状态未标注", field.get("summary")), False))
+    pending, notes = _business_summary_rows(document)
+    lines.append(("heading", "三、待处理事项摘要", True))
+    for row in pending:
+        lines.append(("text", "%s：%s" % (row["category"], row["text"]), False))
+    if not pending:
+        lines.append(("text", "当前无未经人工处理的事项。", False))
+    lines.append(("heading", "四、人工处理意见", True))
+    for row in notes:
+        lines.append(("text", "%s｜%s：已采纳；%s" % (row["category"], row["label"], row["note"]), False))
+    if not notes:
+        lines.append(("text", "当前未形成需单独说明的人工处理意见。", False))
+    conclusion = document.get("conclusion") or {}
+    groups = _business_limitation_groups(conclusion)
+    if groups:
+        lines.append(("heading", "五、核查说明", True))
+    for group in groups:
+        lines.append(("text", "%s：%s" % (group["label"], "；".join(group["items"])), False))
+    return lines
+
+
+def _add_business_document_word(doc, report: dict) -> bool:
+    document = report.get("business_document")
+    if not isinstance(document, dict):
+        return False
+
+    def table(headers, rows, proportions=None):
+        result = doc.add_table(rows=1, cols=len(headers))
+        result.style = "Table Grid"
+        if proportions:
+            result.autofit = False
+            section = doc.sections[-1]
+            width = section.page_width - section.left_margin - section.right_margin
+            for column, proportion in zip(result.columns, proportions):
+                column.width = int(width * proportion)
+        repeat_header = OxmlElement("w:tblHeader")
+        repeat_header.set(qn("w:val"), "true")
+        result.rows[0]._tr.get_or_add_trPr().append(repeat_header)
+        for cell, title in zip(result.rows[0].cells, headers):
+            cell.text = title
+        for row in rows:
+            cells = result.add_row().cells
+            for cell, value in zip(cells, row):
+                cell.text = str(value or "待核实")
+        for row in result.rows:
+            if proportions:
+                for cell, proportion in zip(row.cells, proportions):
+                    cell.width = int(width * proportion)
+            for cell in row.cells:
+                for para in cell.paragraphs:
+                    for run in para.runs:
+                        _cjk(run)
+                        run.font.size = Pt(9)
+        return result
+
+    _add_para(doc, "一、项目与分包基本信息", size=13, bold=True, keep_with_next=True)
+    table(("字段", "内容"), _business_information_rows(document), (0.30, 0.70))
+    _add_para(doc, "二、核查摘要", size=13, bold=True, keep_with_next=True)
+    for index, section in enumerate(document.get("sections") or [], 1):
+        _add_para(doc, "%s. %s" % (index, section.get("title") or "核查"), size=11, bold=True, keep_with_next=True)
+        rows = [(row.get("label"), row.get("summary"), row.get("status") or "状态未标注")
+                for row in _business_key_points(section)]
+        if rows:
+            table(("审查要点", "核查摘要", "状态"), rows, (0.22, 0.64, 0.14))
+    pending, notes = _business_summary_rows(document)
+    _add_para(doc, "三、待处理事项摘要", size=13, bold=True, keep_with_next=True)
+    if pending:
+        table(("核查类别", "待处理摘要"), [(row["category"], row["text"]) for row in pending], (0.28, 0.72))
+    else:
+        _add_para(doc, "当前无未经人工处理的事项。", size=9.5)
+    _add_para(doc, "四、人工处理意见", size=13, bold=True, keep_with_next=True)
+    if notes:
+        table(("核查事项", "人工意见"), [("%s｜%s" % (row["category"], row["label"]),
+                                      "已采纳；%s" % row["note"]) for row in notes], (0.28, 0.72))
+    else:
+        _add_para(doc, "当前未形成需单独说明的人工处理意见。", size=9.5)
+    conclusion = document.get("conclusion") or {}
+    groups = _business_limitation_groups(conclusion)
+    if groups:
+        _add_para(doc, "五、核查说明", size=13, bold=True, keep_with_next=True)
+    for group in groups:
+        _add_para(doc, "%s：%s" % (group["label"], "；".join(group["items"])), size=9.5)
+    return True
+
+
 def _page_state_history_lines(payload: dict) -> list:
     """将报告中的页级状态历史压缩成纸面可读摘要；完整链路仍在 report.json 中保留。"""
     lines = []
@@ -363,12 +562,23 @@ def _ai_advisory_lines(report: dict) -> list[str]:
 def word_bytes(report: dict, digest: str = None, exported_at: str = None) -> bytes:
     """report dict → Word (docx) 字节流；digest/exported_at 缺省时按当前内容自算。"""
     doc = Document()
+    _configure_word_document(doc)
     meta = report["meta"]
     _add_para(doc, "%s——核查报告" % meta["title"], size=16, bold=True, space_after=8)
     if report.get("draft_notice"):
         # 稿别标注进纸面：初稿被打印/转发后，必须一眼看得出「未复核」
         _add_para(doc, "【%s】%s" % (report.get("stage_label", ""), report["draft_notice"]),
                   size=10, bold=True, space_after=6)
+
+    if _business_document_lines(report):
+        _add_business_document_word(doc, report)
+        digest = digest or report_digest(report)
+        exported_at = exported_at or datetime.now().isoformat(timespec="seconds")
+        _add_para(doc, "报告校验码：%s（sha256 前 16 位，完整值见证据包）　|　导出时间：%s"
+                  % (digest[:16], exported_at), size=8.5, space_after=0)
+        bio = io.BytesIO()
+        doc.save(bio)
+        return bio.getvalue()
 
     scope = "、".join(k for k, on in meta["scope"].items() if on) or "未选择"
     _add_para(doc, "核查范围：%s　|　档案尺度：%s　|　报告生成：%s"
@@ -377,6 +587,8 @@ def word_bytes(report: dict, digest: str = None, exported_at: str = None) -> byt
     # A-03（B1）：封面追加标段锚点行（空值 → 「未填写」）
     _add_para(doc, _section_cover_line(meta), size=9,
               space_after=4 if report.get("scope_statements") else 8)
+    for line in _contractor_summary_lines(report):
+        _add_para(doc, line, size=9, space_after=3)
     fact_lines = _contract_facts_lines(report)
     if fact_lines:
         _add_para(doc, "合同要素事实", size=11, bold=True, space_after=4)
@@ -468,6 +680,101 @@ def _wrap(text: str, size: float, max_width: float) -> list:
     return lines or [""]
 
 
+def _pdf_insert_text(page, point, text, fontsize):
+    """Embed the available CJK font so readers do not depend on local fonts."""
+    if not any(font[4] == "EmbeddedCJK" for font in page.get_fonts()):
+        page.insert_font(fontname="EmbeddedCJK", fontbuffer=fitz.Font("cjk").buffer)
+    page.insert_text(point, text, fontname="EmbeddedCJK", fontsize=fontsize)
+
+
+def _draw_business_pdf(doc, page, y, document):
+    """Render business tables, splitting oversized rows and repeating their header."""
+    margin, page_w, page_h = 48.0, 595.0, 842.0
+    split, right = margin + 135, page_w - margin
+    size, line_height, padding = 9.5, 14.0, 5.0
+
+    def new_page():
+        return doc.new_page(width=page_w, height=page_h), margin
+
+    def heading(text):
+        nonlocal page, y
+        # Leave room for the following table header and a short first row.
+        if y + 130 > page_h - margin:
+            page, y = new_page()
+        y += 6
+        _pdf_insert_text(page, (margin, y + 13), text, fontsize=13)
+        y += 21
+
+    def table(headers, rows):
+        nonlocal page, y
+
+        def draw_cells(left_lines, right_lines, header=False):
+            nonlocal y
+            height = max(len(left_lines), len(right_lines)) * line_height + 2 * padding
+            for x0, x1, lines in ((margin, split, left_lines), (split, right, right_lines)):
+                page.draw_rect(fitz.Rect(x0, y, x1, y + height), color=(0.35, 0.35, 0.35), width=0.5,
+                               fill=(0.94, 0.94, 0.94) if header else None)
+                for index, line in enumerate(lines):
+                    _pdf_insert_text(page, (x0 + padding, y + padding + size + index * line_height), line,
+                                     fontsize=size)
+            y += height
+
+        def header():
+            draw_cells([headers[0]], [headers[1]], True)
+
+        if y + 2 * (line_height + 2 * padding) > page_h - margin:
+            page, y = new_page()
+        header()
+        for left, content in rows:
+            columns = []
+            for value, width in ((left, split - margin), (content, right - split)):
+                lines = []
+                for raw in str(value or "待核实").splitlines() or [""]:
+                    lines.extend(_wrap(raw, size, width - 2 * padding))
+                columns.append(lines)
+            offset = 0
+            total = max(map(len, columns))
+            row_height = total * line_height + 2 * padding
+            header_height = line_height + 2 * padding
+            if (row_height <= page_h - 2 * margin - header_height
+                    and y + row_height > page_h - margin):
+                page, y = new_page()
+                header()
+            while offset < total:
+                available = int((page_h - margin - y - 2 * padding) // line_height)
+                if available < 1:
+                    page, y = new_page()
+                    header()
+                    continue
+                end = min(total, offset + available)
+                draw_cells(columns[0][offset:end], columns[1][offset:end])
+                offset = end
+        y += 4
+
+    heading("一、项目与分包基本信息")
+    table(("字段", "内容"), _business_information_rows(document))
+    heading("二、核查摘要")
+    for index, section in enumerate(document.get("sections") or [], 1):
+        heading("%s. %s" % (index, section.get("title") or "核查"))
+        rows = [("%s\n%s" % (row.get("label"), row.get("status") or "状态未标注"), row.get("summary"))
+                for row in _business_key_points(section)]
+        if rows:
+            table(("审查要点及状态", "核查摘要"), rows)
+    pending, notes = _business_summary_rows(document)
+    heading("三、待处理事项摘要")
+    rows = [(row["category"], row["text"]) for row in pending]
+    table(("核查类别", "待处理摘要"), rows or [("核查事项", "当前无未经人工处理的事项。")])
+    heading("四、人工处理意见")
+    rows = [("%s｜%s" % (row["category"], row["label"]), "已采纳；%s" % row["note"]) for row in notes]
+    table(("核查事项", "人工意见"), rows or [("人工处理", "当前未形成需单独说明的人工处理意见。")])
+    conclusion = document.get("conclusion") or {}
+    groups = _business_limitation_groups(conclusion)
+    if groups:
+        heading("五、核查说明")
+        table(("项目", "内容"), [(group["label"], "\n".join(group["items"])) for group in groups])
+    return page, y
+
+
 def pdf_bytes(report: dict, digest: str = None, exported_at: str = None) -> bytes:
     """report dict → PDF 字节流（fitz 内置简体中文字体 china-s）。"""
     margin, size_body, size_h1, size_h2 = 48.0, 10.5, 15.0, 12.5
@@ -492,20 +799,31 @@ def pdf_bytes(report: dict, digest: str = None, exported_at: str = None) -> byte
             for ln in _wrap(raw_line, size, max_w):
                 if y + lh > page_h - margin:
                     new_page()
-                page.insert_text(fitz.Point(margin, y + size), ln,
-                                 fontname="china-s" if not bold else "china-ss",
-                                 fontsize=size)
+                _pdf_insert_text(page, fitz.Point(margin, y + size), ln, fontsize=size)
                 y += lh
 
     meta = report["meta"]
     write("%s——核查报告" % meta["title"], size_h1, bold=True)
     if report.get("draft_notice"):
         write("【%s】%s" % (report.get("stage_label", ""), report["draft_notice"]), 9.5, bold=True)
+    business_lines = _business_document_lines(report)
+    if business_lines:
+        page, y = _draw_business_pdf(doc, page, y, report["business_document"])
+        digest = digest or report_digest(report)
+        exported_at = exported_at or datetime.now().isoformat(timespec="seconds")
+        write("报告校验码：%s（sha256 前 16 位，完整值见证据包）" % digest[:16], 8.5)
+        write("导出时间：%s" % exported_at, 8.5)
+        bio = io.BytesIO()
+        doc.save(bio, deflate=True)
+        doc.close()
+        return bio.getvalue()
     scope = "、".join(k for k, on in meta["scope"].items() if on) or "未选择"
     write("核查范围：%s | 档案尺度：%s | 报告生成：%s"
           % (scope, meta.get("scale", ""), meta.get("generated_at", "")), 9)
     # A-03（B1）：封面追加标段锚点行（空值 → 「未填写」）
     write(_section_cover_line(meta), 9)
+    for line in _contractor_summary_lines(report):
+        write(line, 9)
     fact_lines = _contract_facts_lines(report)
     if fact_lines:
         write("合同要素事实", 11, bold=True)
@@ -728,6 +1046,14 @@ def _opinion_summary_lines(opinion: dict) -> list[tuple[str, str]]:
     """预览与导出共用的简版正文，只列人工采纳的问题。"""
     from .rules import load_review_flow
 
+    business_lines = _business_document_lines(opinion)
+    if business_lines:
+        lines = [("title", "分包报审智能审查意见书")]
+        if opinion.get("draft_notice"):
+            lines.append(("text", "【%s】%s" % (opinion.get("stage_label", ""), opinion["draft_notice"])))
+        lines.extend((kind if kind in {"heading", "subheading"} else "text", text)
+                     for kind, text, _bold in business_lines)
+        return lines
     lines = [("title", "分包报审智能审查意见书")]
     if opinion.get("draft_notice"):
         lines.append(("text", "【%s】%s" % (opinion.get("stage_label", ""), opinion["draft_notice"])))
@@ -819,9 +1145,17 @@ def _opinion_summary_lines(opinion: dict) -> list[tuple[str, str]]:
 def opinion_word_bytes(opinion: dict, digest: str = None, exported_at: str = None) -> bytes:
     """Word 与页面、PDF 使用同一份正文。"""
     doc = Document()
-    for kind, text in _opinion_summary_lines(opinion):
-        size = {"title": 16, "heading": 13, "subheading": 11}.get(kind, 10)
-        _add_para(doc, text, size=size, bold=kind != "text", space_after=5)
+    _configure_word_document(doc)
+    if opinion.get("business_document"):
+        _add_para(doc, "分包报审智能审查意见书", size=16, bold=True, space_after=8)
+        if opinion.get("draft_notice"):
+            _add_para(doc, "【%s】%s" % (opinion.get("stage_label", ""), opinion["draft_notice"]),
+                      size=10, bold=True, space_after=6)
+        _add_business_document_word(doc, opinion)
+    else:
+        for kind, text in _opinion_summary_lines(opinion):
+            size = {"title": 16, "heading": 13, "subheading": 11}.get(kind, 10)
+            _add_para(doc, text, size=size, bold=kind != "text", space_after=5)
     digest = digest or report_digest(opinion)
     exported_at = exported_at or datetime.now().isoformat(timespec="seconds")
     _add_para(doc, "意见书校验码：%s（sha256 前 16 位，完整值见证据包） | 导出时间：%s" %
@@ -858,13 +1192,18 @@ def opinion_pdf_bytes(opinion: dict, digest: str = None, exported_at: str = None
                 if y + size * 1.45 > page_h - margin:
                     page = doc.new_page(width=page_w, height=page_h)
                     y = margin
-                page.insert_text(fitz.Point(margin, y + size), line,
-                                 fontname="china-ss" if bold else "china-s", fontsize=size)
+                _pdf_insert_text(page, fitz.Point(margin, y + size), line, fontsize=size)
                 y += size * 1.45
         y += 3
 
-    for kind, text in _opinion_summary_lines(opinion):
-        write(text, {"title": 16, "heading": 13, "subheading": 11}.get(kind, 10), kind != "text")
+    if isinstance(opinion.get("business_document"), dict):
+        write("分包报审智能审查意见书", 16, True)
+        if opinion.get("draft_notice"):
+            write("【%s】%s" % (opinion.get("stage_label", ""), opinion["draft_notice"]), 10, True)
+        page, y = _draw_business_pdf(doc, page, y, opinion["business_document"])
+    else:
+        for kind, text in _opinion_summary_lines(opinion):
+            write(text, {"title": 16, "heading": 13, "subheading": 11}.get(kind, 10), kind != "text")
     digest = digest or report_digest(opinion)
     exported_at = exported_at or datetime.now().isoformat(timespec="seconds")
     write("意见书校验码：%s（sha256 前 16 位，完整值见证据包） | 导出时间：%s" %

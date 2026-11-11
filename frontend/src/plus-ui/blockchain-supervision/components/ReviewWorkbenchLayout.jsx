@@ -780,7 +780,7 @@ export default function ReviewWorkbenchLayout({
   const previewPaneElement = (
     <MaterialPreviewPane
       material={previewMaterial}
-      page={sameSourceMaterial ? previewPage : null}
+      page={sameSourceMaterial || previewFindingId == null ? previewPage : null}
       finding={sameSourceMaterial ? previewFinding : null}
       materials={previewMaterials}
       onMaterialChange={onPreviewMaterialChange}
@@ -847,7 +847,7 @@ export default function ReviewWorkbenchLayout({
           </button>
         </div>
       )}
-      {overviewMode && overviewPanel ? overviewPanel : stepPanel ? stepPanel : previewMaterial && selectedFinding ? (
+      {previewMaterial && previewFindingId == null ? previewPaneElement : overviewMode && overviewPanel ? overviewPanel : stepPanel ? stepPanel : previewMaterial && selectedFinding ? (
         <div className="flex min-h-0 flex-1 flex-col gap-2">
           <div data-testid="layout-detail-stack" className="flex min-h-0 flex-[2] flex-col overflow-hidden">{detailPaneElement}</div>
           <div data-testid="layout-preview-stack" className="flex min-h-0 flex-[3] flex-col overflow-hidden">{previewPaneElement}</div>

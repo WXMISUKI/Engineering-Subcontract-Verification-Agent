@@ -8,13 +8,15 @@
 - 证据条目带 file_name/page/quote/location_mode，前端据此渲染「定位到
   第 n 页」（precise 可点、page 仅跳页、unresolved 不渲染按钮）。
 """
+from copy import deepcopy
 from datetime import datetime
 from types import SimpleNamespace
 
 from sqlalchemy.orm import Session
 
-from . import a2_check, ai_advisory_snapshots, certificate_number_check, checklist, extract, finding_text, identity_observation, material_confirmation, material_versions, parsing, reference_snapshots
+from . import a2_check, ai_advisory_snapshots, business_report, certificate_number_check, checklist, contract_party_evidence as contract_party_evidence_module, extract, finding_text, identity_observation, material_confirmation, material_versions, parsing, qualification_summary, reference_snapshots, report_basic_facts, report_document
 from .classify import ROLE_LABELS, ROLE_PACKET, ROLE_UNKNOWN, classify_material
+from . import report_contract_type
 from .models import (STATUS_CODES, STATUS_LABELS, STATUS_UNDECIDABLE,
                      BsFinding, BsMaterial, BsSubject, BsTask, BsTaskEvent,
                      BsReviewVersion)
@@ -152,6 +154,7 @@ def contract_facts_for_materials(materials, *, baseline_date=None) -> list[dict]
             continue
         result = extract.extract_contract_fields(material, baseline_date=baseline_date)
         fields = result.get("fields") or {}
+        fields["contract_type"] = report_contract_type.project_contract_type(material)
         facts.append({
             "file_name": material.file_name,
             "role": role,
@@ -659,6 +662,7 @@ REVIEW_DECISION_ALIASES = {
 # 不属于问题项人工处置，不得混入此映射。
 REVIEW_LABELS = {"accepted": "已采纳", "ignored": "已忽略"}
 UNPROCESSED_REVIEW_LABEL = "未经人工处理，保留系统核查结果"
+UNPROCESSED_HIT_LABEL = "AI 定性（未经人工处置）"
 
 
 def canonical_review_decision(decision: str | None) -> str | None:
@@ -700,7 +704,7 @@ def review_dto(rv: dict | None) -> dict | None:
     }
 
 
-def human_disposition(rv: dict | None) -> dict:
+def human_disposition(rv: dict | None, status: str | None = None) -> dict:
     """将人工处置投影为报告可读事实，不引入第三种业务状态。
 
     ``unprocessed`` 是由没有当前 accepted/ignored 回执推导出的展示代码，
@@ -719,7 +723,7 @@ def human_disposition(rv: dict | None) -> dict:
         }
     return {
         "code": "unprocessed",
-        "label": UNPROCESSED_REVIEW_LABEL,
+        "label": UNPROCESSED_HIT_LABEL if status == "hit" else UNPROCESSED_REVIEW_LABEL,
         "note": None,
         "reviewer": None,
         "at": None,
@@ -760,7 +764,7 @@ def _normalize_items(items) -> None:
         if isinstance(item.get("review"), dict):
             item["review"] = review_dto(item["review"])
         if "human_disposition" not in item:
-            item["human_disposition"] = human_disposition(item.get("review"))
+            item["human_disposition"] = human_disposition(item.get("review"), item.get("status"))
 
 
 def normalize_output_payload(payload: dict, kind: str) -> dict:
@@ -1013,6 +1017,12 @@ def build_run_lineage(db: Session, task: BsTask) -> dict:
     }
 
 
+def _attach_qualification_summary(report: dict) -> dict:
+    """在保留机器全量报告的前提下附加纯读业主摘要投影。"""
+    report["qualification_summary"] = qualification_summary.build_qualification_summary(report)
+    return report
+
+
 def build_report(db: Session, task: BsTask) -> dict:
     """聚合任务全部已落库结论为报告 dict（纯读，不写库）。"""
     reference_snapshot = reference_snapshots.get_reference_snapshot(db, task)
@@ -1107,6 +1117,7 @@ def build_report(db: Session, task: BsTask) -> dict:
                     "status_label": status_label(display_finding.status, open_term), "missing": missing_info,
                     "summary": "原规则结果与当前材料确认分别保留；" + display_finding.message}
             items.append({
+                "finding_id": f.id,
                 "item_id": f.item_id,
                 "category": title,
                 "label": _item_label(f.item_id, neg_map, rc_map, sc_map, val_map),
@@ -1185,6 +1196,7 @@ def build_report(db: Session, task: BsTask) -> dict:
                 "message": _DEGRADATION_TEXTS.get(d.get("kind"), d.get("message", "")),
             })
         fields = res.get("fields") or {}
+        fields["contract_type"] = report_contract_type.project_contract_type(m)
         contract_facts.append({
             "file_name": m.file_name,
             "role": role,
@@ -1192,6 +1204,14 @@ def build_report(db: Session, task: BsTask) -> dict:
             "project_name": extract.extract_project_name(m),
             "fields": {k: fields.get(k) for k in _CONTRACT_FACT_ORDER},
         })
+    # F1-2：合同主体角色证据独立于专业/劳务 BsSubject；缺失和冲突保持三态，
+    # 不为了填充报告抬头而猜测施工总承包单位。
+    contract_party_evidence = contract_party_evidence_module.resolve_contract_party_evidence(input_materials)
+    packet_facts = report_basic_facts.extract_report_basic_facts(input_materials)
+    contract_party_evidence = report_basic_facts.merge_party_facts(
+        contract_party_evidence, packet_facts)
+    contract_party_evidence["employer"] = report_basic_facts.apply_employer_confirmation(
+        contract_party_evidence.get("employer"), report_basic_facts.latest_employer_confirmation(db, task.id))
 
     # 报告封面与工作台共用合同事实：历史任务可能没有显式填写 task.project_name，
     # 但合同材料已经抽取出工程名称/金额/签订日期时，不能在报告封面退回“未填写”。
@@ -1227,7 +1247,35 @@ def build_report(db: Session, task: BsTask) -> dict:
             headline = "本轮核查尚未形成完整结论，当前报告为中间结果。"
         else:
             headline = "该任务尚未开始核查。"
-    return {
+    basic_project = packet_facts.get("project_name") or {}
+    basic_section = packet_facts.get("contract_section") or {}
+    basic_scope = packet_facts.get("subcontract_scope") or {}
+    sub_contract_fact = next((fact for fact in contract_facts
+                              if fact.get("role") in {"sub", "labor"}), None)
+    sub_contract_fields = (sub_contract_fact or {}).get("fields") or {}
+    basic_amount = sub_contract_fields.get("amount") or {}
+    subject_rows = checklist_summary.get("subjects") or []
+    subject_ready = len(subject_rows) == 1 and subject_rows[0].get("status") == "ready"
+    packet_amount = packet_facts.get("subcontract_amount") or {}
+    contract_amount = {"value": basic_amount.get("value") if basic_amount.get("status") == "hit" else None,
+                       "unit": basic_amount.get("unit"), "status": basic_amount.get("status", "unresolved"),
+                       "source": sub_contract_fact.get("file_name") if sub_contract_fact else None}
+    amount_result = report_basic_facts.merge_amount_facts(packet_amount, contract_amount)
+    report_basic_information = {
+        "project_name": report_basic_facts.project_task_fact(task.project_name, basic_project, project_name=True),
+        "contract_section": report_basic_facts.project_task_fact(task.contract_section, basic_section),
+        "general_contractor": contract_party_evidence.get("general_contractor") or {},
+        "employer": contract_party_evidence.get("employer") or {},
+        "subcontractor": (contract_party_evidence.get("subcontractor") or {}) if len(subjects) != 1 else {
+            "company": subjects[0].name if subject_ready else None,
+            "status": "matched" if subject_ready else "unresolved"},
+        "subcontract_type": _opinion_subject_type(checklist_summary.get("subjects") or [], contract_facts),
+        # 旧合同范围是关键词窗口，可能混入表格邻列；未能定位可靠标题时保持待核实。
+        "subcontract_scope": basic_scope,
+        "subcontract_amount": amount_result,
+        "baseline_date": task.baseline_date.isoformat() if task.baseline_date else None,
+    }
+    report = {
         "meta": {
             "task_id": task.id,
             "title": task.title,
@@ -1294,6 +1342,8 @@ def build_report(db: Session, task: BsTask) -> dict:
         # A-15（B1）合同要素事实认定：三类合同材料逐份 9 字段三态结果
         # （extract 层消费方；空则 []，与 meta/summary/sections/material_issues 键并存不互斥）。
         "contract_facts": contract_facts,
+        "contract_party_evidence": contract_party_evidence,
+        "basic_information": report_basic_information,
         "ignored_items": [
             item
             for section in sections
@@ -1304,6 +1354,10 @@ def build_report(db: Session, task: BsTask) -> dict:
         "coverage": coverage,
         "limitations": coverage["limitations"],
     }
+    report = _attach_qualification_summary(report)
+    report["business_report"] = business_report.build_business_report(report)
+    report["business_document"] = report_document.build_report_document(report)
+    return report
 
 
 # ==================== 审查意见书（对齐 118 号文附件 1《分包单位认可表》） ====================
@@ -1350,6 +1404,47 @@ def _fact_value(fact: dict, key: str) -> str | None:
     if isinstance(value, (int, float)):
         return "%s%s" % (format(value, ",.4g"), unit)
     return "%s%s" % (value, unit)
+
+
+def _subcontract_type_value(contract_facts: list[dict]) -> str | None:
+    """汇总所有分包合同的类型，避免按角色或材料顺序掩盖冲突。"""
+    values = []
+    for fact in contract_facts:
+        if fact.get("role") not in {"sub", "labor"}:
+            continue
+        value = _fact_value(fact, "contract_type")
+        if not value:
+            return None
+        values.append(value)
+    distinct = set(values)
+    if len(distinct) > 1:
+        return "多种分包类型，需分别核实"
+    return values[0] if values else None
+
+
+def _opinion_subject_type(subjects: list[dict], contract_facts: list[dict]) -> str | None:
+    """主体类型以已确认的审查对象为准，合同线索冲突单独提示。"""
+    if not subjects:
+        return "主体类型待核实"
+    if any(row.get("status") != "ready" or row.get("subject_type") not in {"labor", "professional"}
+           for row in subjects):
+        return "主体类型待核实"
+    kinds = {row["subject_type"] for row in subjects}
+    if len(kinds) > 1:
+        return "多种分包类型，需分别核实"
+    kind = next(iter(kinds))
+    label = {"labor": "劳务分包", "professional": "专业分包"}[kind]
+    contract_type = _subcontract_type_value(contract_facts)
+    if any(row.get("type_conflict") for row in subjects):
+        return label + "（材料类型存在冲突，需核实）"
+    if contract_type == "多种分包类型，需分别核实":
+        return label + "（合同类型需分别核实）"
+    if not contract_type:
+        return label + "（合同类型待核实）"
+    contract_kind = {"劳务分包": "labor", "劳务合作": "labor", "专业分包": "professional"}.get(contract_type)
+    if contract_kind != kind:
+        return label + "（合同类型不一致，需核实）"
+    return label
 
 
 def build_opinion(db: Session, task: BsTask) -> dict:
@@ -1466,13 +1561,28 @@ def build_opinion(db: Session, task: BsTask) -> dict:
                                                "contract_name": contract_subject["name"],
                                                "file_name": contract_subject["file_name"]})
     sub_fact = facts.get("sub") or facts.get("labor") or {}
+    contractor_summary = (report.get("qualification_summary") or {}).get("general_contractor")
+    if isinstance(contractor_summary, dict):
+        contractor_status = contractor_summary.get("status") or "missing"
+        contractor_name = (contractor_summary.get("company")
+                           if contractor_status == "matched" else None)
+        contractor_label = contractor_summary.get("label") or "承包单位未识别，待核实"
+    else:
+        # 兼容没有摘要字段的历史 report dict；当前 build_report 始终提供摘要。
+        contractor_status = "legacy"
+        contractor_name = _fact_value(facts.get("general") or {}, "parties")
+        contractor_label = "施工总承包单位"
     subject = {
         "工程名称": report["meta"].get("project_name"),
         "标段": report["meta"].get("contract_section"),
-        "施工总承包单位": _fact_value(facts.get("general") or {}, "parties"),
+        "施工总承包单位": contractor_name,
+        "施工总承包单位状态": contractor_status,
+        "施工总承包单位说明": contractor_label,
+        "施工总承包单位证据": (list((contractor_summary or {}).get("evidence") or [])
+                               if isinstance(contractor_summary, dict) else []),
         "分包单位名称": subcontractor,
-        "分包类型": (_fact_value(facts.get("sub") or {}, "contract_type")
-                     or _fact_value(facts.get("labor") or {}, "contract_type")),
+        "分包类型": _opinion_subject_type((report.get("checklist_summary") or {}).get("subjects") or [],
+                                           report.get("contract_facts") or []),
         "拟分包金额": _fact_value(sub_fact, "amount"),
         "拟分包范围": _fact_value(sub_fact, "scope"),
     }
@@ -1517,6 +1627,7 @@ def build_opinion(db: Session, task: BsTask) -> dict:
         "meta": dict(report["meta"], opinion_conclusion=code,
                      advisory_conclusion={"code": advisory_code, "text": advisory_text},
                      machine_notice=OPINION_MACHINE_NOTICE),
+        "business_document": deepcopy(report.get("business_document")),
         "subject": subject,
         "conclusion": {
             "code": code,

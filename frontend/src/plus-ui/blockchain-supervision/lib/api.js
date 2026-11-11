@@ -228,6 +228,14 @@ export async function confirmBsMaterial(taskId, findingId, decision, token, expe
   return _json(r, '材料确认')
 }
 
+export async function confirmBsEmployer(taskId, candidate) {
+  const r = await fetch(`${BASE}/tasks/${taskId}/employer-confirmation`, {
+    method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ material_id: candidate.material_id, page: candidate.page, value: candidate.value }),
+  })
+  return _json(r, 'bs employer confirmation')
+}
+
 // A-10 删除任务（B0）：DELETE /tasks/{id}——任务与三张子表一并删除（后端显式删）。
 // setup 阶段「放弃本次核查」与工作台「清理任务」的入口。
 export async function deleteBsTask(taskId) {

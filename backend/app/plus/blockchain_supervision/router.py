@@ -16,11 +16,11 @@ from ...auth.unified_user import get_current_any_user
 from ...database import SessionLocal, get_db
 from ...limiter import limiter
 from ...utils.download import attachment_disposition
-from . import (access, admission, ai_advisory_snapshots, checklist, export, reporting, service,
+from . import (access, admission, ai_advisory_snapshots, checklist, contract_party_evidence as contract_party_evidence_module, export, reporting, service,
                severity, zip_ingestion, knowledge_runs, reference_snapshots, rules, ruleset)
 from . import source_manifest, finding_text, background_ai_review
 from . import reference_visibility
-from . import material_versions, supplement_generation, section_projection, material_confirmation
+from . import material_versions, supplement_generation, section_projection, material_confirmation, report_basic_facts
 from . import parsing
 from .rules import load_report_checklist
 from .reference_access import read_reference_original
@@ -79,6 +79,12 @@ class SectionIn(BaseModel):
     baseline_date: Optional[date] = None
     jurisdiction: Optional[str] = None
     profile_code: Optional[str] = None
+
+
+class EmployerConfirmationIn(BaseModel):
+    material_id: StrictInt
+    page: StrictInt
+    value: str
 
 
 class MaterialIn(BaseModel):
@@ -513,12 +519,22 @@ def get_task(task_id: int, db: Session = Depends(get_db), user=Depends(get_curre
     reading_coverage = service.task_reading_coverage(db, task)
     supplement_labels = service.supplement_material_labels(db, task.id)
     supplement_associations = service.supplement_issue_associations(db, task.id)
+    active_input_materials = material_versions.active_input_materials(materials)
     # 抬头事实是只读投影：工作台在报告尚不可读时也能展示合同金额/签订日期，
     # 但仍只消费合同字段抽取结果，不自行从文件名猜值。
     contract_facts = reporting.contract_facts_for_materials(
-        material_versions.active_input_materials(materials),
+        active_input_materials,
         baseline_date=task.baseline_date,
     )
+    contract_party_evidence = contract_party_evidence_module.resolve_contract_party_evidence(
+        active_input_materials
+    )
+    basic_facts = report_basic_facts.extract_report_basic_facts(active_input_materials)
+    contract_party_evidence = report_basic_facts.merge_party_facts(contract_party_evidence, basic_facts)
+    contract_party_evidence["employer"] = report_basic_facts.apply_employer_confirmation(
+        contract_party_evidence.get("employer"), report_basic_facts.latest_employer_confirmation(db, task.id))
+    basic_facts["project_name"] = report_basic_facts.project_task_fact(task.project_name, basic_facts.get("project_name"), project_name=True)
+    basic_facts["contract_section"] = report_basic_facts.project_task_fact(task.contract_section, basic_facts.get("contract_section"))
     return {
         "task_id": task.id,
         "baseline_date_source": service.baseline_date_source(task),
@@ -540,6 +556,8 @@ def get_task(task_id: int, db: Session = Depends(get_db), user=Depends(get_curre
                        "supplement_issue": supplement_associations.get(m.id)}
                       for m in materials],
         "contract_facts": contract_facts,
+        "contract_party_evidence": contract_party_evidence,
+        "report_basic_facts": basic_facts,
         "validation": service.validate_task_materials(db, task),
         "versions": service.list_review_versions(db, task),
         "reference_run": reference_visibility.visible_run(db, task, knowledge_runs.get_reference_run(db, task), user),
@@ -554,6 +572,27 @@ def get_task(task_id: int, db: Session = Depends(get_db), user=Depends(get_curre
             zip_summary=zip_preparation,
         ),
     }
+
+
+@router.post("/tasks/{task_id}/employer-confirmation")
+def confirm_report_employer(task_id: int, body: EmployerConfirmationIn,
+                            db: Session = Depends(get_db), user=Depends(get_current_any_user)):
+    """Confirm one current report-form recipient without inferring other tasks."""
+    task = _get_task(db, task_id, user)
+    materials = db.query(BsMaterial).filter(BsMaterial.task_id == task_id).all()
+    active = material_versions.active_input_materials(materials)
+    facts = report_basic_facts.extract_report_basic_facts(active)
+    party = report_basic_facts.merge_party_facts(
+        contract_party_evidence_module.resolve_contract_party_evidence(active), facts).get("employer") or {}
+    candidate = next((row for row in party.get("recipient_candidates") or []
+                      if row.get("material_id") == body.material_id and row.get("page") == body.page
+                      and row.get("value") == body.value), None)
+    if not candidate or report_basic_facts.apply_employer_confirmation(party, candidate).get("source") != "human_confirmation":
+        raise HTTPException(status_code=409, detail="候选已变化或与其他主体证据冲突，请刷新后核实")
+    service.add_event(db, task.id, "report.employer_confirmed", stage="report",
+                      payload={"candidate": candidate, "user_id": user.id,
+                               "user_type": getattr(user, "user_type", None)})
+    return {"status": "confirmed", "company": candidate["value"]}
 
 
 @router.get("/tasks/{task_id}/materials/{material_id}/history")
