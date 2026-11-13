@@ -16,7 +16,7 @@
 - 页面显示五步规则核查 5/5 已结束；34 项待人工复核，已复核 0/34。不能将五步结束解释成 AI 结果完整或业务结论已确认。
 - MySQL 只读事务复核最新 AI 组回执：A1 `partial`（2/29 批次完成）、A2 `partial`（1/13）、完整性 `partial`（0/1）、签章 `partial`（3/5）、内部记录 `not_run`（0 批）；后台 job 虽有 completed 事件，但 `warning=true`。因此本轮 AI 辅助结果明确不完整，不能把 completed 解释为全量完成或通过。
 - 负面清单事件包含 20 个候选，但结束事件的 `finding_records=0`；这表示没有候选通过二次校验生成可供人工处置的 finding，不能解释为 20 项均已排除或通过。
-- 只读报告 GET 曾成功返回未完成的初稿，未保存报告版本。确认稿 GET 返回 HTTP 409、`pending_undecidable_review`，数量为 34，与当前页面一致。后续本地验收通过运行容器内只读会话重建初稿投影，并直接调用内存 `pdf_bytes()` 生成临时 PDF；没有调用报告导出接口、没有生成确认稿，也没有写入 `report.exported` 事件。
+- 只读报告 GET 曾成功返回未完成的初稿，未保存报告版本。确认稿 GET 返回 HTTP 409、`pending_undecidable_review`，数量为 34，与当前页面一致。后续本地验收先通过运行容器内只读会话重建初稿投影，并直接调用内存 `pdf_bytes()` 生成临时 PDF；该阶段没有调用报告导出接口。
 - 原件解析质量提示涉及 PDF 第 20、21、26、28、31、35、37、39、43、61、63、64 页。逐页渲染后可见横置页面、低对比证件及密集表格；此检查仅确认原页视觉状态，不证明 OCR 字段逐项准确。临时图像已清理。
 
 ## 计时与回归测试
@@ -44,9 +44,17 @@
 ## 2026-11-13 候选版本修复与运行态复验
 
 - 独立代码审查发现并修复两处范围覆盖 fail-closed 问题：已启用代遇到未知策略版本或覆盖 schema 不兼容时，现在返回 `scope_coverage_unavailable` 并阻断报告；终态覆盖事件包含快照外的未知规则 ID 时，现在投影为 `unavailable`，不再抛出 500。新增的两条回归测试先验证了旧行为失败，再验证修复后的行为。
-- 后端全量回归：`1183 passed, 1 skipped`；前端 Vitest：`30 files / 116 tests passed`；`openspec validate --all`：16 项通过；`git diff --check` 通过。后端仍有 463 条现存依赖弃用/配置警告。
+- 后端全量回归：`1183 passed, 1 skipped`；前端 Vitest：`30 files / 117 tests passed`；`openspec validate --all`：16 项通过；`git diff --check` 通过。后端仍有 463 条现存依赖弃用/配置警告。
 - 重建候选镜像并仅替换本项目 backend/frontend；MySQL、WeKnora、文档解析及知识服务未重建。旧数据库已通过 `mysqldump --single-transaction` 备份；旧后端容器文件系统已导出并导入本地回退镜像，旧前端容器已保存回退镜像。
 - 前端候选服务现通过 `http://127.0.0.1:8089` 提供；页面返回 HTTP 200，反向代理 `/api/health` 返回 HTTP 200，PDF worker 资源/MIME 检查通过。新后端日志显示应用启动完成。
 - 新增的总包来源集 nullable 列已在项目独立 MySQL 中确认存在。任务 1 只读复核保持 `state=running`、`completed_at=NULL`、`elapsed_seconds=NULL`、`undecidable=39`、`miss=10`、`report.exported=0`；没有重跑真实核查、写业务 finding 或改变人工处置。
 - 候选服务更新不等于生产部署。真实任务仍有 34 项待人工复核、AI 辅助组存在 partial/not_run，12 页 OCR 质量待核；未生成确认稿或正式报告导出。前端当前服务已恢复，但此前登录会话已过期，需用户重新登录后继续本地页面验收。
+
+## 2026-11-13 本轮续验收
+
+- 在候选后端容器内以 task 1 所属账号上下文只读调用报告接口：draft 返回 HTTP 200，确认 stage 返回 HTTP 409，错误码仍为 `pending_undecidable_review`、数量 34；draft 的 `scope_coverage.policy=baseline` 且 scope flag 保持关闭，报告范围声明明确披露未上传总包合同及受影响规则，不将其生成 finding。
+- 经用户已授权的本地验收，调用 draft 导出端点生成内存中的 DOCX 与 PDF：DOCX 41,093 bytes 且 ZIP 结构有效；PDF 1,779,334 bytes、4 页、`%PDF` 签名有效。四页渲染检查通过，中文、表格、分页无截断或重叠，首页标注“AI 初稿（未复核）”。确认 stage 导出仍返回 HTTP 409，没有生成确认稿。
+- 本次草稿导出按实现写入 2 条 `report.exported` 审计事件（docx/pdf），因此此前“`report.exported=0`”仅适用于导出前快照；没有人工采纳/忽略 finding，也没有改写任务、finding 或计时字段。
+- task 1 的 67 页劳务分包 PDF 与用户模拟材料目录同名文件 SHA-256 一致；其余 5 份模拟材料尚未关联到 task 1。任务仍为 `running`，`completed_at`/`elapsed_seconds` 为空，符合只有人工收口成功后才固化总耗时的契约。
+- 当前候选映射文件位于 `delivery-data/knowledge-config/reference-mapping.json`，容器挂载 SHA-256 为 `17ec66f4e88624392da5b08eda7d9becf07fb2b273f60695edd11abf4aee0e86`，86 个来源可加载；截图中的依据映射 503 现态未复现。截图时间早于映射文件生成时间，旧容器无对应请求日志，历史具体失败条件仍只能作时间线支持的判断。
 
