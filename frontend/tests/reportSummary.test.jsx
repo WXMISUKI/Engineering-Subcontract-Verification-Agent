@@ -44,6 +44,15 @@ it('renders the same summary in the non-prototype report view', () => {
   expect(screen.getByTestId('qualification-summary-subjects').textContent).toContain('测试劳务单位')
 })
 
+it('discloses rule-level scope limitations in the formal report view', () => {
+  const data = report()
+  data.scope_statements = ['规则 T15-01 本轮未覆盖，未形成符合或不符合结论。']
+  render(<ReportView report={data} />)
+
+  expect(screen.getByTestId('report-scope-statements').textContent)
+    .toContain('规则 T15-01 本轮未覆盖')
+})
+
 it('shows prototype report exports and keeps confirmed export behind its gate', () => {
   const onExport = vi.fn()
   render(<ReportView report={report()} prototypeMode onExport={onExport} blockingByStage={{ confirmed: { message: '尚有问题待复核' } }} />)

@@ -343,6 +343,23 @@ export async function assignBsMaterialSubject(taskId, materialId, subjectId) {
   return _json(r, 'bs material subject')
 }
 
+export async function associateBsGeneralSourceSet(taskId, materialIds) {
+  const r = await fetch(`${BASE}/tasks/${taskId}/general-source-sets`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ material_ids: materialIds }),
+    credentials: 'include',
+  })
+  return _json(r, 'bs general source set')
+}
+
+export async function removeBsGeneralSourceSetMember(taskId, materialId) {
+  const r = await fetch(`${BASE}/tasks/${taskId}/materials/${materialId}/general-source-set`, {
+    method: 'DELETE', credentials: 'include',
+  })
+  return _json(r, 'bs general source set member')
+}
+
 // T10-C Task C1：人工确认/覆盖主体类型（契约 v3 §2.7，**冲突的唯一解除入口**）。
 // PATCH /tasks/{task_id}/subjects/{subject_id}/type，body { subject_type }；
 // 后端返回 _subject_dto（subject_id/stable_code/name/subject_type/type_confirmed/
@@ -538,9 +555,11 @@ export const BS_EVENT_TYPES = [
   'material.page_progress',
   'material.parse_started',
   'material.supplement_linked',
-  'knowledge.review_started', 'knowledge.reference_started', 'knowledge.reference_completed',
+  'knowledge.review_started', 'review.scope_snapshot_recorded',
+  'knowledge.reference_started', 'knowledge.reference_completed',
   'knowledge.reference_discarded', 'knowledge.reference_failed', 'knowledge.reference_invalidated',
-  'check.semantic_started', 'check.semantic_progress', 'check.ai_advisory_completed', 'check.ai_advisory_started',
+  'check.semantic_started', 'check.semantic_progress', 'check.coverage_started', 'check.rule_coverage_recorded',
+  'check.ai_advisory_completed', 'check.ai_advisory_started',
   'check.ai_background_started', 'check.ai_background_progress', 'check.ai_background_completed', 'check.ai_background_failed',
   'check.ai_advisory_failed', 'check.ai_batch_checkpoint', 'check.ai_batch_progress',
   'check.negative_candidates_started', 'check.negative_candidates_finished',

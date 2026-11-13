@@ -85,6 +85,33 @@ def test_moma_does_not_reuse_legacy_provider_checkpoint(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_moma_deepseek_v41_sends_explicit_no_thinking_and_invalidates_old_checkpoint(monkeypatch):
+    from types import SimpleNamespace
+    from app.plus.blockchain_supervision import service
+    monkeypatch.setenv('LLM_PROVIDER', 'moma')
+    monkeypatch.setenv('LLM_MODEL', 'deepseek-v4.1-flash')
+    monkeypatch.setenv('LLM_API_BASE', 'https://text.example.invalid/v1')
+    monkeypatch.setenv('LLM_API_KEY', 'synthetic')
+    monkeypatch.setattr(service, 'get_settings', lambda: SimpleNamespace(SECRET_KEY='synthetic-secret'))
+    def handler(request):
+        body = json.loads(request.content)
+        assert body['thinking'] == {'type': 'disabled'}
+        assert 'enable_thinking' not in body
+        return httpx.Response(200, json={'id': 'synthetic', 'object': 'chat.completion', 'created': 1,
+            'model': 'deepseek-v4.1-flash', 'choices': [{'index': 0, 'finish_reason': 'stop',
+            'message': {'role': 'assistant', 'content': '合成答复'}}]})
+    class MockClient(httpx.AsyncClient):
+        def __init__(self, **kwargs):
+            super().__init__(transport=httpx.MockTransport(handler), **kwargs)
+    monkeypatch.setattr(httpx, 'AsyncClient', MockClient)
+    client = client_from_env()
+    old = SimpleNamespace(base_url=client.base_url, api_key=client.api_key, model=client.model,
+                          enable_thinking=False, provider='moma')
+    assert service.ai_checkpoint_client_fingerprint(client) != service.ai_checkpoint_client_fingerprint(old)
+    assert await client.complete([{'role': 'user', 'content': '合成问题'}]) == '合成答复'
+
+
+@pytest.mark.asyncio
 async def test_moma_text_request_and_usage(monkeypatch):
     monkeypatch.setenv('LLM_PROVIDER', 'moma')
     monkeypatch.setenv('LLM_MODEL', 'synthetic-text')

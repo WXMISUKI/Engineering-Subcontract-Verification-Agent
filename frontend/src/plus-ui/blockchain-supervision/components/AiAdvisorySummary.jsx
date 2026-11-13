@@ -23,14 +23,28 @@ export default function AiAdvisorySummary({ items, findings = [], coverage = nul
     </div>}
     <ul className="mt-2 space-y-3">{advice.map((item, index) => {
       const finding = findings.find((row) => String(row.finding_id ?? row.id) === String(item.finding_id))
-      return <li key={`${item.finding_id}-${index}`} className="border-t border-[#F3EDE3] pt-2">
-      <p className="text-[#6B7280]">{finding?.label || finding?.message || '相关核查项'}</p>
-      {item.limitation && <p className="text-[#92400E]">{item.limitation}</p>}
-      {(item.proposals || []).map((proposal, n) => <div key={n} className="mt-1 space-y-1">
+      const scopeReview = item.proposals?.some((proposal) => proposal.requires_full_scope_review)
+      const related = finding?.item_id && finding?.subject_id != null
+        ? findings.filter((row) => row.item_id === finding.item_id && row.subject_id === finding.subject_id && row.review?.decision !== 'ignored')
+        : finding && finding.review?.decision !== 'ignored' ? [finding] : []
+      const messages = [...new Set(related.map((row) => row.message).filter(Boolean))]
+      const proposals = item.proposals || []
+      const renderProposal = (proposal, n) => <div key={n} className="mt-1 space-y-1">
         <p className="break-words text-[#374151]">{proposal.message}</p>
         {(proposal.material_evidence || []).map((ref, i) => <p key={i} className="break-words text-[#6B7280]">材料第 {ref.page} 页：{ref.quote}</p>)}
         {(proposal.rule_evidence || []).map((ref, i) => <p key={i} className="break-words text-[#6B7280]">依据原文：{ref.quote}</p>)}
-      </div>)}
+      </div>
+      return <li key={`${item.finding_id}-${index}`} className="border-t border-[#F3EDE3] pt-2">
+      <p className="text-[#6B7280]">{finding?.label || finding?.message || '相关核查项'}</p>
+      {scopeReview && messages.filter((message) => message !== finding?.label).slice(0, 3).map((message, n) =>
+        <p key={n} className="mt-1 break-words text-[#374151]">规则核查：{message}</p>)}
+      {scopeReview && messages.length > 3 && <p className="text-[#6B7280]">其他相关规则结果见核查记录。</p>}
+      {item.limitation && <p className="text-[#92400E]">{item.limitation}</p>}
+      {proposals.slice(0, 3).map(renderProposal)}
+      {proposals.length > 3 && <details className="mt-1 text-[#6B7280]">
+        <summary className="cursor-pointer">查看其余 {proposals.length - 3} 条辅助意见</summary>
+        {proposals.slice(3).map(renderProposal)}
+      </details>}
       {(item.limitations || []).map((limitation, n) => <p key={n} className="mt-1 text-[#92400E]">{limitation}</p>)}
     </li>})}</ul>
   </section>

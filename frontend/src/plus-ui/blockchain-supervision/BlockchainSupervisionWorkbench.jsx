@@ -33,7 +33,8 @@ import {
   deleteBsMaterial, downloadBsReport, downloadBsOpinion, previewBsOpinion,
   activateBsSupplementPlan, confirmBsMaterial, confirmBsEmployer, createBsSupplementPlan, enterBsMaterialEdit, getBsReport, getBsOpinion, getBsTask, getBsTodo, getBsReviewVersion, getBsRuleset,
   listBsFindings, listBsTasks, pingBs, reviewBsFinding, rerunBsTask, saveBlob, downloadBsReferenceFile, getBsTaskUsage,
-  assignBsMaterialSubject, patchBsSection, runBsCheck, setBsMaterialRole, startBsReview, startBsSupplementEdit, uploadBsMaterial,
+  assignBsMaterialSubject, associateBsGeneralSourceSet, removeBsGeneralSourceSetMember,
+  patchBsSection, runBsCheck, setBsMaterialRole, startBsReview, startBsSupplementEdit, uploadBsMaterial,
   startBsBackgroundAiReview, getBsBackgroundAiReview,
 } from './lib/api'
 import { autoRunIsStale, pendingAutoCheckSteps, planAutoChecks, readAutoRunStatus, writeAutoRunStatus, clearAutoRunStatus, shouldResumeAiAfterReload } from './lib/autoCheckResume'
@@ -933,6 +934,30 @@ export default function BlockchainSupervisionWorkbench({ conversationId, onExitP
     try { await setBsMaterialRole(taskId, materialId, role); await refresh(taskId) } catch (e) { onError(e.message) }
   }
 
+  const associateGeneralSourceSet = async (materialIds) => {
+    if (!taskId || !Array.isArray(materialIds) || materialIds.length < 2) return false
+    try {
+      await associateBsGeneralSourceSet(taskId, materialIds.map(Number))
+      await refresh(taskId)
+      return true
+    } catch (e) {
+      onError(e.message)
+      return false
+    }
+  }
+
+  const removeGeneralSourceSetMember = async (materialId) => {
+    if (!taskId || materialId == null) return false
+    try {
+      await removeBsGeneralSourceSetMember(taskId, materialId)
+      await refresh(taskId)
+      return true
+    } catch (e) {
+      onError(e.message)
+      return false
+    }
+  }
+
   const changeSubject = async (materialId, subjectId) => {
     if (!taskId || !subjectId) return
     try {
@@ -1030,6 +1055,8 @@ export default function BlockchainSupervisionWorkbench({ conversationId, onExitP
           onSubjectChange={setUploadSubject}
           onMaterialRoleChange={changeRole}
           onMaterialSubjectChange={changeSubject}
+          onAssociateGeneralSourceSet={associateGeneralSourceSet}
+          onRemoveGeneralSourceSetMember={removeGeneralSourceSetMember}
           onSelectFiles={() => !busy && inputRef.current?.click()}
           onDropFiles={addFiles}
           onRemove={removeMaterial}
@@ -1327,7 +1354,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
     }
   }, [taskId, materialConfirming, loadTodo, onError])
 
-  const loadFindings = useCallback(async () => {
+  const loadFindings = useCallback(async ({ throwOnError = false } = {}) => {
     setFindingsLoading(true)
     try {
       const data = await listBsFindings(taskId)
@@ -1347,6 +1374,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
       return data
     } catch (e) {
       setFindingsError(e.message)
+      if (throwOnError) throw e
       onError(e.message)
       return null
     } finally { setFindingsLoading(false) }
@@ -1514,10 +1542,8 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
     [autoChecksForScope, detail?.state, referenceSnapshot],
   )
 
-  // reportError=false：由调用方（规则集局部重跑）在提示区内呈现失败原因，
-  // 不再同时弹顶部横幅——同一句故障文案只留一处 DOM。
+  // 编排失败由核查区（或规则集局部重跑提示区）承载，避免重复顶部横幅。
   const runAutoChecks = useCallback(async ({
-    reportError = true,
     rerunGroups = undefined,
     recoverRerunGroups = true,
     retryAi = false,
@@ -1538,7 +1564,6 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
       const message = e?.message || '重跑范围无法识别，请刷新后重试'
       writeAutoRunStatus(taskId, reviewRunId, 'failed')
       setAutoCheck({ phase: 'failed', index: 0, total: 0, error: message })
-      if (reportError) onError(message)
       return { ok: false, error: message }
     }
     if (!steps.length) {
@@ -1561,7 +1586,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
     let doingAi = false
     let runId = reviewRunId
     try {
-      let result = await loadFindings()
+      let result = await loadFindings({ throwOnError: true })
       if (!isCurrentRun()) return { ok: false, cancelled: true }
       if (result === null) {
         throw new Error('核查结果读取失败，请点击“重试核查”')
@@ -1581,7 +1606,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
         if (completed) continue
         await runBsCheck(taskId, groupId, { signal: controller.signal })
         if (!isCurrentRun()) return { ok: false, cancelled: true }
-        result = await loadFindings()
+        result = await loadFindings({ throwOnError: true })
         if (result === null) {
           throw new Error('核查结果读取失败，请点击“重试核查”')
         }
@@ -1616,7 +1641,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
         aiWarning = aiResult.warning
         unlocatedScopeCount = aiResult.unlocatedScopeCount || 0
         // 模型候选可能新增复核问题；收口前读取同一核查代的最新清单。
-        if (await loadFindings() === null) {
+        if (await loadFindings({ throwOnError: true }) === null) {
           throw new Error('核查结果读取失败，请点击“重试核查”')
         }
       }
@@ -1638,7 +1663,6 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
       window.dispatchEvent(new CustomEvent('billing:mutated'))
       setAutoCheck({ phase: 'failed', stage: doingAi ? 'ai' : null, index: 0, total: steps.length, error: message,
         recheckRequired: doingAi && aiReviewRequiresNewRun(e) })
-      if (reportError) onError(message)
       return { ok: false, error: message }
     } finally {
       if (isCurrentRun()) {
@@ -1780,7 +1804,6 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
       const progressTotal = Array.isArray(rerunGroups) ? rerunGroups.length : autoChecksForScope().length
       setAutoCheck({ phase: 'running', index: 0, total: progressTotal, error: '' })
       const outcome = await runAutoChecks({
-        reportError: statusKey !== 'ruleset',
         rerunGroups,
         // 当前 /rerun 响应缺少字段代表旧后端，必须兼容为完整 scope，不能误用旧详情快照。
         recoverRerunGroups: false,
@@ -2591,6 +2614,9 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
             error={findingsError || (autoCheck.phase === 'failed' ? autoCheck.error : null)}
             readingCoverage={detail?.reading_coverage || null}
             publication={publication}
+            scopeCoverage={todo?.scope_coverage?.generation_id === reviewRunId
+              ? todo.scope_coverage
+              : null}
             missCollapsed={missCollapsed}
             onToggleMiss={toggleMiss}
             onSelect={selectFindingAndClosePreview}

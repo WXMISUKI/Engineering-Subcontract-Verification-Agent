@@ -3,7 +3,7 @@ import logging
 import json
 import os
 from copy import deepcopy
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
@@ -46,10 +46,20 @@ def _is_material_revision_schema_error(exc: OperationalError) -> bool:
     )
 
 
+def _utc_iso(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    if value.tzinfo is None or value.utcoffset() is None:
+        value = value.replace(tzinfo=timezone.utc)
+    else:
+        value = value.astimezone(timezone.utc)
+    return value.isoformat()
+
+
 def _task_timing_dto(task: BsTask) -> dict:
     return {
-        "started_at": task.started_at.isoformat() if task.started_at else None,
-        "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+        "started_at": _utc_iso(task.started_at),
+        "completed_at": _utc_iso(task.completed_at),
         "elapsed_seconds": float(task.elapsed_seconds) if task.elapsed_seconds is not None else None,
     }
 
@@ -190,6 +200,10 @@ class MaterialSubjectIn(BaseModel):
     packet_id: Optional[int] = None
 
 
+class GeneralSourceSetIn(BaseModel):
+    material_ids: list[int]
+
+
 @router.patch("/tasks/{task_id}/scope")
 def patch_scope(task_id: int, body: ScopeIn, db: Session = Depends(get_db), user=Depends(get_current_any_user)):
     """setup 段调整核查范围（开始核查后 409）。"""
@@ -232,12 +246,40 @@ def remove_material(task_id: int, material_id: int, db: Session = Depends(get_db
                     user=Depends(get_current_any_user)):
     task = _get_task(db, task_id, user)
     try:
-        service.delete_material(db, task, material_id)
+        service.delete_material(db, task, material_id, operator=user.id)
     except LookupError:
         raise HTTPException(status_code=404, detail="材料不存在")
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
     return {"ok": True}
+
+
+@router.post("/tasks/{task_id}/general-source-sets")
+def associate_general_source_set(task_id: int, body: GeneralSourceSetIn,
+                                 db: Session = Depends(get_db), user=Depends(get_current_any_user)):
+    task = _get_task(db, task_id, user)
+    _require_setup(task, "核查已开始，不能修改总包来源关联")
+    try:
+        return service.associate_general_source_set(
+            db, task, body.material_ids, operator=user.id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.delete("/tasks/{task_id}/materials/{material_id}/general-source-set")
+def remove_general_source_set_member(task_id: int, material_id: int,
+                                     db: Session = Depends(get_db), user=Depends(get_current_any_user)):
+    task = _get_task(db, task_id, user)
+    _require_setup(task, "核查已开始，不能修改总包来源关联")
+    try:
+        return service.remove_general_source_set_member(
+            db, task, material_id, operator=user.id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/tasks")
@@ -468,6 +510,8 @@ def _material_dto(m: BsMaterial, container_names: dict = None,
         "id": m.id, "material_id": m.id, "file_name": m.file_name, "size_kb": m.size_kb,
         "role": m.role,
         "subject_id": m.subject_id, "packet_id": m.packet_id,
+        "general_source_set_id": m.general_source_set_id,
+        "general_source_set_version": m.general_source_set_version,
         "role_label": ROLE_LABELS.get(m.role, m.role), "role_confirmed": m.role_confirmed,
         "via": m.via, "parse_state": m.parse_state,
         "container_material_id": m.container_material_id,
@@ -1056,7 +1100,7 @@ def correct_role(task_id: int, material_id: int, body: RoleCorrectIn,
     # 直接调接口即可改名，属「界面按不住」的假门禁。
     _require_setup(task, "核查已开始，不能再更正材料归属")
     try:
-        mat = service.set_material_role(db, task, material_id, body.role)
+        mat = service.set_material_role(db, task, material_id, body.role, operator=user.id)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -1701,6 +1745,7 @@ def get_todo(task_id: int, db: Session = Depends(get_db), user=Depends(get_curre
         "categories": summary["categories"],
         "readiness": reference_snapshots.review_readiness(
             reference_snapshots.get_reference_snapshot(db, task)),
+        "scope_coverage": service.optional_scope_coverage(db, task),
         "checklist_summary": checklist_summary,
     }
 
@@ -1985,7 +2030,7 @@ def _attach_generation_identity(payload: dict, *, task: BsTask,
 
 def _require_current_output_ready(db: Session, task: BsTask, stage: str,
                                   *, require_reading_complete: bool = False,
-                                  allow_candidate_preview: bool = False, user=None) -> None:
+                                  allow_candidate_preview: bool = False, user=None) -> dict:
     """当前初稿/确认稿共用报告可读性前提；不把收口闸门带入报告读取。"""
     if stage not in _REVIEW_STAGES:
         raise HTTPException(status_code=400, detail="stage 仅支持 draft / confirmed")
@@ -2004,8 +2049,10 @@ def _require_current_output_ready(db: Session, task: BsTask, stage: str,
             "code": readiness["code"], "message": readiness["detail"],
             "missing_groups": readiness["missing_groups"],
             "pending_groups": readiness["pending_groups"],
+            "scope_coverage": readiness.get("scope_coverage"),
         })
     _require_no_pending_hits(db, task.id, stage, user=user)
+    return readiness
 
 
 def _output_payload(db: Session, task: BsTask, kind: str, stage: str,
@@ -2019,7 +2066,7 @@ def _output_payload(db: Session, task: BsTask, kind: str, stage: str,
     report_digest/opinion_digest 在本函数返回之后计算，故与当前报告同口径。
     """
     if version_no is None:
-        _require_current_output_ready(
+        readiness = _require_current_output_ready(
             db, task, stage, require_reading_complete=require_reading_complete,
             allow_candidate_preview=allow_candidate_preview, user=user)
         if (reference_visibility.snapshot_restricted(db, task, reference_snapshots.get_reference_snapshot(db, task), user)
@@ -2027,7 +2074,7 @@ def _output_payload(db: Session, task: BsTask, kind: str, stage: str,
             raise HTTPException(status_code=409, detail="参考依据授权已变化，请联系管理员核对后再查看或导出报告")
         builder = reporting.build_report if kind == "report" else reporting.build_opinion
         try:
-            output = builder(db, task)
+            output = builder(db, task, scope_coverage=readiness.get("scope_coverage"))
         except report_policy.InvalidReportPolicy as exc:
             raise HTTPException(status_code=409, detail="报告规则快照不可用，请联系管理员核对") from exc
         if "reference_snapshot" in output:
@@ -2054,6 +2101,10 @@ def _output_payload(db: Session, task: BsTask, kind: str, stage: str,
     payload = deepcopy(snapshot[kind])
     # S2内层报告尚无此字段，引用只能来自同一历史版本的顶层快照。
     payload["reference_snapshot"] = deepcopy(snapshot.get("reference_snapshot"))
+    frozen_scope_coverage = snapshot.get("scope_coverage")
+    payload["scope_coverage"] = (deepcopy(frozen_scope_coverage)
+                                  if isinstance(frozen_scope_coverage, dict)
+                                  else {"state": "legacy_unknown"})
     # 归一化只作用于返回值；report_digest 由调用方在归一化之后计算。
     payload = reporting.normalize_output_payload(payload, kind)
     return _attach_generation_identity(
@@ -2111,13 +2162,14 @@ def download_evidence_bundle(task_id: int, stage: str = "draft",
                              user=Depends(get_current_any_user)):
     """简化存证（W3-3）：报告 JSON（哈希+时间戳存证块）+ 材料原件副本 zip。"""
     task = _get_task(db, task_id, user)
-    _require_current_output_ready(
+    readiness = _require_current_output_ready(
         db, task, stage, require_reading_complete=(stage == "confirmed"), user=user)
     if (reference_visibility.snapshot_restricted(db, task, reference_snapshots.get_reference_snapshot(db, task), user)
             or reference_visibility.run_restricted(db, task, knowledge_runs.get_reference_run(db, task), user)):
         raise HTTPException(status_code=409, detail="参考依据授权已变化，请联系管理员核对后再导出证据包")
     try:
-        data, digest, exported_at = export.evidence_bundle_bytes(db, task, stage=stage, user=user)
+        data, digest, exported_at = export.evidence_bundle_bytes(
+            db, task, stage=stage, user=user, scope_coverage=readiness.get("scope_coverage"))
     except report_policy.InvalidReportPolicy as exc:
         raise HTTPException(status_code=409, detail="报告规则快照不可用，请联系管理员核对") from exc
     export.record_export(db, task, "evidence-bundle", digest, exported_at)

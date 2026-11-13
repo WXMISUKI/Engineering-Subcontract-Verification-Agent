@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { UploadCloud } from 'lucide-react'
+import { Unlink, UploadCloud } from 'lucide-react'
 import PrototypeDatePicker from './PrototypeDatePicker'
 import { buildUploadReadiness } from './prototypeViewModel'
 import MaterialPreviewModal from '../components/MaterialPreviewModal'
@@ -39,6 +39,8 @@ export default function PrototypeUploadPage({
   onSubjectChange,
   onMaterialRoleChange,
   onMaterialSubjectChange,
+  onAssociateGeneralSourceSet,
+  onRemoveGeneralSourceSetMember,
   onSupplementCancel,
   onSelectFiles,
   onDropFiles,
@@ -51,6 +53,21 @@ export default function PrototypeUploadPage({
     resetting = false,
 }) {
   const materials = task?.materials || []
+  const generalSourceCandidates = materials.filter((material) => (
+    material.role === 'general'
+    && material.containerMaterialId == null
+    && material.supersededById == null
+    && material.replacementTargetId == null
+    && !material.subjectConflict
+    && !material.subjectUnresolved
+  ))
+  const generalSourceSets = generalSourceCandidates.reduce((sets, material) => {
+    if (material.generalSourceSetId) {
+      const sourceSetId = String(material.generalSourceSetId)
+      sets.set(sourceSetId, [...(sets.get(sourceSetId) || []), material])
+    }
+    return sets
+  }, new Map())
   const parseProgress = task?.progress?.current_task || task?.progress?.current || null
   const hasPageProgress = Number.isFinite(Number(parseProgress?.current_page))
     && Number(parseProgress.current_page) > 0
@@ -62,9 +79,54 @@ export default function PrototypeUploadPage({
   const readiness = buildUploadReadiness({ validation: task?.validation, materials, zipPreparation: task?.zipPreparation })
   const zipFailureMessages = zipPreparationFailureMessages(task?.zipPreparation)
   const [previewId, setPreviewId] = useState(null)
+  const [selectedGeneralIds, setSelectedGeneralIds] = useState([])
+  const [sourceSetBusy, setSourceSetBusy] = useState(false)
   const replaceRef = useRef(null)
   const replaceTargetRef = useRef(null)
   const pendingReplacementTargets = new Set(materials.map((item) => item.replacementTargetId).filter((value) => value != null))
+  const canManageGeneralSourceSets = !readOnly && task?.state === 'setup'
+    && !busy && !preparing && !sourceSetBusy
+  const selectedGeneralIdKeys = new Set(selectedGeneralIds.map(String))
+  const selectedGeneralMaterials = generalSourceCandidates
+    .filter((material) => selectedGeneralIdKeys.has(String(material.id)))
+  const selectedExistingSourceSetIds = new Set(selectedGeneralMaterials
+    .map((material) => material.generalSourceSetId)
+    .filter(Boolean)
+    .map(String))
+  const missingSourceSetMembers = [...selectedExistingSourceSetIds].some((sourceSetId) => (
+    (generalSourceSets.get(sourceSetId) || []).some((material) => !selectedGeneralIdKeys.has(String(material.id)))
+  ))
+  const canAssociateGeneralSourceSet = selectedGeneralMaterials.length >= 2
+    && !missingSourceSetMembers && canManageGeneralSourceSets
+    && typeof onAssociateGeneralSourceSet === 'function'
+
+  const toggleGeneralMaterial = (material) => {
+    setSelectedGeneralIds((current) => current.some((id) => String(id) === String(material.id))
+      ? current.filter((id) => String(id) !== String(material.id))
+      : [...current, material.id])
+  }
+
+  const associateGeneralMaterials = async () => {
+    if (!canAssociateGeneralSourceSet) return
+    setSourceSetBusy(true)
+    try {
+      const associated = await onAssociateGeneralSourceSet(selectedGeneralMaterials.map((material) => material.id))
+      if (associated) setSelectedGeneralIds([])
+    } finally {
+      setSourceSetBusy(false)
+    }
+  }
+
+  const removeGeneralSourceSetMember = async (materialId) => {
+    if (!canManageGeneralSourceSets || typeof onRemoveGeneralSourceSetMember !== 'function') return
+    setSourceSetBusy(true)
+    try {
+      const removed = await onRemoveGeneralSourceSetMember(materialId)
+      if (removed) setSelectedGeneralIds((current) => current.filter((id) => String(id) !== String(materialId)))
+    } finally {
+      setSourceSetBusy(false)
+    }
+  }
 
   const requestReplace = (materialId) => {
     replaceTargetRef.current = materialId
@@ -117,6 +179,84 @@ export default function PrototypeUploadPage({
           </ul>
           <p className="mt-1">请移除失败资料包后重新上传，再开始核查。</p>
         </div>
+      ) : null}
+      {generalSourceCandidates.length ? (
+        <section data-testid="general-source-set-workspace" className="mb-3.5 overflow-hidden rounded-[10px] border border-[#E9E3D9] bg-white">
+          <header className="border-b border-[#F2EDE5] px-4 py-3">
+            <h2 className="text-[17px]">总包来源集</h2>
+            <p className="mt-1 text-[13px] leading-relaxed text-[#6B7280]">
+              只有明确属于同一份总包的分册、附件或补充协议才可关联；核查开始后关系只读。
+            </p>
+          </header>
+          {generalSourceSets.size ? (
+            <div className="divide-y divide-[#F2EDE5]">
+              {[...generalSourceSets.entries()].map(([sourceSetId, members]) => (
+                <div key={sourceSetId} data-testid={`general-source-set-${sourceSetId}`} className="px-4 py-3">
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <b className="text-[14px]">已关联来源集 · {members.length} 份材料</b>
+                    <span className="text-[12px] text-[#6B7280]">关联版本 {members[0]?.generalSourceSetVersion ?? '未知'}</span>
+                  </div>
+                  <ul className="space-y-1.5">
+                    {members.map((material) => (
+                      <li key={material.id} className="flex min-w-0 items-center gap-2 text-[13px]">
+                        <span className="min-w-0 flex-1 truncate" title={material.fileName}>{material.fileName}</span>
+                        {!readOnly && task?.state === 'setup' && typeof onRemoveGeneralSourceSetMember === 'function' ? (
+                          <button
+                            type="button"
+                            aria-label={`从来源集中解除：${material.fileName}`}
+                            title="将此材料从来源集中解除关联"
+                            disabled={!canManageGeneralSourceSets}
+                            onClick={() => removeGeneralSourceSetMember(material.id)}
+                            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded border border-[#DCE5EE] text-[#587089] hover:bg-[#F4F7FA] disabled:cursor-not-allowed disabled:opacity-45"
+                          >
+                            <Unlink aria-hidden="true" className="h-4 w-4" />
+                          </button>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          ) : <p className="px-4 py-3 text-[13px] text-[#6B7280]">当前没有已关联的总包来源集。</p>}
+          {!readOnly && task?.state === 'setup' ? (
+            <div className="border-t border-[#F2EDE5] px-4 py-3">
+              {generalSourceCandidates.length >= 2 ? (
+                <>
+                  <fieldset disabled={!canManageGeneralSourceSets}>
+                    <legend className="mb-2 text-[13px] font-medium text-[#344054]">选择同一总包的材料</legend>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {generalSourceCandidates.map((material) => (
+                        <label key={material.id} className="flex min-w-0 items-start gap-2 rounded border border-[#E9E3D9] px-3 py-2 text-[13px]">
+                          <input
+                            type="checkbox"
+                            aria-label={`选择总包材料：${material.fileName}`}
+                            checked={selectedGeneralIdKeys.has(String(material.id))}
+                            onChange={() => toggleGeneralMaterial(material)}
+                            className="mt-0.5 accent-[#315B46]"
+                          />
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate" title={material.fileName}>{material.fileName}</span>
+                            {material.generalSourceSetId ? <small className="text-[#6B7280]">已在来源集中</small> : <small className="text-[#6B7280]">尚未关联</small>}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+                  {missingSourceSetMembers ? <p role="status" className="mt-2 text-[12px] text-[#92400E]">合并已有来源集时，请同时选择该来源集的全部成员。</p> : null}
+                  <button
+                    type="button"
+                    disabled={!canAssociateGeneralSourceSet}
+                    onClick={associateGeneralMaterials}
+                    className="mt-3 min-h-9 rounded border border-[#8B7355] px-3 text-[13px] font-medium text-[#6B5A45] hover:bg-[#F7F1E9] disabled:cursor-not-allowed disabled:opacity-45"
+                  >
+                    {sourceSetBusy ? '正在保存…' : '确认关联为同一总包'}
+                  </button>
+                </>
+              ) : <p className="text-[13px] text-[#6B7280]">当前只有一份有效总包材料，无需建立来源集。</p>}
+            </div>
+          ) : !readOnly ? <p className="border-t border-[#F2EDE5] px-4 py-3 text-[13px] text-[#6B7280]">核查已开始，来源集关系只读查看。</p> : null}
+        </section>
       ) : null}
       <section className="mb-3.5 overflow-hidden rounded-[10px] border border-[#E9E3D9] bg-white">
         <header className="flex items-center justify-between gap-2.5 border-b border-[#F2EDE5] px-4 py-3"><h2 className="text-[17px]">标段信息</h2><span className="text-[14px] text-[#9CA3AF]">选填 · 用于报告标段锚点与合同字段比对</span></header>

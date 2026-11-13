@@ -1,4 +1,5 @@
-from app.plus.blockchain_supervision.report_document import build_report_document
+from app.plus.blockchain_supervision.report_document import build_report_document, report_display_sections
+from app.plus.blockchain_supervision.reporting import _ai_scope_limitations
 from app.plus.blockchain_supervision import export
 from docx import Document
 from docx.shared import Mm
@@ -28,6 +29,221 @@ def _report(items, *, completed=None, selected=None):
                      "pending_groups": [], "missing_groups": [], "complete": bool(selected) and set(completed or []) >= set(selected or [])},
         "scope_statements": [], "limitations": [], "ignored_items": [],
     }
+
+
+def test_representative_points_preserve_facts_basis_verdict_and_manual_notes():
+    items = [
+        {**_item('signature_chain', 'undecidable', '报批时序', '签署日期和开工日期尚未确认'),
+         'source': '审批要求第十项', 'recommendation': '核对签署日期与开工日期'},
+        {**_item('qualification_match', 'undecidable', '资质匹配', '工程类别未能明确识别'),
+         'item_id': 'A2-04', 'source': '分包人资质要求'},
+        {**_item('person_consistency', 'undecidable', '劳动关系社保', '部分人员劳动关系尚未确认'),
+         'source': '劳动关系核查要求', 'human_disposition': {'code': 'accepted', 'note': '已联系核对原件'}},
+        {**_item('internal_records', 'undecidable', '内部信用', '内部警示记录尚未核实'),
+         'source': '内部信用管理要求'},
+    ]
+    report = _report(items, completed=['signature_chain', 'a2', 'internal_records'],
+                     selected=['signature_chain', 'a2', 'internal_records'])
+    document = build_report_document(report)
+    points = {p['label']: p for section in document['sections'] for p in section['key_points']}
+    for point, fact, basis in [
+        ('审批程序', '签署日期和开工日期尚未确认', '审批要求第十项'),
+        ('主体资格', '工程类别未能明确识别', '分包人资质要求'),
+        ('劳动关系社保', '部分人员劳动关系尚未确认', '劳动关系核查要求'),
+        ('内部信用与事故记录', '内部警示记录尚未核实', '内部信用管理要求'),
+    ]:
+        assert fact in points[point]['summary']
+        assert basis in points[point]['basis']
+        assert points[point]['verdict'] == '待核实'
+    assert '已联系核对原件' in points['劳动关系社保']['summary']
+
+
+def test_key_point_summary_reads_as_facts_and_specific_action_without_template_labels():
+    specific = {**_item('signature_chain', 'undecidable', '报批时序', '签署日期和开工日期尚未确认'),
+                'recommendation': '核对报审表签署日期与合同开工日期'}
+    generic = {**_item('signature_chain', 'undecidable', '签章', '签章情况需结合原件核实'),
+               'recommendation': '补充或核实与该项相关的原始资料，完成确认后重新核查'}
+    report = _report([specific, generic], completed=['signature_chain'], selected=['signature_chain'])
+    point = next(p for p in build_report_document(report)['sections'][0]['key_points'] if p['label'] == '审批程序')
+    text = point['summary']
+    assert '签署日期和开工日期尚未确认' in text
+    assert '签章情况需结合原件核实' in text
+    assert '核对报审表签署日期与合同开工日期' in text
+    assert '核查情况：' not in text and '核查建议：' not in text
+    assert '补充或核实与该项相关的原始资料' not in text
+    assert point['verdict'] == '待核实'
+
+
+def test_generic_action_for_distinct_finding_is_not_hidden_by_other_specific_action():
+    first = {**_item('signature_chain', 'undecidable', '报批时序', '签署日期尚未确认'),
+             'recommendation': '核对报审表签署日期'}
+    second = {**_item('signature_chain', 'undecidable', '印章', '印章信息不可读'),
+              'recommendation': '补充或核实与该项相关的原始资料，完成确认后重新核查'}
+    report = _report([first, second], completed=['signature_chain'], selected=['signature_chain'])
+    text = next(p for p in build_report_document(report)['sections'][0]['key_points'] if p['label'] == '审批程序')['summary']
+    assert '核对报审表签署日期' in text
+    assert '补充或核实与该项相关的原始资料' in text
+
+
+def test_common_ai_limitation_is_not_repeated_in_same_point():
+    document = {'schema_version': 'bs.business-report-document.v2',
+                'sections': [{'title': '要素完整性核查', 'key_points': [
+                    {'label': '报审资料', 'summary': '当前结果尚不足。本阶段相关辅助核查未完成或依据关联不足，需结合相关资料核实。'}]}],
+                'conclusion': {'limitations': ['部分 AI 辅助核查未完成，相关事项需结合现有结果人工核实。']}}
+    text = report_display_sections(document)[0]['display_points'][0]['summary']
+    assert text.count('辅助核查未完成') == 1
+    assert '依据关联不足' in text and '结合' in text
+    assert '本阶段相关辅助核查未完成' in document['sections'][0]['key_points'][0]['summary']
+
+
+def test_material_limit_does_not_follow_empty_summary_placeholder():
+    document = {'schema_version': 'bs.business-report-document.v2', 'sections': [
+        {'title': '要素完整性核查', 'key_points': [
+            {'label': '报审资料', 'summary': '当前没有可单独归纳的核查结果。'}]}],
+        'conclusion': {'limitations': ['第 2 页文字质量可疑，需人工核对原件。']}}
+    text = report_display_sections(document)[0]['display_points'][0]['summary']
+    assert '第 2 页文字质量可疑' in text
+    assert '当前没有可单独归纳的核查结果' not in text
+
+
+def test_explicit_original_check_does_not_repeat_generic_recommendation():
+    item = {**_item('internal_records', 'undecidable', '内部记录',
+                    '未提供内部记录，无法判断；请补充内部记录或人工核实。'),
+            'recommendation': '补充或核实与该项相关的原始资料，完成确认后重新核查。'}
+    report = _report([item], completed=['internal_records'], selected=['internal_records'])
+    document = build_report_document(report)
+    text = ' '.join(point['summary'] for section in document['sections'] for point in section['key_points'])
+    assert '请补充内部记录或人工核实' in text
+    assert '补充或核实与该项相关的原始资料' not in text
+
+
+def test_optional_source_scope_limit_does_not_claim_complete_pass():
+    import fitz
+
+    report = _report([], completed=['a1'], selected=['a1'])
+    report['scope_coverage'] = {
+        'schema_version': 'bs-scope-coverage.v1',
+        'generation_id': 'generation-1',
+        'policy': 'optional-source-scope.v1',
+        'state': 'partial',
+        'limitations': [{
+            'rule_id': 'T15-01', 'subject_id': 7, 'source_role': 'general',
+            'source_state': 'absent', 'reason_code': 'optional_source_absent',
+            'counts_as_finding': False, 'counts_as_pass': False,
+            'blocks_report': False,
+        }],
+    }
+    report['scope_limitations'] = [
+        '本轮存在以下规则范围限制；相关规则未形成符合或不符合结论，也不计入通过。',
+        'T15-01（转包规则）主体 7：总包合同未提供，本轮未覆盖该规则。',
+    ]
+    report['scope_statements'] = list(report['scope_limitations'])
+    report['meta'].update({'title': '示例', 'scope': {}})
+    report['business_document'] = build_report_document(report)
+
+    conclusion = report['business_document']['conclusion']
+    assert conclusion['status'] == 'scope_limited'
+    assert '不能解释为完整通过' in conclusion['text']
+    assert conclusion['limitations'] == []
+    sections = export.report_display_sections(report['business_document'])
+    scope_section = next(section for section in sections if section['title'] == '规则范围限制')
+    assert any('T15-01' in point['summary'] for point in scope_section['display_points'])
+    negative_list = next(section for section in sections if section['title'] == '资质与内容合规性审查')
+    assert all('T15-01' not in point['summary'] for point in negative_list['display_points'])
+
+    word = Document(BytesIO(export.word_bytes(report)))
+    word_text = '\n'.join([p.text for p in word.paragraphs] +
+                           [cell.text for table in word.tables for row in table.rows for cell in row.cells])
+    pdf = fitz.open(stream=export.pdf_bytes(report), filetype='pdf')
+    pdf_text = '\n'.join(page.get_text() for page in pdf)
+    for text in (word_text, pdf_text):
+        normalized = text.replace('\n', '')
+        assert '规则范围限制' in text and 'T15-01' in normalized
+        assert '不计入通过' in normalized
+        assert '不能解释为完整通过' in normalized
+
+
+def test_scope_limited_opinion_conclusion_is_rendered_in_word_and_pdf():
+    import fitz
+
+    limitation = 'T15-01（转包规则）：总包合同未提供，本轮未覆盖该规则。'
+    opinion = {
+        'meta': {'title': '示例'},
+        'business_document': {
+            'schema_version': 'bs.business-report-document.v2',
+            'basic_information': {},
+            'sections': [],
+            'scope_limitations': [limitation],
+            'conclusion': {
+                'status': 'scope_limited',
+                'text': '已覆盖范围内未发现需整改问题，但存在规则未覆盖，不能解释为完整通过。',
+                'limitations': [],
+            },
+        },
+        'scope_limitations': [limitation],
+        'conclusion': {
+            'code': 'scope_limited',
+            'text': '已覆盖范围内未发现需整改问题，但存在规则未覆盖，不构成完整通过建议。',
+        },
+    }
+
+    word = Document(BytesIO(export.opinion_word_bytes(opinion)))
+    word_text = '\n'.join([p.text for p in word.paragraphs] +
+                           [cell.text for table in word.tables for row in table.rows for cell in row.cells])
+    pdf = fitz.open(stream=export.opinion_pdf_bytes(opinion), filetype='pdf')
+    pdf_text = '\n'.join(page.get_text() for page in pdf)
+    for text in (word_text, pdf_text):
+        normalized = text.replace('\n', '')
+        assert '规则范围限制' in text and 'T15-01' in normalized
+        assert '不构成完整通过建议' in normalized
+
+
+def test_suspect_page_limitation_is_disclosed_at_material_scope():
+    document = {'schema_version': 'bs.business-report-document.v2', 'sections': [
+        {'title': '要素完整性核查', 'key_points': [{'label': '报审资料', 'summary': '资料已接收。'}]},
+        {'title': '内部信用与事故材料核查', 'key_points': [{'label': '内部信用与事故记录', 'summary': '内部记录待核。'}]}],
+        'conclusion': {'limitations': ['《信用资料》共 3 页，第 2 页已取得文字但质量可疑，需人工核对原件；涉及 1 条结论。']}}
+    sections = report_display_sections(document)
+    assert '第 2 页已取得文字但质量可疑' in sections[0]['display_points'][0]['summary']
+    assert '第 2 页已取得文字但质量可疑' not in sections[1]['display_points'][0]['summary']
+
+
+def test_basis_label_is_not_duplicated_but_original_rule_text_is_preserved():
+    item = {**_item('internal_records', 'undecidable', '内部信用', '需要核对内部警示记录'),
+            'source': '依据：《内部信用管理要求》第六条'}
+    report = _report([item], completed=['internal_records'], selected=['internal_records'])
+    report['meta'].update({'title': '示例', 'scope': {}})
+    report['business_document'] = build_report_document(report)
+    point = report['business_document']['sections'][4]['key_points'][0]
+    assert point['basis'] == ['《内部信用管理要求》第六条']
+    document = Document(BytesIO(export.word_bytes(report)))
+    row = next(row for table in document.tables for row in table.rows if row.cells[0].text.startswith('内部信用与事故记录'))
+    assert '主要依据：《内部信用管理要求》第六条' in row.cells[0].text
+    assert '主要依据：依据：' not in row.cells[0].text
+    assert item['source'] == '依据：《内部信用管理要求》第六条'
+
+
+def test_unperformed_external_credit_scope_displays_dash():
+    item = {**_item('internal_records', 'undecidable', '内部信用', '内部警示记录尚未核实'),
+            'source': '内部信用管理要求'}
+    report = _report([item], completed=['internal_records'], selected=['internal_records'])
+    points = {point['label']: point for point in build_report_document(report)['sections'][4]['key_points']}
+    assert points['内部信用与事故记录']['verdict'] == '待核实'
+    assert '未开展外部信用' in points['核查范围']['summary']
+    assert points['核查范围']['verdict'] == '—'
+
+
+def test_business_summary_avoids_internal_subject_number_and_redundant_uncertain_prefix():
+    item = {**_item('qualification_match', 'undecidable', '资质匹配',
+                    '不可判定：主体 1（某分包单位）：未能从工程内容中识别类别，需人工核对'),
+            'item_id': 'A2-04', 'source': '分包资质要求'}
+    report = _report([item], completed=['a2'], selected=['a2'])
+    point = next(p for p in build_report_document(report)['sections'][1]['key_points'] if p['label'] == '主体资格')
+    assert '某分包单位' in point['summary']
+    assert '未能从工程内容中识别类别' in point['summary']
+    assert '主体 1' not in point['summary']
+    assert '不可判定：' not in point['summary']
+    assert point['verdict'] == '待核实'
 
 
 def test_key_point_summary_contains_distinct_findings_and_real_human_note():
@@ -537,6 +753,59 @@ def test_unmapped_detail_does_not_imply_individual_fields_are_clear():
     assert "无法确认" not in fields["证件信息一致性"]
 
 
+def test_certificate_declared_date_survives_summary_grouping():
+    expired = {**_item('cert_validity', 'undecidable', '证件有效期',
+        '材料声明填列期限（「安全生产许可证」，有效期至 2026-03-31）早于基准日；不是实际证照核验，需核对最新证照、续期或变更资料'),
+        'item_id': 'A2-02'}
+    others = [{**_item('cert_validity', 'undecidable', '证件有效期',
+                       f'「营业执照」其他核查事项 {index}需核实'), 'item_id': 'A2-02'} for index in range(4)]
+    report = _report([expired, *others], completed=['a2'], selected=['a2'])
+    point = next(row for row in build_report_document(report)['sections'][3]['key_points']
+                 if row['label'] == '企业证照有效期')
+    assert '2026-03-31' in point['summary']
+    assert '需核对最新证照' in point['summary']
+
+
+def test_signature_clue_is_summarized_once_for_same_subject_only():
+    message = '报审表中识别到总监理工程师意见及指挥部意见栏目；本项签署环节需结合原件核对'
+    refs = [{'material_id': 5, 'page': 1, 'quote': '总监理工程师意见'},
+            {'material_id': 5, 'page': 1, 'quote': '指挥部意见'}]
+    first = {**_item('signature_chain', 'undecidable', '法定签字链', message),
+             'item_id': 'A3-02-legal', 'subject_id': 1, 'evidence_list': refs}
+    second = {**_item('signature_chain', 'undecidable', '集团报审签字链', message),
+              'item_id': 'A3-02-group', 'subject_id': 1, 'evidence_list': refs}
+    report = _report([first, second], completed=['signature_chain'], selected=['signature_chain'])
+    point = next(p for p in build_report_document(report)['sections'][0]['key_points'] if p['label'] == '审批程序')
+    assert point['summary'].count(message) == 1
+    other = {**second, 'subject_id': 2}
+    report = _report([first, other], completed=['signature_chain'], selected=['signature_chain'])
+    point = next(p for p in build_report_document(report)['sections'][0]['key_points'] if p['label'] == '审批程序')
+    assert point['summary'].count(message) == 2
+    other = {**second, 'evidence_list': [{'material_id': 6, 'page': 1, 'quote': '其他报审表'}]}
+    report = _report([first, other], completed=['signature_chain'], selected=['signature_chain'])
+    point = next(p for p in build_report_document(report)['sections'][0]['key_points'] if p['label'] == '审批程序')
+    assert point['summary'].count(message) == 2
+
+
+def test_negative_candidate_report_uses_cited_fact_and_human_note_not_model_inference():
+    item = {**_item('negative_list', 'undecidable', '整孔预制梁',
+                    '模型辅助核查线索：材料表明未获证实的施工工艺，请核对'),
+            'item_id': 'NL-B-08', 'source_kind': 'negative_candidate', 'subject_id': 1,
+            'evidence_list': [{'material_id': 5, 'page': 2, 'quote': '预制板梁劳务分包工程量清单'}],
+            'human_disposition': {'code': 'accepted', 'note': '需结合施工工艺核对'}}
+    report = _report([item], completed=['a1'], selected=['a1'])
+    point = next(p for p in build_report_document(report)['sections'][1]['key_points'] if p['label'] == '负面清单')
+    assert '预制板梁劳务分包工程量清单' in point['summary']
+    assert '未获证实的施工工艺' not in point['summary']
+    assert '需结合施工工艺核对' in point['summary']
+
+    item['evidence_list'] = []
+    point = next(p for p in build_report_document(_report([item], completed=['a1'], selected=['a1']))['sections'][1]['key_points']
+                 if p['label'] == '负面清单')
+    assert '未获证实的施工工艺' not in point['summary']
+    assert '完整资料和适用依据核对' in point['summary']
+
+
 def test_specific_certificate_warning_maps_without_classifying_aggregate():
     enterprise = {**_item('cert_validity', 'hit', '证件有效期', '「安全生产许可证」已超过有效期'), 'item_id': 'A2-02'}
     person = {**_item('cert_validity', 'undecidable', '证件有效期', '「特种作业操作证」的有效期不明确'), 'item_id': 'A2-02'}
@@ -547,6 +816,16 @@ def test_specific_certificate_warning_maps_without_classifying_aggregate():
     assert '有效期不明确' in fields['人员证件有效期']
     assert '已核查符合' not in fields['企业证照有效期']
     assert '已核查符合' not in fields['人员证件有效期']
+
+
+def test_labor_filing_expiry_maps_to_enterprise_certificate_summary():
+    item = {**_item('cert_validity', 'undecidable', '证件有效期',
+                    '材料页面标注「施工劳务备案证书」，有效期至 2029-08-04；需核对原件'),
+            'item_id': 'A2-02'}
+    report = _report([item], completed=['a2'], selected=['a2'])
+    point = next(p for p in build_report_document(report)['sections'][3]['key_points']
+                 if p['label'] == '企业证照有效期')
+    assert '2029-08-04' in point['summary'] and '施工劳务备案证书' in point['summary']
 
 
 def test_word_and_pdf_render_same_business_content_without_ignored_items():
@@ -926,3 +1205,15 @@ def test_missing_subject_or_evidence_never_merges_distinct_findings():
     first = {**_item("cert_validity", "undecidable", "证件有效期", "期限待核实"), "finding_id": 11}
     second = {**first, "finding_id": 12}
     assert len(build_report_document(_report([first, second], completed=["a2"], selected=["a2"]))["issues"]) == 2
+
+
+def test_narrowed_ai_scope_is_disclosed_in_word_pdf_report_limitations():
+    statement = "部分 AI 辅助意见仅基于选取的材料页，未覆盖全部可用资料；不得据此认定无问题或缺件，相关事项需人工核实。"
+    assert _ai_scope_limitations([{"scope_selection": {"narrowed": True}}]) == [statement]
+    assert _ai_scope_limitations([{"scope_selection": {"narrowed": False}}]) == []
+
+    report = _report([], completed=["a1"], selected=["a1"])
+    report["scope_statements"] = [statement]
+    document = build_report_document(report)
+
+    assert statement in document["conclusion"]["limitations"]

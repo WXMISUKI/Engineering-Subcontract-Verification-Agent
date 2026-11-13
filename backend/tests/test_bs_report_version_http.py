@@ -129,7 +129,9 @@ def test_corrupted_frozen_policy_returns_explainable_conflict_for_report_outputs
     monkeypatch.setattr(knowledge_runs, "load_reference_package", lambda **kwargs: {"version": "test"})
     monkeypatch.setattr(reference_snapshots, "build_review_seed", lambda *args, **kwargs: {
         "review_run_id": kwargs["review_run_id"], "expected_groups": [], "steps": []})
-    monkeypatch.setattr(bs_router, "_require_current_output_ready", lambda *args, **kwargs: None)
+    monkeypatch.setattr(bs_router, "_require_current_output_ready", lambda *args, **kwargs: {
+        "scope_coverage": {"state": "legacy_unknown"},
+    })
     with Session(engine) as db:
         task = db.get(BsTask, task_id)
         service.initialize_reference_review(db, task)
@@ -236,22 +238,39 @@ def test_version_diff_blocks_current_side_while_supplement_is_active(tmp_path):
     assert diff.json()["b"]["version_no"] is None
 
 
-def test_historical_pdf_export_preserves_frozen_summary_and_access(tmp_path):
+def test_historical_pdf_export_preserves_frozen_summary_and_access(tmp_path, monkeypatch):
     import copy
     from io import BytesIO
     import fitz
+    import pytest
     from docx import Document
+    from app.plus.blockchain_supervision import service
 
     client, engine, task_id = _client(tmp_path)
     _seed_version(engine, task_id)
+    frozen_scope = {
+        "schema_version": "bs-scope-coverage.v1",
+        "generation_id": "review-history-1",
+        "policy": "optional-source-scope.v1",
+        "state": "partial",
+        "limitations": [{"rule_id": "T15-01", "source_state": "absent"}],
+    }
+    scope_statements = [
+        "本轮存在以下规则范围限制；相关规则未形成符合或不符合结论，也不计入通过。",
+        "T15-01（转包规则）：总包合同未提供，本轮未覆盖该规则。",
+    ]
     with Session(engine) as db:
         version = db.query(BsReviewVersion).filter_by(task_id=task_id, version_no=1).one()
         snapshot = copy.deepcopy(version.snapshot_json)
+        snapshot["scope_coverage"] = frozen_scope
         snapshot["report"] = {
             "meta": {"title": "历史工程", "scope": {}},
+            "scope_coverage": frozen_scope,
+            "scope_limitations": scope_statements,
             "business_document": {
                 "basic_information": {"工程名称": "历史工程"},
                 "sections": [],
+                "scope_limitations": scope_statements,
                 "issues": [
                     {"category": "人员核查", "label": "旧事项", "summary_theme": "人员资料", "status": "undecidable"},
                     {"category": "人员核查", "label": "人工意见", "status": "hit",
@@ -265,6 +284,13 @@ def test_historical_pdf_export_preserves_frozen_summary_and_access(tmp_path):
         version.snapshot_json = snapshot
         db.commit()
 
+    monkeypatch.setattr(service, "optional_scope_coverage", lambda *_args: pytest.fail(
+        "historical output must use the version snapshot"))
+    historical = client.get(f"/api/plus/blockchain-supervision/tasks/{task_id}/report",
+                            params={"version_no": 1})
+    assert historical.status_code == 200, historical.text
+    assert historical.json()["scope_coverage"] == frozen_scope
+
     response = client.get(f"/api/plus/blockchain-supervision/tasks/{task_id}/report/export",
                           params={"fmt": "pdf", "version_no": 1})
     assert response.status_code == 200, response.text
@@ -273,6 +299,7 @@ def test_historical_pdf_export_preserves_frozen_summary_and_access(tmp_path):
     pdf = fitz.open(stream=response.content, filetype="pdf")
     text = "".join(page.get_text() for page in pdf)
     assert "历史工程" in text and "人员资料需要核实" in text and "历史备注" in text
+    assert "规则范围限制" in text and "T15-01" in text
     assert "不显示的忽略项" not in text
     assert all(pdf.extract_font(font[0])[3] for page in pdf for font in page.get_fonts())
     word_response = client.get(f"/api/plus/blockchain-supervision/tasks/{task_id}/report/export",
@@ -282,6 +309,7 @@ def test_historical_pdf_export_preserves_frozen_summary_and_access(tmp_path):
     word_text = "\n".join([p.text for p in word.paragraphs] +
                           [cell.text for table in word.tables for row in table.rows for cell in row.cells])
     assert "历史工程" in word_text and "人员资料需要核实" in word_text and "历史备注" in word_text
+    assert "规则范围限制" in word_text and "T15-01" in word_text
     assert "不显示的忽略项" not in word_text
     with Session(engine) as db:
         saved = db.query(BsReviewVersion).filter_by(task_id=task_id, version_no=1).one()

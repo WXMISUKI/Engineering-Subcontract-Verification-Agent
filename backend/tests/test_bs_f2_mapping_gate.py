@@ -1,8 +1,11 @@
 """F2：知识映射缺失时，替换候选不能覆盖旧基线。"""
 
+import json
+import pytest
+
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
-from fastapi.testclient import TestClient
 
 from app.plus.blockchain_supervision.models import BsMaterial, BsTask
 from app.standalone.identity import Base, create_account
@@ -13,10 +16,22 @@ def _pdf_bytes():
     return b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n"
 
 
-def test_missing_reference_mapping_keeps_replacement_baseline(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    ("mapping_config", "expected_code"),
+    [
+        (None, "mapping_file_unavailable"),
+        ({"version": 1, "documents": []}, "source_mapping_missing"),
+    ],
+)
+def test_missing_reference_mapping_keeps_replacement_baseline(
+    monkeypatch, tmp_path, caplog, mapping_config, expected_code,
+):
     monkeypatch.setenv("SECRET_KEY", "x" * 64)
     monkeypatch.setenv("BLOCKCHAIN_SUPERVISION_UPLOAD_MAX_MB", "200")
-    monkeypatch.setenv("BS_REFERENCE_MAPPING_FILE", str(tmp_path / "missing-reference-mapping.json"))
+    mapping_path = tmp_path / "reference-mapping.json"
+    if mapping_config is not None:
+        mapping_path.write_text(json.dumps(mapping_config), encoding="utf-8")
+    monkeypatch.setenv("BS_REFERENCE_MAPPING_FILE", str(mapping_path))
     engine = create_engine("sqlite:///" + (tmp_path / "mapping-gate.sqlite").as_posix(),
                            connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
@@ -47,9 +62,20 @@ def test_missing_reference_mapping_keeps_replacement_baseline(monkeypatch, tmp_p
     assert candidate.status_code == 200, candidate.text
     candidate_id = candidate.json()["material_id"]
 
-    started = client.post(f"{base}/start")
+    with caplog.at_level("ERROR", logger="app.standalone.main"):
+        started = client.post(f"{base}/start")
     assert started.status_code == 503, started.text
     assert started.json()["detail"] == "知识库依据无法核实，请联系管理员完成知识初始化"
+    assert f"code={expected_code}" in caplog.text
+    if mapping_config is None:
+        assert "知识标识映射不可用" in caplog.text
+        assert "context={}" in caplog.text
+        assert "FileNotFoundError" in caplog.text
+    else:
+        assert "依据原件缺少新环境映射" in caplog.text
+        assert "source_hash_prefix" in caplog.text
+        assert "old-kb" not in caplog.text
+        assert "old-doc" not in caplog.text
     with Session(engine) as db:
         task = db.get(BsTask, task_id)
         old = db.get(BsMaterial, old_id)

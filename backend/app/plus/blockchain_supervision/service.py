@@ -28,7 +28,7 @@ from . import (a1_check, a2_check, a3_check, extract, internal_records, parsing,
                ruleset, rule_item_catalog, checklist, knowledge, material_versions, supplement_impact,
                supplement_generation, ai_guarded_review, ai_advisory_snapshots, ai_review_batch, reference_visibility,
                personnel_evidence, certificate_number_check, evidence_projection, identity_observation, negative_candidate_plan,
-               section_projection, material_confirmation, report_policy)
+               section_projection, material_confirmation, report_policy, optional_source_scope)
 from ..startup_conditions_check.llm import client_from_env, run_sync
 from .classify import ROLE_LABELS, classify_material, validate_materials, validate_role
 from .finding_text import bounded_finding_message
@@ -206,6 +206,87 @@ def add_event(db: Session, task_id: int, event_type: str, *, stage: str = None,
     else:
         db.flush()
     return seq
+
+
+def _record_optional_scope_event(db: Session, task: BsTask, event_type: str,
+                                 payload: dict, *, commit: bool = False) -> int:
+    identity = optional_source_scope.scope_event_identity(event_type, payload)
+    if identity is None:
+        raise ValueError("范围事件缺少有效身份字段")
+    if event_type == optional_source_scope.SCOPE_SNAPSHOT_EVENT:
+        candidates = db.query(BsTaskEvent).filter_by(
+            task_id=task.id, event_type=event_type).all()
+        candidates = [row for row in candidates
+                      if optional_source_scope.scope_event_identity(
+                          row.event_type, row.payload_json or {}) == identity]
+    elif event_type == optional_source_scope.CHECK_STARTED_EVENT:
+        candidates = db.query(BsTaskEvent).filter_by(
+            task_id=task.id, event_type=event_type).all()
+        candidates = [row for row in candidates
+                      if optional_source_scope.scope_event_identity(
+                          row.event_type, row.payload_json or {}) == identity]
+    else:
+        terminal_types = (optional_source_scope.CHECK_RECORDED_EVENT,
+                          optional_source_scope.CHECK_FAILED_EVENT)
+        terminal_identity = identity[1:]
+        candidates = db.query(BsTaskEvent).filter(
+            BsTaskEvent.task_id == task.id,
+            BsTaskEvent.event_type.in_(terminal_types)).all()
+        matching = []
+        for row in candidates:
+            row_identity = optional_source_scope.scope_event_identity(
+                row.event_type, row.payload_json or {})
+            if row_identity is not None and row_identity[1:] == terminal_identity:
+                matching.append(row)
+        candidates = matching
+    if len(candidates) > 1:
+        raise ValueError("范围事件身份冲突：同一身份存在重复记录")
+    if candidates:
+        existing = candidates[0]
+        if (existing.event_type != event_type
+                or not optional_source_scope.same_event_payload(existing.payload_json or {}, payload)):
+            raise ValueError("范围事件身份冲突：同一身份对应不同内容")
+        return existing.sequence
+    return add_event(db, task.id, event_type, stage="check", payload=payload, commit=commit)
+
+
+def _optional_scope_source_facts(db: Session, task: BsTask) -> tuple[str, list[int], list[dict]]:
+    all_materials = db.query(BsMaterial).filter(BsMaterial.task_id == task.id).all()
+    active = material_versions.active_input_materials(all_materials)
+    active_ids = {material.id for material in active}
+    unresolved = [
+        material for material in all_materials
+        if material.role == "general"
+        and material.id not in active_ids
+        and material.superseded_by_id is None
+        and material.replacement_target_id is None
+        and material_versions.subject_assessment_issue(material)
+    ]
+    general = [material for material in active if material.role == "general"] + unresolved
+    state = optional_source_scope.classify_general_source_state(
+        general,
+        readable=lambda material: bool(a1_check._material_text(material).strip()),
+        reading_gap=parsing.material_reading_gap,
+        linkage_issue=material_versions.subject_assessment_issue,
+    )
+    grouped = {}
+    for material in general:
+        source_set_id = material.general_source_set_id
+        if source_set_id:
+            grouped.setdefault(source_set_id, []).append(material)
+    source_sets = []
+    for source_set_id, members in sorted(grouped.items()):
+        versions = {member.general_source_set_version for member in members}
+        if len(versions) != 1 or type(next(iter(versions))) is not int or next(iter(versions)) < 1:
+            raise ValueError("总包来源关联版本不一致，请在开始核查前重新确认材料关联")
+        source_sets.append({
+            "source_set_id": source_set_id,
+            "relation_version": next(iter(versions)),
+            "member_material_ids": sorted(member.id for member in members if type(member.id) is int),
+        })
+    return (state,
+            sorted({material.id for material in general if type(material.id) is int}),
+            source_sets)
 
 
 def record_anchor_recovery(db: Session, task_id: int, *, changes: list[dict],
@@ -1060,8 +1141,174 @@ def _material_in_replacement_history(db: Session, task: BsTask, material: BsMate
     return parent is not None and parent.superseded_by_id is not None
 
 
-def set_material_role(db: Session, task: BsTask, material_id: int, role: str) -> BsMaterial:
+def _lock_material_setup_task(db: Session, task: BsTask) -> BsTask:
+    locked = (db.query(BsTask).filter(BsTask.id == task.id)
+              .populate_existing().with_for_update().first())
+    if locked is None:
+        raise LookupError("task not found")
+    return locked
+
+
+def _general_source_set_members(db: Session, task: BsTask, source_set_id: str) -> list[BsMaterial]:
+    return [material for material in _rule_materials(db, task)
+            if material.role == "general" and material.general_source_set_id == source_set_id]
+
+
+def associate_general_source_set(db: Session, task: BsTask, material_ids: list[int], *,
+                                 operator=None) -> dict:
+    """Associate explicitly selected current general-contract files as one source set."""
+    task = _lock_material_setup_task(db, task)
+    if not _setup_write_allowed(task):
+        raise ValueError("核查已开始，不能修改总包来源关联")
+    if (not isinstance(material_ids, (list, tuple))
+            or any(type(material_id) is not int or material_id <= 0 for material_id in material_ids)
+            or len(material_ids) < 2 or len(set(material_ids)) != len(material_ids)):
+        raise ValueError("请选择至少两份不同的总包材料")
+
+    selected_ids = sorted(material_ids)
+    active_general = [material for material in _rule_materials(db, task) if material.role == "general"]
+    by_id = {material.id: material for material in active_general}
+    if not set(selected_ids) <= set(by_id):
+        raise LookupError("来源集只能关联当前任务中有效的总包材料")
+    selected = [by_id[material_id] for material_id in selected_ids]
+    previous_ids = sorted({material.general_source_set_id for material in selected
+                           if material.general_source_set_id})
+    versions = []
+    for previous_id in previous_ids:
+        members = _general_source_set_members(db, task, previous_id)
+        member_ids = {member.id for member in members}
+        if not member_ids <= set(selected_ids):
+            raise ValueError("请同时选择该来源集的全部成员")
+        group_versions = {member.general_source_set_version for member in members}
+        if len(group_versions) != 1 or type(next(iter(group_versions))) is not int:
+            raise ValueError("总包来源关联版本不一致，请先解除后重新关联")
+        versions.append(next(iter(group_versions)))
+
+    if len(previous_ids) == 1:
+        source_set_id = previous_ids[0]
+        existing_ids = {member.id for member in _general_source_set_members(db, task, source_set_id)}
+        current_version = versions[0]
+        if existing_ids == set(selected_ids):
+            return {"source_set_id": source_set_id, "relation_version": current_version,
+                    "material_ids": selected_ids}
+        relation_version = current_version + 1
+        operation = "members_added"
+    else:
+        source_set_id = str(uuid.uuid4())
+        relation_version = max(versions, default=0) + 1
+        operation = "created" if not previous_ids else "merged"
+
+    for material in selected:
+        material.general_source_set_id = source_set_id
+        material.general_source_set_version = relation_version
+        material.role_confirmed = True
+    add_event(db, task.id, "material.general_source_set_changed", payload={
+        "operation": operation,
+        "source_set_id": source_set_id,
+        "previous_source_set_ids": previous_ids,
+        "relation_version": relation_version,
+        "material_ids": selected_ids,
+        "operator": operator,
+    }, commit=False)
+    db.commit()
+    return {"source_set_id": source_set_id, "relation_version": relation_version,
+            "material_ids": selected_ids}
+
+
+def remove_general_source_set_member(db: Session, task: BsTask, material_id: int, *,
+                                     operator=None) -> dict:
+    """Remove one current material from its explicitly confirmed general source set."""
+    task = _lock_material_setup_task(db, task)
+    if not _setup_write_allowed(task):
+        raise ValueError("核查已开始，不能修改总包来源关联")
+    material = (db.query(BsMaterial).filter(BsMaterial.id == material_id,
+                                            BsMaterial.task_id == task.id).first())
+    if material is None:
+        raise LookupError("material not in task")
+    if material.id not in {row.id for row in _rule_materials(db, task)}:
+        raise ValueError("只能修改当前有效材料的来源关联")
+    if material.role != "general" or not material.general_source_set_id:
+        raise ValueError("该材料当前未关联总包来源集")
+
+    source_set_id = material.general_source_set_id
+    members = _general_source_set_members(db, task, source_set_id)
+    versions = {member.general_source_set_version for member in members}
+    if len(versions) != 1 or type(next(iter(versions))) is not int:
+        raise ValueError("总包来源关联版本不一致，不能解除关联")
+    version = next(iter(versions)) + 1
+    remaining = [member for member in members if member.id != material.id]
+    material.general_source_set_id = None
+    material.general_source_set_version = None
+    if len(remaining) >= 2:
+        for member in remaining:
+            member.general_source_set_version = version
+        remaining_source_set_id = source_set_id
+        remaining_ids = sorted(member.id for member in remaining)
+    else:
+        for member in remaining:
+            member.general_source_set_id = None
+            member.general_source_set_version = None
+        remaining_source_set_id = None
+        remaining_ids = []
+    add_event(db, task.id, "material.general_source_set_changed", payload={
+        "operation": "member_removed",
+        "source_set_id": source_set_id,
+        "relation_version": version,
+        "removed_material_id": material.id,
+        "remaining_source_set_id": remaining_source_set_id,
+        "remaining_material_ids": remaining_ids,
+        "operator": operator,
+    }, commit=False)
+    db.commit()
+    return {"source_set_id": remaining_source_set_id, "relation_version": version if remaining_source_set_id else None,
+            "material_ids": remaining_ids}
+
+
+def _detach_general_source_members(db: Session, task: BsTask, material_ids: set[int], *,
+                                   reason: str, operator=None) -> None:
+    active_general = [material for material in _rule_materials(db, task) if material.role == "general"]
+    affected_ids = {material.general_source_set_id for material in active_general
+                    if material.id in material_ids and material.general_source_set_id}
+    for source_set_id in sorted(affected_ids):
+        members = [material for material in active_general
+                   if material.general_source_set_id == source_set_id]
+        removed = [member for member in members if member.id in material_ids]
+        if not removed:
+            continue
+        versions = {member.general_source_set_version for member in members}
+        if len(versions) != 1 or type(next(iter(versions))) is not int:
+            raise ValueError("总包来源关联版本不一致，请先修复材料关联")
+        relation_version = next(iter(versions)) + 1
+        remaining = [member for member in members if member.id not in material_ids]
+        for member in removed:
+            member.general_source_set_id = None
+            member.general_source_set_version = None
+        if len(remaining) >= 2:
+            for member in remaining:
+                member.general_source_set_version = relation_version
+            remaining_source_set_id = source_set_id
+            remaining_ids = sorted(member.id for member in remaining)
+        else:
+            for member in remaining:
+                member.general_source_set_id = None
+                member.general_source_set_version = None
+            remaining_source_set_id = None
+            remaining_ids = []
+        add_event(db, task.id, "material.general_source_set_changed", payload={
+            "operation": "members_removed",
+            "reason": reason,
+            "source_set_id": source_set_id,
+            "relation_version": relation_version,
+            "removed_material_ids": sorted(member.id for member in removed),
+            "remaining_source_set_id": remaining_source_set_id,
+            "remaining_material_ids": remaining_ids,
+            "operator": operator,
+        }, commit=False)
+
+
+def set_material_role(db: Session, task: BsTask, material_id: int, role: str, *, operator=None) -> BsMaterial:
     """人工更正归属（v6 原型的「归属」片：只记人改动项，不要求逐份确认）。"""
+    task = _lock_material_setup_task(db, task)
     validate_role(role)
     # T10-B §B1：service 与 router **两侧都缺**状态门（原实现只靠 UI 不给入口）。
     if not _material_write_allowed(task):
@@ -1073,6 +1320,8 @@ def set_material_role(db: Session, task: BsTask, material_id: int, role: str) ->
         raise ValueError("材料已进入替代历史，为保留审计记录不能修改")
     if mat.replacement_target_id is not None:
         raise ValueError("材料替代意图已登记，不能修改归类，请取消后重新上传")
+    if role != "general" and mat.general_source_set_id:
+        _detach_general_source_members(db, task, {mat.id}, reason="role_changed", operator=operator)
     mat.role = role
     mat.role_confirmed = True
     mat.material_category = role if role != "unknown" else None
@@ -1107,7 +1356,8 @@ def set_material_role(db: Session, task: BsTask, material_id: int, role: str) ->
     db.commit()
     add_event(db, task.id, "material.role_corrected",
               payload={"material_id": mat.id, "role": role,
-                       "subject_id": mat.subject_id, "packet_id": mat.packet_id})
+                       "subject_id": mat.subject_id, "packet_id": mat.packet_id,
+                       "operator": operator})
     return mat
 
 
@@ -1155,7 +1405,7 @@ def set_section(db: Session, task: BsTask, *, project_name: str = None,
     return task
 
 
-def delete_material(db: Session, task: BsTask, material_id: int) -> None:
+def delete_material(db: Session, task: BsTask, material_id: int, *, operator=None) -> None:
     """setup 段移除材料（传错文件重传；落盘文件保留，仅删记录避免误伤同路径复用）。
 
     T4.1-T2 §2.3 / 契约 §7.4.7：删除 **ZIP 容器**时先**显式**删除其全部派生材料
@@ -1166,6 +1416,7 @@ def delete_material(db: Session, task: BsTask, material_id: int) -> None:
     显式删除而非依赖库级 CASCADE：与 `delete_task` 同纪律（sqlite 需
     PRAGMA foreign_keys=ON 才生效，显式删使 sqlite/MySQL 行为必然一致）。
     """
+    task = _lock_material_setup_task(db, task)
     if not _setup_write_allowed(task):
         raise ValueError("核查已开始，不能再移除材料")
     mat = db.query(BsMaterial).filter(BsMaterial.id == material_id, BsMaterial.task_id == task.id).first()
@@ -1188,6 +1439,7 @@ def delete_material(db: Session, task: BsTask, material_id: int) -> None:
                         .first() is not None)
     if has_outbound_edge or has_inbound_edge or parent_is_historical:
         raise ValueError("材料已进入替代历史，为保留审计记录不能删除")
+    _detach_general_source_members(db, task, set(candidate_ids), reason="material_deleted", operator=operator)
     for child in children:
         db.delete(child)
     db.delete(mat)
@@ -1336,7 +1588,24 @@ def validate_task_materials(db: Session, task: BsTask) -> dict:
     """
     all_materials = db.query(BsMaterial).filter(BsMaterial.task_id == task.id).all()
     materials = _rule_materials(db, task)
-    result = validate_materials([m.role for m in materials], scope_a3=task.scope_a3)
+    validation_roles = []
+    general_source_sets = {}
+    for material in materials:
+        if material.role != "general":
+            validation_roles.append(material.role)
+        elif material.general_source_set_id:
+            general_source_sets.setdefault(material.general_source_set_id, []).append(material)
+        else:
+            validation_roles.append("general")
+    # Only a complete, version-consistent user-confirmed set counts as one general source.
+    for members in general_source_sets.values():
+        versions = {member.general_source_set_version for member in members}
+        if (len(members) >= 2 and len(versions) == 1
+                and type(next(iter(versions))) is int and next(iter(versions)) >= 1):
+            validation_roles.append("general")
+        else:
+            validation_roles.extend("general" for _ in members)
+    result = validate_materials(validation_roles, scope_a3=task.scope_a3)
     result["composition"] = material_composition(materials)
     # 当前补件准备范围由后端统一判定；历史异常件不应阻塞无关补件。
     # 待替换的新件需要进入准备流程读取，故不以其旧目标的异常阻断启动。
@@ -2401,7 +2670,7 @@ def _safe_event_diagnostics(raw) -> dict:
         value = raw.get(key)
         if type(value) is int and 0 <= value <= 10000000:
             result[key] = value
-    if raw.get("status") in ("processing", "completed", "partial", "failed", "not_run"):
+    if raw.get("status") in ("processing", "timeout_split", "invalid_retry", "completed", "partial", "failed", "not_run"):
         result["status"] = raw["status"]
     categories = raw.get("failure_categories")
     if isinstance(categories, list):
@@ -2808,34 +3077,237 @@ def run_a1_checks(db: Session, task: BsTask) -> list:
     if not task.scope_a1:
         raise ValueError("任务未选择 A1 核查范围")
     reference_plan = _prepare_reference_group(db, task, "a1")
-    materials = _rule_materials(db, task)
-    a3_findings = (db.query(BsFinding)
-                   .filter(BsFinding.task_id == task.id, BsFinding.kind == "completeness")
-                   .all())
-    negative_findings = a1_check.run_negative_list_check(task, materials)
-    # 占比类范围闸（口径修正）：分母是总包合同金额、且业主部署文件二、（六）把「分包合同
-    # 总合同额匹配」列为后续功能 → 本期默认关闭（config.json enabled=false，能力保留）。
-    # 关闭时不产出 finding，改由 reporting.scope_statements 在纸面上声明范围。
-    ratio_findings = []
-    if load_config().get("amount_ratio", {}).get("enabled"):
-        ratio_findings += a1_check.run_amount_ratio_check(task, materials)
-    if load_config().get("workload_ratio", {}).get("enabled"):
-        ratio_findings += a1_check.run_workload_ratio_check(task, materials)
-    findings = (ratio_findings
-                + negative_findings
-                + a1_check.run_a3_dependent_checks(task, a3_findings, materials)
-                + a1_check.run_transfer_scope_check(task, materials)
-                + a1_check.run_transfer_materials_check(task, materials)
-                + a1_check.run_transfer_relations_check(task, materials)
-                + a1_check.run_illegal_subcontract_check(
-                    task, materials, a3_findings=a3_findings,
-                    negative_list_findings=negative_findings))
-    # BS-P1-11：补登记无内核承载的兜底条款（第十五条（十）T15-10）。放编排层而非塞进
-    # 两个既有内核——它们各有「恰好 N 条」形状锁，插入会连带改契约；此处纯追加。
-    findings += a1_check.run_open_term_registrations(task, findings)
-    findings, superseded = a1_check.supersede_dependency_findings(findings)
-    pinning.pin_findings(findings, materials)
-    return _persist_reference_group(db, task, reference_plan, findings, extra={"superseded": superseded})
+    scope_run = _begin_optional_scope_check_run(db, task, reference_plan)
+    try:
+        materials = _rule_materials(db, task)
+        a3_findings = (db.query(BsFinding)
+                       .filter(BsFinding.task_id == task.id, BsFinding.kind == "completeness")
+                       .all())
+        negative_findings = a1_check.run_negative_list_check(task, materials)
+        # 占比规则当前默认关闭；新策略只在冻结的 A1-01 适用时传递来源状态。
+        ratio_findings = []
+        if load_config().get("amount_ratio", {}).get("enabled"):
+            if scope_run:
+                ratio_findings += a1_check.run_amount_ratio_check(
+                    task, materials, scope_policy_enabled=True,
+                    general_source_state=scope_run["source_state"])
+            else:
+                ratio_findings += a1_check.run_amount_ratio_check(task, materials)
+        if load_config().get("workload_ratio", {}).get("enabled"):
+            ratio_findings += a1_check.run_workload_ratio_check(task, materials)
+        optional_source_args = ({
+            "scope_policy_enabled": True,
+            "general_source_state": scope_run["source_state"],
+        } if scope_run else {})
+        findings = (ratio_findings
+                    + negative_findings
+                    + a1_check.run_a3_dependent_checks(task, a3_findings, materials)
+                    + a1_check.run_transfer_scope_check(task, materials, **optional_source_args)
+                    + a1_check.run_transfer_materials_check(task, materials, **optional_source_args)
+                    + a1_check.run_transfer_relations_check(task, materials, **optional_source_args)
+                    + a1_check.run_illegal_subcontract_check(
+                        task, materials, a3_findings=a3_findings,
+                        negative_list_findings=negative_findings, **optional_source_args))
+        # BS-P1-11：开放条款仅登记，不参与 hit/miss/undecidable 统计。
+        findings += a1_check.run_open_term_registrations(task, findings)
+        findings, superseded = a1_check.supersede_dependency_findings(findings)
+        pinning.pin_findings(findings, materials)
+        return _persist_reference_group(db, task, reference_plan, findings,
+                                        extra={"superseded": superseded}, scope_run=scope_run)
+    except Exception:
+        if scope_run:
+            _record_optional_scope_check_failure(db, task, scope_run)
+        raise
+
+
+def optional_scope_coverage(db: Session, task: BsTask) -> dict:
+    generation_id = (task.options_snapshot_json or {}).get(reference_snapshots.REVIEW_POINTER)
+    seed_events = [
+        event for event in db.query(BsTaskEvent).filter_by(
+            task_id=task.id, event_type=reference_snapshots.REVIEW_EVENT).all()
+        if (event.payload_json or {}).get("review_run_id") == generation_id
+    ] if isinstance(generation_id, str) and generation_id else []
+    if len(seed_events) != 1:
+        enabled_policy = None
+        for event in seed_events:
+            payload = event.payload_json if isinstance(event.payload_json, dict) else {}
+            candidate = payload.get("optional_source_scope")
+            if isinstance(candidate, dict) and candidate.get("enabled") is True:
+                enabled_policy = candidate
+                break
+        return optional_source_scope.project_scope_coverage(
+            generation_id=generation_id or "", policy=enabled_policy,
+            scope_snapshots=[], current_pointer=None, started_events=[], terminal_events=[])
+
+    seed = seed_events[0].payload_json or {}
+    policy = seed.get("optional_source_scope")
+    scope_events = db.query(BsTaskEvent).filter_by(
+        task_id=task.id, event_type=optional_source_scope.SCOPE_SNAPSHOT_EVENT).all()
+    snapshots = [event.payload_json for event in scope_events
+                 if (event.payload_json or {}).get("generation_id") == generation_id]
+    run_pointers = (task.options_snapshot_json or {}).get(optional_source_scope.CURRENT_RUNS_KEY)
+    current_pointer = run_pointers.get("a1") if isinstance(run_pointers, dict) else None
+    run_events = db.query(BsTaskEvent).filter(
+        BsTaskEvent.task_id == task.id,
+        BsTaskEvent.event_type.in_((optional_source_scope.CHECK_STARTED_EVENT,
+                                    optional_source_scope.CHECK_RECORDED_EVENT,
+                                    optional_source_scope.CHECK_FAILED_EVENT))).all()
+    started = [{"event_type": event.event_type, "payload": event.payload_json or {}}
+               for event in run_events if event.event_type == optional_source_scope.CHECK_STARTED_EVENT
+               and (event.payload_json or {}).get("generation_id") == generation_id]
+    terminals = [{"event_type": event.event_type, "payload": event.payload_json or {}}
+                 for event in run_events if event.event_type in {
+                     optional_source_scope.CHECK_RECORDED_EVENT, optional_source_scope.CHECK_FAILED_EVENT}
+                 and (event.payload_json or {}).get("generation_id") == generation_id]
+    return optional_source_scope.project_scope_coverage(
+        generation_id=generation_id, policy=policy, scope_snapshots=snapshots,
+        current_pointer=current_pointer, started_events=started, terminal_events=terminals)
+
+
+def _scope_coverage_readiness_error(task: BsTask, coverage: dict | None) -> dict | None:
+    """Only a final projection for the current opt-in generation is reportable."""
+    if not isinstance(coverage, dict):
+        return None
+
+    current_generation = (task.options_snapshot_json or {}).get(reference_snapshots.REVIEW_POINTER)
+    if (not isinstance(current_generation, str) or not current_generation
+            or coverage.get("generation_id") != current_generation):
+        state = "unavailable"
+    elif (coverage.get("schema_version") == optional_source_scope.SCOPE_COVERAGE_SCHEMA
+          and coverage.get("policy") == "baseline"
+          and coverage.get("state") == "legacy_unknown"):
+        return None
+    elif (coverage.get("schema_version") != optional_source_scope.SCOPE_COVERAGE_SCHEMA
+          or coverage.get("policy") != optional_source_scope.POLICY_VERSION):
+        state = "unavailable"
+    else:
+        state = coverage.get("state")
+        limitations = coverage.get("limitations")
+        if state == "available" and limitations in (None, []):
+            return None
+        if state == "partial" and isinstance(limitations, list) and limitations and all(
+                isinstance(row, dict) and isinstance(row.get("rule_id"), str)
+                and row.get("counts_as_finding") is False
+                and row.get("counts_as_pass") is False
+                and row.get("blocks_report") is False
+                for row in limitations):
+            return None
+        if state not in {"running", "incomplete", "failed", "unavailable"}:
+            state = "unavailable"
+
+    details = {
+        "running": "规则范围覆盖核查仍在进行，暂不能输出报告",
+        "incomplete": "规则范围覆盖记录不完整，请重新核查后再输出报告",
+        "failed": "规则范围覆盖核查失败，请重新核查后再输出报告",
+        "unavailable": "规则范围覆盖记录不可用或与当前核查代不一致，请重新核查",
+    }
+    return {"code": "scope_coverage_%s" % state, "detail": details[state]}
+
+
+def _begin_optional_scope_check_run(db: Session, task: BsTask, reference_plan: dict) -> dict | None:
+    if reference_plan.get("group_id") != "a1":
+        return None
+    db.rollback()
+    db.refresh(task, with_for_update=True)
+    generation_id = (task.options_snapshot_json or {}).get(reference_snapshots.REVIEW_POINTER)
+    if generation_id != reference_plan.get("review_run_id"):
+        raise knowledge_runs.ReferenceRunSuperseded("核查代已变化，请刷新后重新核查")
+    seeds = [
+        event.payload_json or {}
+        for event in db.query(BsTaskEvent).filter_by(
+            task_id=task.id, event_type=reference_snapshots.REVIEW_EVENT).all()
+        if (event.payload_json or {}).get("review_run_id") == generation_id
+    ]
+    if len(seeds) != 1:
+        raise ValueError("当前核查代的冻结记录缺失或重复")
+    policy = seeds[0].get("optional_source_scope")
+    if not isinstance(policy, dict) or policy.get("enabled") is not True:
+        db.commit()
+        return None
+    if policy.get("policy") != optional_source_scope.POLICY_VERSION:
+        raise ValueError("当前核查代的可选来源策略版本不受支持")
+
+    snapshots = [
+        event.payload_json or {}
+        for event in db.query(BsTaskEvent).filter_by(
+            task_id=task.id, event_type=optional_source_scope.SCOPE_SNAPSHOT_EVENT).all()
+        if (event.payload_json or {}).get("generation_id") == generation_id
+    ]
+    if len(snapshots) != 1:
+        raise ValueError("当前核查代的范围快照缺失或重复")
+    snapshot = snapshots[0]
+    if (snapshot.get("material_fingerprint") != reference_plan.get("material_fingerprint")
+            or snapshot.get("ruleset_fingerprint") != reference_plan.get("rule_fingerprint")):
+        raise knowledge_runs.ReferenceRunSuperseded("核查材料或规则版本已变化，请重新发起核查")
+
+    fingerprint = optional_source_scope.input_fingerprint(
+        generation_id, reference_plan.get("material_fingerprint"),
+        reference_plan.get("rule_fingerprint"), reference_plan.get("dependency_fingerprint"))
+    pointer = {
+        "generation_id": generation_id,
+        "group_id": "a1",
+        "check_run_id": uuid.uuid4().hex,
+        "input_fingerprint": fingerprint,
+    }
+    options = deepcopy(task.options_snapshot_json or {})
+    pointers = options.get(optional_source_scope.CURRENT_RUNS_KEY)
+    pointers = dict(pointers) if isinstance(pointers, dict) else {}
+    pointers["a1"] = pointer
+    options[optional_source_scope.CURRENT_RUNS_KEY] = pointers
+    task.options_snapshot_json = options
+    started = {
+        "schema_version": optional_source_scope.CHECK_EVENT_SCHEMA,
+        **pointer,
+        "policy": policy["policy"],
+        "material_fingerprint": reference_plan["material_fingerprint"],
+        "ruleset_fingerprint": reference_plan["rule_fingerprint"],
+        "dependency_fingerprint": reference_plan["dependency_fingerprint"],
+    }
+    _record_optional_scope_event(db, task, "check.coverage_started", started, commit=False)
+    db.commit()
+    return {
+        **pointer,
+        "policy": policy["policy"],
+        "source_state": snapshot["source"]["source_state"],
+        "source_material_ids": list(snapshot["source"]["source_material_ids"]),
+        "rule_ids": [rule["rule_id"] for rule in snapshot["rules"]],
+        "material_fingerprint": reference_plan["material_fingerprint"],
+        "ruleset_fingerprint": reference_plan["rule_fingerprint"],
+        "dependency_fingerprint": reference_plan["dependency_fingerprint"],
+    }
+
+
+def _assert_optional_scope_check_current(db: Session, task: BsTask, scope_run: dict) -> None:
+    options = task.options_snapshot_json or {}
+    generation_id = options.get(reference_snapshots.REVIEW_POINTER)
+    pointers = options.get(optional_source_scope.CURRENT_RUNS_KEY)
+    pointer = pointers.get(scope_run.get("group_id")) if isinstance(pointers, dict) else None
+    expected_pointer = {key: scope_run.get(key) for key in (
+        "generation_id", "group_id", "check_run_id", "input_fingerprint")}
+    current_fingerprint = optional_source_scope.input_fingerprint(
+        scope_run.get("generation_id"), knowledge_runs.material_fingerprint(db, task),
+        knowledge_runs.rule_fingerprint(),
+        knowledge_runs.dependency_fingerprint(db, scope_run.get("group_id"), task.id))
+    if (generation_id != scope_run.get("generation_id") or pointer != expected_pointer
+            or current_fingerprint != scope_run.get("input_fingerprint")):
+        raise knowledge_runs.ReferenceRunSuperseded("核查输入或运行代已变化，旧运行结果已作废")
+
+
+def _record_optional_scope_check_failure(db: Session, task: BsTask, scope_run: dict) -> None:
+    db.rollback()
+    db.refresh(task, with_for_update=True)
+    try:
+        _assert_optional_scope_check_current(db, task, scope_run)
+    except knowledge_runs.ReferenceRunSuperseded:
+        return
+    payload = {
+        "schema_version": optional_source_scope.CHECK_EVENT_SCHEMA,
+        **{key: scope_run[key] for key in (
+            "generation_id", "group_id", "check_run_id", "input_fingerprint")},
+        "reason_code": "execution_error",
+    }
+    _record_optional_scope_event(db, task, "check.failed", payload, commit=False)
+    db.commit()
 
 
 def initialize_reference_review(db: Session, task: BsTask, *, rule_fingerprint: str = None,
@@ -2851,11 +3323,31 @@ def initialize_reference_review(db: Session, task: BsTask, *, rule_fingerprint: 
         rule_fingerprint=frozen_rule_fingerprint,
         package=knowledge_runs.load_reference_package(as_of=task.baseline_date))
     seed["report_policy"] = frozen_report_policy
+    scope_enabled = optional_source_scope.scope_policy_enabled()
+    seed["optional_source_scope"] = optional_source_scope.freeze_policy(scope_enabled)
     seed["ai_auto_enabled"] = True
     seed["ai_auto_groups"] = list(seed["expected_groups"] if ai_auto_groups is None else ai_auto_groups)
     task.options_snapshot_json = {**(task.options_snapshot_json or {}),
-        reference_snapshots.REVIEW_POINTER: review_id, reference_snapshots.GROUP_POINTERS: {}}
+        reference_snapshots.REVIEW_POINTER: review_id, reference_snapshots.GROUP_POINTERS: {},
+        optional_source_scope.CURRENT_RUNS_KEY: {}}
     add_event(db, task.id, reference_snapshots.REVIEW_EVENT, stage="check", payload=seed, commit=False)
+    if scope_enabled:
+        source_state, source_material_ids, source_sets = _optional_scope_source_facts(db, task)
+        applicable_rules = list(optional_source_scope.OPTIONAL_SOURCE_RULE_IDS) if task.scope_a1 else []
+        if task.scope_a1 and load_config().get("amount_ratio", {}).get("enabled"):
+            applicable_rules.insert(0, "A1-01")
+        snapshot = optional_source_scope.build_scope_snapshot(
+            generation_id=review_id,
+            policy=optional_source_scope.POLICY_VERSION,
+            ruleset_version=task.ruleset_version,
+            ruleset_fingerprint=frozen_rule_fingerprint,
+            material_fingerprint=seed["material_fingerprint"],
+            source_state=source_state,
+            source_material_ids=source_material_ids,
+            rule_ids=applicable_rules,
+            source_sets=source_sets,
+        )
+        _record_optional_scope_event(db, task, "review.scope_snapshot_recorded", snapshot, commit=False)
     return seed
 
 
@@ -2939,18 +3431,22 @@ def _prepare_reference_group(db: Session, task: BsTask, group_id: str) -> dict:
 
 
 def _persist_reference_group(db: Session, task: BsTask, reference_plan: dict,
-                              findings: list, *, extra: dict = None) -> list:
+                              findings: list, *, extra: dict = None,
+                              scope_run: dict | None = None) -> list:
     # 参考查询之前释放业务事务；返回后重新锁读，旧run不得覆盖完成/重跑后的结果。
     db.rollback()
     db.refresh(task, with_for_update=True)
     knowledge_runs.assert_reference_run_current(db, task, reference_plan, active=False)
+    if scope_run:
+        _assert_optional_scope_check_current(db, task, scope_run)
     # 计算尚未发布批次，不应消耗在线依据查询租约；确认输入与并发状态后才开始计时。
     reference_plan["deadline_at"] = (datetime.now(timezone.utc) + timedelta(
         seconds=knowledge_runs.REFERENCE_RUN_LEASE_SECONDS)).isoformat()
     knowledge_runs.activate_reference_run(task, reference_plan)
     add_event(db, task.id, "knowledge.reference_started", stage="check", payload=reference_plan)
     try:
-        return _finish_reference_run(db, task, reference_plan, findings, extra=extra)
+        return _finish_reference_run(db, task, reference_plan, findings, extra=extra,
+                                     scope_run=scope_run)
     except knowledge_runs.ReferenceRunSuperseded:
         raise
     except Exception:
@@ -2966,13 +3462,16 @@ def _persist_reference_group(db: Session, task: BsTask, reference_plan: dict,
 
 
 def _finish_reference_run(db: Session, task: BsTask, reference_plan: dict,
-                           findings: list, *, extra: dict = None) -> list:
+                           findings: list, *, extra: dict = None,
+                           scope_run: dict | None = None) -> list:
     """激活后的接线事务；调用方负责失败时恢复旧批次指针。"""
     reference_run = knowledge_runs.retrieve_reference_run(db, task, reference_plan)
     db.rollback()
     db.refresh(task, with_for_update=True)
     try:
         knowledge_runs.assert_reference_run_current(db, task, reference_plan)
+        if scope_run:
+            _assert_optional_scope_check_current(db, task, scope_run)
     except knowledge_runs.ReferenceRunSuperseded:
         knowledge_runs.restore_reference_run(task, {**reference_plan, "previous_run_id": None})
         add_event(db, task.id, "knowledge.reference_discarded", stage="check",
@@ -2995,6 +3494,32 @@ def _finish_reference_run(db: Session, task: BsTask, reference_plan: dict,
     group_findings = _reference_group_findings(
         db, task.id, reference_plan["group_id"])
     knowledge_runs.link_reference_findings(reference_run, group_findings)
+    if scope_run:
+        finding_ids_by_rule = {
+            rule_id: [finding.id for finding in group_findings
+                      if finding.item_id == rule_id and type(finding.id) is int and finding.id > 0]
+            for rule_id in scope_run["rule_ids"]
+        }
+        coverage_rules = optional_source_scope.build_rule_coverage(
+            generation_id=scope_run["generation_id"],
+            group_id=scope_run["group_id"],
+            check_run_id=scope_run["check_run_id"],
+            input_fingerprint=scope_run["input_fingerprint"],
+            source_state=scope_run["source_state"],
+            source_material_ids=scope_run["source_material_ids"],
+            rule_ids=scope_run["rule_ids"],
+            finding_ids_by_rule=finding_ids_by_rule,
+        )
+        coverage_payload = {
+            "schema_version": optional_source_scope.CHECK_EVENT_SCHEMA,
+            **{key: scope_run[key] for key in (
+                "generation_id", "group_id", "check_run_id", "input_fingerprint")},
+            "policy": scope_run["policy"],
+            "source_state": scope_run["source_state"],
+            "rules": coverage_rules,
+        }
+        _record_optional_scope_event(db, task, "check.rule_coverage_recorded",
+                                     coverage_payload, commit=False)
     rerun = (task.options_snapshot_json or {}).get("rerun") or {}
     if rerun.get("scope") == "items":
         recomputed = set(rerun.get("item_ids") or [])
@@ -3154,9 +3679,22 @@ def ai_checkpoint_client_fingerprint(client) -> str | None:
     values.append(bool(getattr(client, "enable_thinking", False)))
     if getattr(client, "provider", "legacy") == "moma":
         values.append("moma")
+    request_mode = getattr(client, "checkpoint_request_mode", None)
+    if request_mode == "moma-deepseek-v41-thinking-disabled-v1":
+        values.append(request_mode)
     payload = json.dumps(["bs-ai-checkpoint-client-v1", *values], ensure_ascii=False, separators=(",", ":"))
     secret = get_settings().SECRET_KEY.encode("utf-8")
     return hmac.new(secret, payload.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def ai_scope_checkpoint_namespace(run: dict | None) -> str:
+    """Return a stable scope identity; legacy runs are always baseline."""
+    strategy = (run or {}).get("scope_strategy") or {}
+    version = strategy.get("version") if isinstance(strategy, dict) else None
+    enabled = strategy.get("enabled") if isinstance(strategy, dict) else False
+    if not isinstance(version, str) or not version:
+        version = "baseline"
+    return f"scope:{version}:{'enabled' if enabled is True else 'disabled'}"
 
 
 def current_ai_advisory_pending(db: Session, task: BsTask) -> bool:
@@ -3248,7 +3786,9 @@ async def run_linked_ai_advisory(db: Session, task: BsTask, user, *, group_id: s
                     and (data.get("execution_status") == "completed" or ("execution_status" not in data and data.get("proposals")))):
                 return {"proposals": deepcopy(data.get("proposals") or []),
                         "limitations": deepcopy(data.get("limitations") or []),
-                        "execution_status": data.get("execution_status", "completed")}
+                        "execution_status": data.get("execution_status", "completed"),
+                        **({"scope_selection": deepcopy(data["scope_selection"])}
+                           if isinstance(data.get("scope_selection"), dict) else {})}
         if ai_advisory_pending(previous):
             raise AiAdvisoryInProgress("该项辅助核查正在进行，请稍后刷新")
         add_event(reservation_db, task_id, "check.ai_advisory_started", stage="check", payload={
@@ -3535,7 +4075,7 @@ async def run_negative_candidate_ai_advisory(db: Session, task: BsTask, user, *,
                 material_loader=_rule_materials, max_batches=max_batches, on_usage=collect_usage,
                 before_batch=renew, save_result=save, load_checkpoint=load_checkpoint,
                 save_checkpoint=save_checkpoint, on_batch_progress=batch_progress,
-                checkpoint_namespace=f"{validation_version}:{model_code}:{fingerprint or request_id}",
+                checkpoint_namespace=f"{validation_version}:{model_code}:{ai_scope_checkpoint_namespace(run)}:{fingerprint or request_id}",
                 diagnostic_context={'job_id': background_job_id, 'request_id': request_id,
                                     'model_code': model_code})
         if usage_record_failed:
@@ -3669,7 +4209,7 @@ async def run_linked_batch_ai_advisory(db: Session, task: BsTask, user, *, group
                          or ("execution_status" not in data and data.get("proposals")))):
                 cached[finding_id] = {key: deepcopy(data[key]) for key in (
                     "finding_id", "proposals", "limitations", "execution_status", "batches_total", "batches_completed", "reviewable_partial", "reviewable_not_run",
-                    "model_proposal_count", "rejection_reasons", "failure_categories") if key in data}
+                    "model_proposal_count", "rejection_reasons", "failure_categories", "scope_selection") if key in data}
                 cached[finding_id].setdefault("execution_status", "completed")
             elif ai_advisory_pending(previous):
                 raise AiAdvisoryInProgress("部分核查项的辅助核查正在进行，请稍后刷新")
@@ -3772,7 +4312,7 @@ async def run_linked_batch_ai_advisory(db: Session, task: BsTask, user, *, group
                 user=user, client=actual_client,
                 material_loader=_rule_materials, on_usage=collect_usage, save_result=save, before_batch=renew,
                 load_checkpoint=load_checkpoint, save_checkpoint=save_checkpoint, on_batch_progress=batch_progress,
-                checkpoint_namespace=f"{validation_version}:{model_code}:{client_fingerprint or request_id}",
+                checkpoint_namespace=f"{validation_version}:{model_code}:{ai_scope_checkpoint_namespace(run)}:{client_fingerprint or request_id}",
                 diagnostic_context={'job_id': background_job_id, 'request_id': request_id,
                                     'model_code': model_code})
         if usage_record_failed:
@@ -4621,6 +5161,7 @@ def _review_version_snapshot(db: Session, task: BsTask, *, trigger: str) -> dict
         "discrepancy": finding.discrepancy_json,
     } for finding in findings]
     ruleset_manifest = _frozen_ruleset_manifest(task)
+    scope_coverage = optional_scope_coverage(db, task)
     # 旧代规则与当前代码不一致时不能用新目录重建旧报告；只冻结原始问题和人工回执。
     stale_rules = bool(trigger != "completed" and task.ruleset_version != ruleset.current_version())
     return _json_safe({
@@ -4654,9 +5195,12 @@ def _review_version_snapshot(db: Session, task: BsTask, *, trigger: str) -> dict
           .order_by(BsMaterialConfirmation.id).all()],
         "reference_run": knowledge_runs.get_reference_run(db, task),
         "reference_snapshot": reference_snapshots.get_reference_snapshot(db, task),
+        "scope_coverage": scope_coverage,
         "ai_advisories": ai_advisory_snapshots.collect_current_advisories(db, task),
-        "report": None if stale_rules else reporting.build_report(db, task),
-        "opinion": None if stale_rules else reporting.build_opinion(db, task),
+        "report": None if stale_rules else reporting.build_report(
+            db, task, scope_coverage=scope_coverage),
+        "opinion": None if stale_rules else reporting.build_opinion(
+            db, task, scope_coverage=scope_coverage),
         **({"report_unavailable_reason": "ruleset_version_mismatch" if task.ruleset_version
             else "ruleset_version_unknown"} if stale_rules else {}),
     })
@@ -5203,8 +5747,13 @@ def review_output_readiness(db: Session, task: BsTask) -> dict:
                 "pending_groups": pending, "reading_coverage": reading,
                 "detail": ("参考依据仍在查询，" if query_pending else "")
                           + "以下核查分组尚未完成：%s。请完成后再生成报告" % labels}
+    scope_coverage = optional_scope_coverage(db, task)
+    scope_error = _scope_coverage_readiness_error(task, scope_coverage)
+    if scope_error:
+        return {"ok": False, **scope_error, "missing_groups": [], "pending_groups": [],
+                "reading_coverage": reading, "scope_coverage": scope_coverage}
     return {"ok": True, "missing_groups": [], "pending_groups": [],
-            "reading_coverage": reading}
+            "reading_coverage": reading, "scope_coverage": scope_coverage}
 
 
 def supplement_active(task: BsTask) -> bool:
@@ -5331,7 +5880,7 @@ def record_supplement_failure(db: Session, task: BsTask, result: dict) -> None:
         _record_supplement_failure(db, task, result)
 
 
-def report_output_readiness(db: Session, task: BsTask, *, require_reading_complete: bool = False) -> dict:
+def _report_output_readiness_base(db: Session, task: BsTask, *, require_reading_complete: bool = False) -> dict:
     """报告读取的只读判据：允许已启动任务先查看中间结果。
 
     这条判据刻意不替代 ``review_output_readiness``：后者仍用于收口和生成
@@ -5454,6 +6003,18 @@ def report_output_readiness(db: Session, task: BsTask, *, require_reading_comple
         "limitations": coverage["limitations"],
         "reading_coverage": reading,
     }
+
+
+def report_output_readiness(db: Session, task: BsTask, *, require_reading_complete: bool = False) -> dict:
+    result = _report_output_readiness_base(
+        db, task, require_reading_complete=require_reading_complete)
+    scope_coverage = optional_scope_coverage(db, task)
+    result["scope_coverage"] = scope_coverage
+    if result.get("ok"):
+        scope_error = _scope_coverage_readiness_error(task, scope_coverage)
+        if scope_error:
+            result.update({"ok": False, **scope_error})
+    return result
 
 
 def complete_review(db: Session, task: BsTask) -> dict:
@@ -6742,6 +7303,7 @@ EVENT_LABELS = {
     "material.parse_started": "开始读取材料",
     "material.supplement_linked": "材料已关联补件范围",
     "knowledge.review_started": "本轮核查依据已冻结",
+    "review.scope_snapshot_recorded": "本轮规则来源范围已冻结",
     "knowledge.reference_started": "正在查询本组参考依据",
     "knowledge.reference_completed": "本组参考依据查询结束",
     "knowledge.reference_discarded": "旧批次参考结果已作废",
@@ -6749,6 +7311,8 @@ EVENT_LABELS = {
     "knowledge.reference_invalidated": "上游核查已更新，需要重算第二步",
     "check.semantic_started": "正在比对合同条款",
     "check.semantic_progress": "合同核查进展",
+    "check.coverage_started": "规则覆盖核查已开始",
+    "check.rule_coverage_recorded": "规则覆盖结果已记录",
     "check.ai_background_started": "后台 AI 核查已启动",
     "check.ai_background_progress": "后台 AI 核查进展",
     "check.ai_background_completed": "后台 AI 核查已结束",
@@ -6827,7 +7391,7 @@ def _event_message(ev: BsTaskEvent) -> str | None:
         if type(index) is not int or type(total) is not int or not (1 <= index <= total):
             return None
         group = "负面清单核查" if p.get("category") == "negative_candidates" else (reference_snapshots.CHECK_GROUPS.get(p.get("group_id")) or {}).get("label", "核查")
-        status = {"processing": "正在调用模型", "completed": "批次结果已保存", "reused": "已复用保存的批次结果", "partial": "部分建议需人工核实", "failed": "模型调用未完成，请重试", "incomplete": "批次未完成，需重试或人工核实"}.get(p.get("status"))
+        status = {"processing": "正在调用模型", "timeout_split": "模型响应超时，正在拆分后继续核查", "invalid_retry": "模型返回格式无效，正在重试该部分", "completed": "批次结果已保存", "reused": "已复用保存的批次结果", "partial": "部分建议需人工核实", "failed": "模型调用未完成，请重试", "incomplete": "批次未完成，需重试或人工核实"}.get(p.get("status"))
         from ..request_errors import ERROR_MESSAGES
         categories = p.get("failure_categories") or []
         details = [ERROR_MESSAGES[category] for category in ERROR_MESSAGES if category in categories]
@@ -6982,15 +7546,20 @@ def _event_message(ev: BsTaskEvent) -> str | None:
 
 def event_dto(ev: BsTaskEvent) -> dict:
     """时间线仅输出进度；参考原文和模型建议须经独立接口重新校验授权。"""
-    sensitive = {reference_snapshots.REVIEW_EVENT, "knowledge.reference_started", knowledge_runs.RUN_EVENT,
+    raw = ev.payload_json or {}
+    sensitive = {reference_snapshots.REVIEW_EVENT, optional_source_scope.SCOPE_SNAPSHOT_EVENT,
+                 optional_source_scope.CHECK_STARTED_EVENT, optional_source_scope.CHECK_RECORDED_EVENT,
+                 "knowledge.reference_started", knowledge_runs.RUN_EVENT,
                  "check.ai_background_started", "check.ai_background_progress",
                  "check.ai_background_completed", "check.ai_background_failed",
                  "check.ai_advisory_started", "check.ai_advisory_completed",
                  "check.ai_advisory_failed", "check.ai_batch_checkpoint", "check.ai_batch_progress",
                  "check.negative_candidates_started", "check.negative_candidates_finished",
                  "check.negative_candidates_failed", "check.negative_candidate_checkpoint"}
-    payload = {} if ev.event_type in sensitive else ev.payload_json or {}
-    raw = ev.payload_json or {}
+    scope_failure = (ev.event_type == optional_source_scope.CHECK_FAILED_EVENT
+                     and isinstance(raw, dict)
+                     and raw.get("schema_version") == optional_source_scope.CHECK_EVENT_SCHEMA)
+    payload = {} if ev.event_type in sensitive or scope_failure else raw
     progress_key = None
     if ev.event_type in {"check.ai_advisory_started", "check.ai_advisory_completed", "check.ai_advisory_failed",
                          "check.negative_candidates_started", "check.negative_candidates_finished",

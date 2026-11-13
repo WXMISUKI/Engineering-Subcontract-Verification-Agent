@@ -12,7 +12,7 @@ from openai import APIConnectionError
 from ..request_errors import classify_request_error
 
 from .ai_evidence import MODEL_EVIDENCE_INSTRUCTIONS, model_scope_description, validate_ai_proposal
-from .semantic_review import InputBudgetExceeded, InvalidModelResponse, MAX_REQUEST_JSON_CHARS, request_json
+from .semantic_review import InputBudgetExceeded, InvalidModelResponse, MAX_REQUEST_JSON_CHARS, request_json, _safe_diagnostic_context
 
 _MAX_SEGMENT_CHARS = 16000
 _MAX_BATCH_MATERIALS = 12
@@ -20,7 +20,7 @@ _MAX_BATCH_MATERIALS = 12
 _MAX_BATCH_ENTRIES = 32
 _TABLE_NOISE = re.compile(r"(?<![A-Za-z])(?:\\{0,2}hline[\s]*){5,}")
 _EMPTY_TABLE_ROWS = re.compile(r"(?m)^(?:[ \t]*\|[ \t|]*\|[ \t]*(?:\r?\n|$)){5,}")
-CHECKPOINT_SCHEMA_VERSION = "bs-ai-batch-v18"
+CHECKPOINT_SCHEMA_VERSION = "bs-ai-batch-v21"
 logger = logging.getLogger(__name__)
 _MAX_RETRY_AFTER_SECONDS = 15.0
 
@@ -72,8 +72,13 @@ class InvalidBatchResponse(ValueError):
     """模型响应未满足批次输出契约。"""
 
 
+class RecoveryProgressError(Exception):
+    """进度回执未能保存，原异常必须传回编排器。"""
+
+
 async def _request_review_json(client, system, payload, *, on_usage=None, max_attempts=2,
-                               split_on_timeout=False, diagnostic_context=None, request_budget=None):
+                               split_on_timeout=False, diagnostic_context=None, request_budget=None,
+                               retry_invalid_only=False, reserve_requests=0, on_recovery=None):
     """有界重试可恢复错误，不记录材料与模型原文。"""
     chars = len(json.dumps(payload, ensure_ascii=False))
     entries = len(payload.get("items") or [])
@@ -87,7 +92,12 @@ async def _request_review_json(client, system, payload, *, on_usage=None, max_at
                        request_budget.sent_requests if request_budget is not None else attempt + 1}
             response = await request_json(client, system, payload, on_usage=on_usage,
                                           diagnostic_context=context, **request_options)
-            if not isinstance(response.get("proposals"), list) or len(response["proposals"]) > 200:
+            proposals = response.get("proposals")
+            if not isinstance(proposals, list) or len(proposals) > 200:
+                reason = 'proposals_not_list' if not isinstance(proposals, list) else 'proposals_limit_exceeded'
+                safe_context = _safe_diagnostic_context(payload, context)
+                fields = ' '.join(f'{key}={value}' for key, value in safe_context.items() if value is not None)
+                logger.warning('AI batch response invalid %s reason=%s', fields, reason)
                 raise InvalidBatchResponse("模型返回格式无效")
             logger.info("AI batch request completed task=%s chars=%s entries=%s attempt=%s elapsed_ms=%s",
                         payload.get("task_id"), chars, entries, attempt + 1, int((time.monotonic() - started) * 1000))
@@ -101,9 +111,18 @@ async def _request_review_json(client, system, payload, *, on_usage=None, max_at
             transient = category in {'timeout', 'rate_limit', 'service_error', 'invalid_response'} or isinstance(exc, APIConnectionError)
             if not transient or attempt + 1 == max_attempts or (category == "timeout" and split_on_timeout):
                 raise
+            if retry_invalid_only and category != 'invalid_response':
+                raise
+            if request_budget is not None and request_budget.remaining_requests <= reserve_requests:
+                raise
             delay = _retry_delay(exc, request_budget)
             if delay is None:
                 raise
+            if on_recovery and retry_invalid_only and category == 'invalid_response':
+                try:
+                    on_recovery('invalid_retry')
+                except Exception as exc:
+                    raise RecoveryProgressError() from exc
             await _sleep_before_retry(delay)
 
 
@@ -135,8 +154,10 @@ def to_wire_batch(batch: dict) -> dict:
                 references.append(reference)
             ref_indexes.append(reference_keys[ref_key])
         items.append({key: value for key, value in entry.items()
-                      if key not in {"material", "references", "incomplete_material_scope"}} | {
+                      if key not in {"material", "references", "incomplete_material_scope",
+                                     "scope_selection_fingerprint"}} | {
             "材料范围说明": model_scope_description(entry.get("incomplete_material_scope", False)),
+            "allowed_reference_ids": [reference["reference_id"] for reference in entry["references"]],
             "material_index": material_keys[material_key], "reference_indexes": ref_indexes})
     return {key: value for key, value in batch.items() if key != "items"} | {
         "materials": materials, "references": references, "items": items}
@@ -210,6 +231,9 @@ def plan_review_batches(items: list[dict], *, max_chars: int = MAX_REQUEST_JSON_
                              "kind": item.get("kind"),
                              "item_label": item.get("item_label") or item["item_id"],
                              "incomplete_material_scope": item.get("incomplete_material_scope", False) or removed_noise,
+                             **({"scope_selection_fingerprint": item["scope_selection"]["input_fingerprint"]}
+                                if isinstance(item.get("scope_selection"), dict)
+                                and isinstance(item["scope_selection"].get("input_fingerprint"), str) else {}),
                              "references": [{"reference_id": ref["reference_id"], "text": ref["text"]} for ref in references],
                              "limitations": deepcopy(item.get("limitations") or []) + (
                                  ["材料含重复格式噪声，相关页面需结合原件核实"] if removed_noise else []),
@@ -263,7 +287,8 @@ def plan_review_batches(items: list[dict], *, max_chars: int = MAX_REQUEST_JSON_
 
 
 async def execute_review_batch(*, client, batch: dict, on_usage=None, max_attempts=2,
-                               split_on_timeout=False, diagnostic_context=None, request_budget=None) -> list[dict]:
+                               split_on_timeout=False, diagnostic_context=None, request_budget=None,
+                               retry_invalid_only=False, reserve_requests=0, on_recovery=None) -> list[dict]:
     """一次调用后逐结论校验双侧引用；结果仅供人工复核，不负责保存。"""
     entries = batch.get("items") or []
     grouped = {}
@@ -292,6 +317,7 @@ async def execute_review_batch(*, client, batch: dict, on_usage=None, max_attemp
             "逐项核查输入，在有需要时提出待人工核实的建议，不推断缺失事实，不输出无风险结论。"
             "每项只能引用该项输入的材料及依据，引用必须是同一页的连续原文。"
             "每项的 material_index 和 reference_indexes 指向本次输入中的材料和依据。"
+            "每项 allowed_reference_ids 是该项唯一允许引用的依据编号；rule_evidence 的 reference_id 必须从本项列表逐字复制，依据 quote 必须从该编号对应的 text 逐字复制。"
             "指定主体名称时每条材料引文必须包含该名称。"
             "仅提供文本时不能根据文字缺少图形而断言网络图缺失，须提示查看原页。"
             + candidate_instruction + MODEL_EVIDENCE_INSTRUCTIONS +
@@ -303,10 +329,13 @@ async def execute_review_batch(*, client, batch: dict, on_usage=None, max_attemp
             '输入为 candidate_id 的项须原样返回 candidate_id 且不得返回 finding_id；'
             '输入为 finding_id 的项须原样返回 finding_id 且不得返回 candidate_id。',
             to_wire_batch(batch), on_usage=on_usage, max_attempts=max_attempts,
-            split_on_timeout=split_on_timeout, diagnostic_context=diagnostic_context, request_budget=request_budget)
+            split_on_timeout=split_on_timeout, diagnostic_context=diagnostic_context, request_budget=request_budget,
+            retry_invalid_only=retry_invalid_only, reserve_requests=reserve_requests, on_recovery=on_recovery)
         proposals = response.get("proposals")
         if not isinstance(proposals, list) or len(proposals) > 200:
             raise InvalidBatchResponse("模型返回格式无效")
+    except RecoveryProgressError as exc:
+        raise exc.__cause__
     except Exception as exc:
         if isinstance(exc, InputBudgetExceeded):
             category = "input_budget"
@@ -357,7 +386,8 @@ async def execute_review_batch(*, client, batch: dict, on_usage=None, max_attemp
             incomplete_material_scope=first.get("incomplete_material_scope", False),
             kind=first.get("kind"))
         if validation.accepted:
-            results[key]["proposals"].append(validation.proposal)
+            if validation.proposal not in results[key]["proposals"]:
+                results[key]["proposals"].append(validation.proposal)
         else:
             results[key]["execution_status"] = "partial"
             results[key]["rejection_reasons"].append(validation.reason)

@@ -44,7 +44,7 @@ def test_invalid_unapproved_or_conflicting_policies_are_rejected(mutation):
 
 def test_default_policy_has_three_confirmed_certificates_and_no_basic_pass():
     policy = report_policy.load_current_policy()
-    assert {r["item_id"] for r in policy["rules"]} == {"RC-A02", "RC-A03", "RC-A04"}
+    assert {r["item_id"] for r in policy["rules"]} == {"RC-A02", "RC-A03", "RC-A04", "A2-05"}
     assert all(r["verdict"] != "基本符合" for r in policy["rules"])
 
 
@@ -131,6 +131,49 @@ def test_actual_report_build_uses_review_seed_policy_after_current_changes(db_se
     assert len(report["business_document"]["sections"]) == 5
 
 
+def test_selector_generation_does_not_change_fixed_rule_or_report_conclusion(db_session, monkeypatch):
+    from app.plus.blockchain_supervision import (
+        ai_scope_selection, optional_source_scope, reporting, service,
+    )
+    from app.plus.blockchain_supervision.models import BsFinding, BsTask
+
+    task = BsTask(conversation_id=102, title="选页策略报告隔离", created_by=2,
+                  created_by_type="tester", options_snapshot_json={}, scope_a1=True)
+    db_session.add(task)
+    db_session.flush()
+    finding = BsFinding(task_id=task.id, item_id="T15-04", kind="transfer_scope",
+                        status="miss", message="固定规则结果")
+    db_session.add(finding)
+
+    monkeypatch.delenv(optional_source_scope.SCOPE_POLICY_ENV, raising=False)
+    monkeypatch.setenv(ai_scope_selection.SCOPE_SELECTOR_ENV, "false")
+    baseline_seed = service.initialize_reference_review(db_session, task)
+    baseline_report = reporting.build_report(db_session, task)
+    baseline_finding = (finding.status, finding.message, finding.evidence_json)
+
+    monkeypatch.setenv(ai_scope_selection.SCOPE_SELECTOR_ENV, "true")
+    candidate_seed = service.initialize_reference_review(db_session, task)
+    candidate_report = reporting.build_report(db_session, task)
+    candidate_finding = (finding.status, finding.message, finding.evidence_json)
+
+    assert baseline_seed["scope_strategy"] == {"enabled": False, "version": "baseline"}
+    assert candidate_seed["scope_strategy"] == {
+        "enabled": True, "version": ai_scope_selection.SCOPE_SELECTOR_STRATEGY,
+    }
+    assert candidate_finding == baseline_finding
+    assert candidate_report["summary"]["counts"] == baseline_report["summary"]["counts"]
+    assert candidate_report["advisory_conclusion"] == baseline_report["advisory_conclusion"]
+    assert [
+        (item.get("item_id"), item.get("status"))
+        for section in candidate_report["sections"]
+        for item in section.get("items", [])
+    ] == [
+        (item.get("item_id"), item.get("status"))
+        for section in baseline_report["sections"]
+        for item in section.get("items", [])
+    ]
+
+
 def test_evidence_bundle_keeps_policy_version_and_activation_audit(db_session, monkeypatch):
     from io import BytesIO
     from zipfile import ZipFile
@@ -150,12 +193,24 @@ def test_evidence_bundle_keeps_policy_version_and_activation_audit(db_session, m
         expected_previous_sha256=seed["report_policy"]["sha256"], expected_target_sha256=target["sha256"],
         operator_id=1, operator_type="tester")
     db_session.flush()
+    scope_coverage = {
+        "schema_version": "bs-scope-coverage.v1",
+        "generation_id": seed["review_run_id"],
+        "policy": "optional-source-scope.v1",
+        "state": "partial",
+        "limitations": [{"rule_id": "T15-01", "source_state": "absent"}],
+    }
+    monkeypatch.setattr(service, "optional_scope_coverage", lambda *_args: scope_coverage)
     raw, _digest, _time = export.evidence_bundle_bytes(db_session, task)
     with ZipFile(BytesIO(raw)) as bundle:
         report = json.loads(bundle.read("report.json"))
         opinion = json.loads(bundle.read("opinion.json"))
         events = json.loads(bundle.read("events.json"))
     assert report["reference_snapshot"]["report_policy"]["sha256"] == target["sha256"]
+    assert report["scope_coverage"] == scope_coverage
+    assert report["scope_limitations"]
+    assert opinion["opinion"]["scope_coverage"] == scope_coverage
+    assert opinion["opinion"]["scope_limitations"] == report["scope_limitations"]
     assert target["sha256"] in json.dumps(opinion, ensure_ascii=False)
     assert target["sha256"] in json.dumps(events, ensure_ascii=False)
 

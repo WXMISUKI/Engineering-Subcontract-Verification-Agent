@@ -139,6 +139,10 @@ def ensure_standalone_schema(engine) -> dict:
         renamed_usage = True
 
     _add_columns(engine, "bs_finding", {"ai_adjudication_json": "JSON NULL"})
+    _add_columns(engine, "bs_material", {
+        "general_source_set_id": "VARCHAR(36) NULL",
+        "general_source_set_version": "INTEGER NULL",
+    })
     _add_columns(engine, "bs_task", {
         "started_at": "DATETIME NULL",
         "completed_at": "DATETIME NULL",

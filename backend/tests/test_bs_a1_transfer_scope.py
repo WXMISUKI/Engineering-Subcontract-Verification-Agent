@@ -17,6 +17,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.plus.blockchain_supervision import a1_check
+from app.plus.blockchain_supervision.ai_scope_selection import SCOPE_SELECTOR_ENV
 from app.plus.blockchain_supervision.models import (
     STATUS_HIT, STATUS_MISS, STATUS_UNDECIDABLE,
 )
@@ -405,3 +406,20 @@ def test_transfer_scope_returns_two_findings_shape():
     assert {f.kind for f in findings} == {"transfer_scope"}
     # 顺序固定 T15-01 → T15-02
     assert [f.item_id for f in findings] == ["T15-01", "T15-02"]
+
+
+def test_server_scope_flag_does_not_change_deterministic_transfer_findings(monkeypatch):
+    def snapshot():
+        findings = a1_check.run_transfer_scope_check(_task(), _t15_01_hit_mats())
+        return [
+            (finding.item_id, finding.status, finding.material_id, finding.page,
+             finding.quote, finding.message, finding.source, finding.evidence_json, finding.missing_json)
+            for finding in findings
+        ]
+
+    monkeypatch.setenv(SCOPE_SELECTOR_ENV, "false")
+    baseline = snapshot()
+    monkeypatch.setenv(SCOPE_SELECTOR_ENV, "true")
+    candidate = snapshot()
+
+    assert candidate == baseline

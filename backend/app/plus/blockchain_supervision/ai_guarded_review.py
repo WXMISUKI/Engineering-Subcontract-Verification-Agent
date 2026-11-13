@@ -27,6 +27,19 @@ def _batch_checkpointable(results):
     return bool(results) and all(row.get("execution_status") in {"completed", "partial"} for row in results)
 
 
+def _frozen_review_finding(finding):
+    """Rebuild the finding from the original fixed input when a verified AI projection exists."""
+    keys = ("id", "task_id", "subject_id", "material_id", "page", "item_id", "kind", "status", "message",
+            "quote", "location_mode", "evidence_json")
+    required_columns = (column.name for column in BsFinding.__table__.columns
+                        if column.name not in {"created_at", "review_json", "discrepancy_json"})
+    if all(hasattr(finding, name) for name in required_columns):
+        row = knowledge_runs.finding_input_row(finding)
+    else:
+        row = {key: deepcopy(getattr(finding, key, None)) for key in keys}
+    return SimpleNamespace(**{key: deepcopy(row.get(key)) for key in keys})
+
+
 async def _run_bounded_batches(batches, execute):
     """同一进程事件循环最多同时执行两批，结果按原计划顺序返回。"""
     loop = asyncio.get_running_loop()
@@ -105,8 +118,22 @@ def _merge_batch_diagnostics(result, part):
     result["rejection_reasons"] = list(dict.fromkeys(result["rejection_reasons"] + reasons))
 
 
-async def _execute_with_timeout_recovery(batch, *, client, on_usage=None, renew=None, diagnostic_context=None):
-    """可拆批首次超时后拆成两半，各调用一次；不虚构完整材料范围。"""
+def _append_distinct_proposals(result, proposals):
+    """只去除内容和证据完全相同的建议，保留不同事实与来源。"""
+    for proposal in proposals or []:
+        if proposal not in result["proposals"]:
+            result["proposals"].append(proposal)
+
+
+def _review_batch_checkpoint_key(namespace, batch):
+    payload = {"namespace": namespace, "validation_version": CHECKPOINT_SCHEMA_VERSION, "batch": batch}
+    return hashlib.sha256(json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")).hexdigest()
+
+
+async def _execute_with_timeout_recovery(batch, *, client, on_usage=None, renew=None, diagnostic_context=None, on_recovery=None):
+    """首次超时拆批，格式失败可在共享预算内重试一次。"""
     entries = batch.get("items") or []
     from .ai_review_batch import BatchRequestBudget
     request_budget = BatchRequestBudget()
@@ -116,13 +143,16 @@ async def _execute_with_timeout_recovery(batch, *, client, on_usage=None, renew=
     if (len(entries) < 2 or not initial or any(part.get("execution_status") != "failed"
             or part.get("failure_category") != "timeout" for part in initial)):
         return initial
+    if on_recovery:
+        on_recovery('timeout_split')
     halves = (entries[:len(entries) // 2], entries[len(entries) // 2:])
     merged = {}
     for index, half in enumerate(halves, 1):
         if renew:
             renew()
         child = {**batch, "items": [{**deepcopy(entry), "incomplete_material_scope": True} for entry in half]}
-        parts = await execute_review_batch(client=client, batch=child, on_usage=on_usage, max_attempts=1,
+        parts = await execute_review_batch(client=client, batch=child, on_usage=on_usage, max_attempts=2,
+            retry_invalid_only=True, reserve_requests=len(halves) - index, on_recovery=on_recovery,
             diagnostic_context={**(diagnostic_context or {}), "recovery_part": f"split_{index}"}, request_budget=request_budget)
         for part in parts:
             identity = ("finding_id", part.get("finding_id")) if "finding_id" in part else ("candidate_id", part.get("candidate_id"))
@@ -130,7 +160,7 @@ async def _execute_with_timeout_recovery(batch, *, client, on_usage=None, renew=
                 merged[identity] = deepcopy(part)
                 continue
             current = merged[identity]
-            current["proposals"].extend(part.get("proposals") or [])
+            _append_distinct_proposals(current, part.get("proposals"))
             current["limitations"] = list(dict.fromkeys(current.get("limitations", []) + part.get("limitations", [])))
             _merge_batch_diagnostics(current, part)
             current["assessment_incomplete"] = bool(current.get("assessment_incomplete") or part.get("assessment_incomplete"))
@@ -175,8 +205,7 @@ async def run_guarded_review(*, session_factory, task_id, group_id, finding_id, 
         finding = db.get(BsFinding, finding_id)
         if finding is None or finding.task_id != task_id:
             raise AiContextChanged("核查结论不存在")
-        frozen_finding = SimpleNamespace(**{key: getattr(finding, key) for key in
-            ("id", "task_id", "subject_id", "material_id", "page", "item_id", "kind", "evidence_json")})
+        frozen_finding = _frozen_review_finding(finding)
         frozen_materials = [SimpleNamespace(**{key: deepcopy(getattr(material, key)) for key in
             ("id", "task_id", "subject_id", "parse_state", "pages_json", "degradations_json", "role", "file_name",
              "container_material_id", "container_entry_path")})
@@ -251,9 +280,7 @@ async def run_guarded_negative_candidates(*, session_factory, task_id, user, cli
                 raise AiContextChanged("模型调用前核查输入或授权已变化")
         if before_batch:
             before_batch(frozen_run)
-        batch_key = hashlib.sha256(json.dumps({"namespace": checkpoint_namespace,
-            "validation_version": CHECKPOINT_SCHEMA_VERSION, "batch": batch},
-            ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+        batch_key = _review_batch_checkpoint_key(checkpoint_namespace, batch)
         parts = load_checkpoint(frozen_run, batch_key) if load_checkpoint else None
         fresh = parts is None
         if fresh:
@@ -261,6 +288,7 @@ async def run_guarded_negative_candidates(*, session_factory, task_id, user, cli
                 on_batch_progress(frozen_run, batch_index, len(plan["batches"]), "processing")
             parts = await _execute_with_timeout_recovery(batch, client=client, on_usage=on_usage,
                 renew=(lambda: before_batch(frozen_run)) if before_batch else None,
+                on_recovery=(lambda status: on_batch_progress(frozen_run, batch_index, len(plan["batches"]), status)) if on_batch_progress else None,
                 diagnostic_context={**(diagnostic_context or {}), "group_id": "a1",
                     "batch_index": batch_index, "batch_total": len(plan["batches"])})
         expected = {entry["candidate_id"] for entry in batch["items"]}
@@ -287,7 +315,7 @@ async def run_guarded_negative_candidates(*, session_factory, task_id, user, cli
     for parts in await _run_bounded_batches(plan["batches"], execute_one):
         for part in parts:
             result = results[part["candidate_id"]]
-            result["proposals"].extend(part["proposals"])
+            _append_distinct_proposals(result, part["proposals"])
             result["limitations"].extend(part["limitations"])
             if part.get("failure_category"):
                 result.setdefault("failure_categories", [])
@@ -364,15 +392,23 @@ async def run_guarded_batch_review(*, session_factory, task_id, group_id, findin
         frozen_run = deepcopy(run)
         items = []
         for finding in findings:
-            context = build_review_context(finding=finding, materials=materials, run=frozen_run,
+            frozen_finding = _frozen_review_finding(finding)
+            context = build_review_context(finding=frozen_finding, materials=materials, run=frozen_run,
                                            subject_names_by_id=names)
+            scope_selection = context.get("scope_selection")
+            audit_metadata = ({"scope_selection": deepcopy(scope_selection),
+                               "scope_selection_fingerprint": scope_selection["input_fingerprint"]}
+                              if isinstance(scope_selection, dict)
+                              and isinstance(scope_selection.get("input_fingerprint"), str) else {})
             items.append({"finding_id": finding.id, "task_id": task_id, "item_id": finding.item_id,
-                          "kind": finding.kind, "subject_id": finding.subject_id, **context})
+                          "kind": finding.kind, "subject_id": finding.subject_id, **context, **audit_metadata})
     plan = plan_review_batches(items)
     plan["batches"] = [batch for batch in plan["batches"]
                        if any(entry["finding_id"] in target_ids for entry in batch["items"])]
     results = {item["finding_id"]: {"finding_id": item["finding_id"], "proposals": [],
         "limitations": list(item["limitations"]), "execution_status": "not_run",
+        **({"scope_selection": deepcopy(item["scope_selection"])}
+           if isinstance(item.get("scope_selection"), dict) else {}),
         "reviewable_not_run": (
             item.get("material_unavailable") is True
             and item.get("materials") == []
@@ -410,6 +446,7 @@ async def run_guarded_batch_review(*, session_factory, task_id, group_id, findin
                 on_batch_progress(frozen_run, batch_index, len(plan["batches"]), "processing")
             batch_result = await _execute_with_timeout_recovery(batch, client=client, on_usage=on_usage,
                 renew=(lambda: before_batch(frozen_run)) if before_batch else None,
+                on_recovery=(lambda status: on_batch_progress(frozen_run, batch_index, len(plan["batches"]), status)) if on_batch_progress else None,
                 diagnostic_context={**(diagnostic_context or {}), "group_id": group_id,
                     "batch_index": batch_index, "batch_total": len(plan["batches"])})
         expected_ids = {entry["finding_id"] for entry in batch["items"]}
@@ -441,7 +478,7 @@ async def run_guarded_batch_review(*, session_factory, task_id, group_id, findin
             if part["finding_id"] not in target_ids:
                 continue
             result = results[part["finding_id"]]
-            result["proposals"].extend(part["proposals"])
+            _append_distinct_proposals(result, part["proposals"])
             result["limitations"].extend(part["limitations"])
             if part.get("failure_category"):
                 result.setdefault("failure_categories", [])

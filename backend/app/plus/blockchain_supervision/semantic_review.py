@@ -170,16 +170,18 @@ async def request_json(client, system, payload, *, on_usage=None, diagnostic_con
             ], **usage_kwargs)
     except Exception as exc:
         provider_request_id, retry_after = _provider_error_headers(exc)
+        code = getattr(exc, 'code', None)
+        provider_error_code = code if isinstance(code, str) and code == 'AccessDenied.Unpurchased' else None
         logger.warning(
             'AI model request failed model_request_id=%s %s model=%s chars=%s entries=%s '
             'timeout_seconds=%s client_timeout_seconds=%s elapsed_ms=%s exception_type=%s timeout_phase=%s status_code=%s '
             'input_tokens=%s output_tokens=%s total_tokens=%s '
-            'provider_request_id=%s retry_after_seconds=%s',
+            'provider_request_id=%s retry_after_seconds=%s provider_error_code=%s',
             request_id, context_fields, _model_request_label(client), len(body), _payload_entry_count(payload),
             effective_timeout, _client_timeout_seconds(client), int((time.monotonic() - started) * 1000),
             type(exc).__name__, _timeout_phase(exc, application_deadline=timeout_scope.expired()),
             getattr(exc, 'status_code', None), usage.get('input_tokens'), usage.get('output_tokens'),
-            usage.get('total_tokens'), provider_request_id, retry_after,
+            usage.get('total_tokens'), provider_request_id, retry_after, provider_error_code,
         )
         raise
     logger.info(
@@ -190,9 +192,17 @@ async def request_json(client, system, payload, *, on_usage=None, diagnostic_con
         effective_timeout, _client_timeout_seconds(client), int((time.monotonic() - started) * 1000),
         usage.get('input_tokens'), usage.get('output_tokens'), usage.get('total_tokens'),
     )
+    output_chars = len(raw)
     raw = re.sub(r'^```(?:json)?\s*|\s*```$', '', raw.strip())
-    result = json.loads(raw)
+    try:
+        result = json.loads(raw)
+    except json.JSONDecodeError:
+        logger.warning('AI model response invalid model_request_id=%s %s reason=json_parse_error output_chars=%s',
+                       request_id, context_fields, output_chars)
+        raise
     if not isinstance(result, dict):
+        logger.warning('AI model response invalid model_request_id=%s %s reason=top_level_not_object output_chars=%s',
+                       request_id, context_fields, output_chars)
         raise InvalidModelResponse('模型响应不是对象')
     return result
 

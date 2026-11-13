@@ -83,6 +83,34 @@ class ExtractValidityRecordsTest(unittest.TestCase):
         self.assertEqual(records[0]["verdict"], "valid")
         self.assertEqual(records[0]["kind"], "安全生产许可证")
 
+    def test_structured_ocr_period_keeps_literal_evidence_and_end_date(self):
+        text = '{"证照标题": "安全生产许可证", "营业期限": "2023年03月31日至2026年03月31日", "格式化营业期限终止日期": ""}'
+        records = extract_validity_records({5: text}, file_name="报审包.pdf", baseline=date(2026, 11, 11))
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["expiry_date"], "2026-03-31")
+        self.assertEqual(records[0]["verdict"], "expired")
+        self.assertIn(records[0]["snippet"], text)
+        self.assertTrue(all("source_span" not in fact for fact in
+                            records[0]["date_verification"]["facts"] + records[0]["validity_start_facts"]))
+
+    def test_structured_ocr_uncertain_period_remains_unresolved(self):
+        text = '{"证照标题":"安全生产许可证","营业期限":"约2023年03月31日至2026年03月31日（暂定）"}'
+        records = extract_validity_records({5: text}, file_name="报审包.pdf", baseline=date(2026, 11, 11))
+        self.assertEqual(records[0]["verdict"], "unknown")
+        self.assertIsNone(records[0]["expiry_date"])
+        self.assertIn(records[0]["snippet"], text)
+
+    def test_fenced_structured_ocr_with_coordinates_extracts_original_period(self):
+        text = ('```json\n{\n'
+                ' "证照标题": "<576,302,57,299,90>,安全生产许可证",\n'
+                ' "营业期限": "<554,576,194,20,0>,2023年03月31日至2026年03月31日",\n'
+                ' "格式化营业期限终止日期": ""\n}\n```')
+        records = extract_validity_records({5: text}, file_name="报审包.pdf", baseline=date(2026, 11, 11))
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["expiry_date"], "2026-03-31")
+        self.assertEqual(records[0]["verdict"], "expired")
+        self.assertIn(records[0]["snippet"], text)
+
     def test_no_expiry_no_record(self):
         pages = {1: "特种作业操作证 作业类别：电工 操作项目：低压电工作业"}
         self.assertEqual(extract_validity_records(pages, file_name="电工操作证.pdf", baseline=BASELINE), [])

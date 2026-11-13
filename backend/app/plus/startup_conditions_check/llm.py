@@ -34,8 +34,16 @@ class OpenAICompatibleClient:
         self.max_retries = max_retries
         self.provider = provider
 
+    @property
+    def checkpoint_request_mode(self):
+        if self.provider == 'moma' and self.model == 'deepseek-v4.1-flash':
+            return 'moma-deepseek-v41-thinking-disabled-v1'
+        return None
+
     def _extra(self):
         if self.provider == 'moma':
+            if self.checkpoint_request_mode:
+                return {'extra_body': {'thinking': {'type': 'disabled'}}}
             return {}
         body = {'enable_thinking': self.enable_thinking}
         if self.prompt_cache_key:

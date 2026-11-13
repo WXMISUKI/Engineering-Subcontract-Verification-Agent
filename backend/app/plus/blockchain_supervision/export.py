@@ -401,6 +401,25 @@ def _pending_summary_text(row: dict) -> str:
     return text
 
 
+def _business_document_conclusion(report: dict) -> tuple[str, str] | None:
+    opinion_conclusion = report.get("conclusion")
+    if (isinstance(opinion_conclusion, dict)
+            and opinion_conclusion.get("code") == "scope_limited"
+            and isinstance(opinion_conclusion.get("text"), str)):
+        text = opinion_conclusion["text"].strip()
+        if text:
+            return "三、审查意见结论", text
+    document = report.get("business_document")
+    business_conclusion = (document or {}).get("conclusion") if isinstance(document, dict) else None
+    if (isinstance(business_conclusion, dict)
+            and business_conclusion.get("status") == "scope_limited"
+            and isinstance(business_conclusion.get("text"), str)):
+        text = business_conclusion["text"].strip()
+        if text:
+            return "三、核查总体结论", text
+    return None
+
+
 def _business_document_lines(report: dict) -> list[tuple[str, str, bool]]:
     """将新的业务报告投影转换为简单的标题/正文行序列。"""
     document = report.get("business_document")
@@ -414,6 +433,10 @@ def _business_document_lines(report: dict) -> list[tuple[str, str, bool]]:
         lines.append(("subheading", "%s. %s" % (index, section.get("title") or "核查"), True))
         for field in _business_key_points(section):
             lines.append(("text", "%s：%s" % (field.get("label"), field.get("summary")), False))
+    conclusion = _business_document_conclusion(report)
+    if conclusion:
+        lines.append(("heading", conclusion[0], True))
+        lines.append(("text", conclusion[1], False))
     return lines
 
 
@@ -493,6 +516,10 @@ def _add_business_document_word(doc, report: dict) -> bool:
                 for row in _business_key_points(section)]
         if rows:
             table(("审查要点及主要依据", "核查情况", "判定"), rows, (0.30, 0.58, 0.12))
+    conclusion = _business_document_conclusion(report)
+    if conclusion:
+        _add_para(doc, conclusion[0], size=11, bold=True, keep_with_next=True)
+        _add_para(doc, conclusion[1], size=9.5)
     return True
 
 
@@ -673,8 +700,9 @@ def _pdf_insert_text(page, point, text, fontsize, color=(0, 0, 0)):
     page.insert_text(point, text, fontname="EmbeddedCJK", fontsize=fontsize, color=color)
 
 
-def _draw_business_pdf(doc, page, y, document):
+def _draw_business_pdf(doc, page, y, report):
     """Render business tables, splitting oversized rows and repeating their header."""
+    document = report.get("business_document") or {}
     margin, page_w, page_h = 48.0, 595.0, 842.0
     right = page_w - margin
     size, line_height, padding = 9.5, 14.0, 5.0
@@ -753,6 +781,16 @@ def _draw_business_pdf(doc, page, y, document):
                 offset = end
         y += 4
 
+    def paragraph(text):
+        nonlocal page, y
+        for raw in str(text or "").splitlines() or [""]:
+            for line in _wrap(raw, size, right - margin):
+                if y + line_height > page_h - margin:
+                    page, y = new_page()
+                _pdf_insert_text(page, (margin, y + size), line, fontsize=size)
+                y += line_height
+        y += 4
+
     heading("一、项目与分包基本信息")
     table(("字段", "内容"), _business_information_rows(document))
     heading("二、核查摘要")
@@ -762,6 +800,10 @@ def _draw_business_pdf(doc, page, y, document):
                 for row in _business_key_points(section)]
         if rows:
             table(("审查要点及主要依据", "核查情况", "判定"), rows)
+    conclusion = _business_document_conclusion(report)
+    if conclusion:
+        heading(conclusion[0])
+        paragraph(conclusion[1])
     return page, y
 
 
@@ -798,7 +840,7 @@ def pdf_bytes(report: dict, digest: str = None, exported_at: str = None) -> byte
         write("【%s】%s" % (report.get("stage_label", ""), report["draft_notice"]), 9.5, bold=True)
     business_lines = _business_document_lines(report)
     if business_lines:
-        page, y = _draw_business_pdf(doc, page, y, report["business_document"])
+        page, y = _draw_business_pdf(doc, page, y, report)
         bio = io.BytesIO()
         doc.save(bio, deflate=True)
         doc.close()
@@ -871,7 +913,8 @@ def _material_fs_path(mat: BsMaterial) -> str | None:
     return fs_path if os.path.isfile(fs_path) else None
 
 
-def evidence_bundle_bytes(db: Session, task: BsTask, stage: str = "draft", *, user=None) -> tuple:
+def evidence_bundle_bytes(db: Session, task: BsTask, stage: str = "draft", *,
+                         user=None, scope_coverage: dict | None = None) -> tuple:
     """证据包 zip：报告、意见书、版本/事件链和材料原件副本。
 
     清单自证：report.json 的 attestation.files 逐文件记录 sha256/size，
@@ -880,10 +923,13 @@ def evidence_bundle_bytes(db: Session, task: BsTask, stage: str = "draft", *, us
     仍能回放“结论—版本—事件”链；`manifest.json` 是包内入口清单。
     返回 (zip_bytes, report_sha256, exported_at)。
     """
-    from . import reporting  # 局部 import 避免 service↔reporting 环
+    from . import reporting, service  # 局部 import 避免 service↔reporting 环
 
     user = user or SimpleNamespace(id=task.created_by, user_type=task.created_by_type)
-    report = reporting.mark_stage(reporting.build_report(db, task), stage)
+    if scope_coverage is None:
+        scope_coverage = service.optional_scope_coverage(db, task)
+    report = reporting.mark_stage(
+        reporting.build_report(db, task, scope_coverage=scope_coverage), stage)
     if "reference_snapshot" in report:
         report["reference_snapshot"] = reference_visibility.visible_snapshot(db, task, report["reference_snapshot"], user)
     # 证据包不经过 router._attach_generation_identity，需在这里同步当前代身份，
@@ -937,7 +983,7 @@ def evidence_bundle_bytes(db: Session, task: BsTask, stage: str = "draft", *, us
                 "materials/ 下文件哈希见 files 清单；历史原件保留并通过 material_id/version_role 标识。",
         "files": files,
     }
-    opinion = reporting.build_opinion(db, task)
+    opinion = reporting.build_opinion(db, task, scope_coverage=scope_coverage)
     if "reference_snapshot" in opinion:
         opinion["reference_snapshot"] = reference_visibility.visible_snapshot(db, task, opinion["reference_snapshot"], user)
     opinion_meta = opinion.setdefault("meta", {})
@@ -1182,7 +1228,7 @@ def opinion_pdf_bytes(opinion: dict, digest: str = None, exported_at: str = None
         write("分包报审智能审查意见书", 16, True)
         if opinion.get("draft_notice"):
             write("【%s】%s" % (opinion.get("stage_label", ""), opinion["draft_notice"]), 10, True)
-        page, y = _draw_business_pdf(doc, page, y, opinion["business_document"])
+        page, y = _draw_business_pdf(doc, page, y, opinion)
     else:
         for kind, text in _opinion_summary_lines(opinion):
             write(text, {"title": 16, "heading": 13, "subheading": 11}.get(kind, 10), kind != "text")

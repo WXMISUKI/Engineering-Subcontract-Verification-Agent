@@ -14,11 +14,14 @@ from app.plus.blockchain_supervision.models import BsMaterial
 
 from app.standalone.identity import Base, create_account
 from app.standalone.main import create_app
-from app.plus.blockchain_supervision import parsing, service, reference_snapshots, negative_candidate_plan
+from app.plus.blockchain_supervision import (
+    parsing, service, reference_snapshots, negative_candidate_plan, optional_source_scope,
+)
 
 
 def test_uploaded_pdf_starts_and_runs_checks_with_unavailable_knowledge(tmp_path, monkeypatch):
     monkeypatch.setenv('SECRET_KEY', 'synthetic-secret-key-0123456789-abcdefgh')
+    monkeypatch.setenv(optional_source_scope.SCOPE_POLICY_ENV, 'true')
     reference = Path(__file__).parent.parent / 'app/plus/blockchain_supervision/data/reference_package.json'
     sources = json.loads(reference.read_text(encoding='utf-8'))['sources']
     mapping = {'version': 1, 'documents': [
@@ -75,6 +78,16 @@ def test_uploaded_pdf_starts_and_runs_checks_with_unavailable_knowledge(tmp_path
     for suffix in endpoints.values():
         response = client.post(f'{base}/tasks/{task_id}/{suffix}')
         assert response.status_code == 200, (suffix, response.text)
+    parent_scope_response = client.get(f'{base}/tasks/{task_id}/todo')
+    assert parent_scope_response.status_code == 200, parent_scope_response.text
+    parent_scope = parent_scope_response.json()['scope_coverage']
+    assert parent_scope['policy'] == optional_source_scope.POLICY_VERSION
+    assert parent_scope['state'] == 'partial'
+    assert {item['source_state'] for item in parent_scope['limitations']} == {'absent'}
+    assert set(optional_source_scope.OPTIONAL_SOURCE_RULE_IDS) <= {
+        item['rule_id'] for item in parent_scope['limitations']
+    }
+    parent_generation_id = parent_scope['generation_id']
     findings = client.get(f'{base}/tasks/{task_id}/findings')
     assert findings.status_code == 200, findings.text
     rows = findings.json()['findings']
@@ -95,8 +108,8 @@ def test_uploaded_pdf_starts_and_runs_checks_with_unavailable_knowledge(tmp_path
     completed = client.post(f'{base}/tasks/{task_id}/complete')
     assert completed.status_code == 409, completed.text
     plan = client.post(f'{base}/tasks/{task_id}/supplement-plan', json={
-        'generation_id': 'synthetic-supplement', 'category': 'submission_packet',
-        'item_ids': ['RC-A01'], 'subject_ids': [subjects[0]['subject_id']],
+        'generation_id': 'synthetic-supplement', 'category': 'general_contract',
+        'item_ids': ['T15-01'],
     })
     assert plan.status_code == 200, plan.text
     assert plan.json()['supplement_plan']['status'] == 'planned'
@@ -109,6 +122,9 @@ def test_uploaded_pdf_starts_and_runs_checks_with_unavailable_knowledge(tmp_path
     previous_version = edit.json()['previous_version_no']
     previous = client.get(f'{base}/tasks/{task_id}/versions/{previous_version}').json()['snapshot']
     assert [m['file_name'] for m in previous['materials']] == ['synthetic.pdf']
+    assert previous['scope_coverage'] == parent_scope
+    edit_scope = client.get(f'{base}/tasks/{task_id}/todo').json()['scope_coverage']
+    assert edit_scope['state'] == 'legacy_unknown'
     assert previous['task']['options_snapshot'].get('supplement_plan') is None
     assert any(f.get('review', {}).get('note') == 'synthetic review' for f in previous['findings'] if f.get('review'))
     create_account(engine, 'bob', 'Bob-password-12345')
@@ -129,10 +145,26 @@ def test_uploaded_pdf_starts_and_runs_checks_with_unavailable_knowledge(tmp_path
     assert client.patch(f"{base}/findings/{candidate['id']}/review",
                         json={'decision': 'accepted', 'note': 'should not replace baseline'}).status_code == 409
     supplement = client.post(f'{base}/tasks/{task_id}/materials/upload',
-                             files={'file': ('supplement.pdf', pdf, 'application/pdf')},
-                             data={'role': 'packet', 'subject_id': str(subjects[0]['subject_id']),
+                             files={'file': ('supplement-general.pdf', pdf, 'application/pdf')},
+                             data={'role': 'general',
                                    'supplement_generation_id': 'synthetic-supplement'})
     assert supplement.status_code == 200, supplement.text
+    with Session(engine) as db:
+        general_material = db.get(BsMaterial, supplement.json()['material_id'])
+        assert general_material.role == 'general'
+        general_material.parse_state = 'parsing'
+        db.commit()
+    scope_during_upload = client.get(f'{base}/tasks/{task_id}/todo').json()['scope_coverage']
+    assert scope_during_upload == edit_scope
+    assert previous['scope_coverage'] == parent_scope
+    pending_activation = client.post(f'{base}/tasks/{task_id}/supplement-rerun')
+    assert pending_activation.status_code == 409
+    assert pending_activation.json()['detail']['reason'] == 'parsing_pending'
+    assert client.get(f'{base}/tasks/{task_id}/todo').json()['scope_coverage'] == edit_scope
+    with Session(engine) as db:
+        general_material = db.get(BsMaterial, supplement.json()['material_id'])
+        general_material.parse_state = 'uploaded'
+        db.commit()
     activated = client.post(f'{base}/tasks/{task_id}/supplement-rerun')
     assert activated.status_code in (200, 202), activated.text
     for _ in range(200):
@@ -147,6 +179,10 @@ def test_uploaded_pdf_starts_and_runs_checks_with_unavailable_knowledge(tmp_path
     current_plan = client.get(f'{base}/tasks/{task_id}/supplement-plan')
     assert current_plan.json()['supplement_plan']['status'] == 'running'
     assert current_plan.json()['supplement_plan']['superseded_version_no'] == previous_version
+    new_scope_before_a1 = client.get(f'{base}/tasks/{task_id}/todo').json()['scope_coverage']
+    assert new_scope_before_a1['generation_id'] != parent_generation_id
+    assert new_scope_before_a1['state'] == 'incomplete'
+    assert new_scope_before_a1['limitations'] == []
     duplicate_activation = client.post(f'{base}/tasks/{task_id}/supplement-rerun')
     assert duplicate_activation.status_code == 200
     assert duplicate_activation.json().get('already_running') is True
@@ -159,6 +195,7 @@ def test_uploaded_pdf_starts_and_runs_checks_with_unavailable_knowledge(tmp_path
     assert historical_during_candidate.status_code == 200, historical_during_candidate.text
     frozen = client.get(f'{base}/tasks/{task_id}/versions/{previous_version}').json()['snapshot']
     assert [m['file_name'] for m in frozen['materials']] == ['synthetic.pdf']
+    assert frozen['scope_coverage'] == parent_scope
     frozen_business_document = frozen['report']['business_document']
     assert historical_during_candidate.json()['business_document'] == frozen_business_document
     groups = current_plan.json()['supplement_plan'].get('execution_groups')
@@ -166,6 +203,13 @@ def test_uploaded_pdf_starts_and_runs_checks_with_unavailable_knowledge(tmp_path
     for suffix in (endpoints[group] for group in groups):
         response = client.post(f'{base}/tasks/{task_id}/{suffix}')
         assert response.status_code == 200, (suffix, response.text)
+    new_scope_after_checks = client.get(f'{base}/tasks/{task_id}/todo').json()['scope_coverage']
+    assert new_scope_after_checks['generation_id'] == new_scope_before_a1['generation_id']
+    assert new_scope_after_checks['state'] == 'available', [
+        (item['rule_id'], item['source_state'], item['reason_code'])
+        for item in new_scope_after_checks.get('limitations', [])
+    ]
+    assert new_scope_after_checks['limitations'] == []
     rows = client.get(f'{base}/tasks/{task_id}/findings').json()['findings']
     monkeypatch.setattr(negative_candidate_plan, 'negative_list_rules', lambda: [])
     monkeypatch.setattr(service, 'effective_model_code_or_default', lambda *_: 'synthetic-model')
@@ -266,8 +310,8 @@ def test_uploaded_pdf_starts_and_runs_checks_with_unavailable_knowledge(tmp_path
         assert ignored[0]['human_disposition']['note'] == 'synthetic ignored reason'
         assert all(ignored_id not in item['finding_ids'] for item in audit_report['business_document']['issues'])
     second = client.post(f'{base}/tasks/{task_id}/supplement-plan', json={
-        'generation_id': 'second-supplement', 'category': 'submission_packet',
-        'item_ids': ['RC-A01'], 'subject_ids': [subjects[0]['subject_id']],
+        'generation_id': 'second-supplement', 'category': 'general_contract',
+        'item_ids': ['T15-01'],
     })
     assert second.status_code == 200
     second_edit = client.post(f'{base}/tasks/{task_id}/supplement-edit')
@@ -277,10 +321,11 @@ def test_uploaded_pdf_starts_and_runs_checks_with_unavailable_knowledge(tmp_path
                for finding in prior['findings'])
     assert all(ignored_id not in item['finding_ids'] for item in prior['report']['business_document']['issues'])
     assert prior['task']['options_snapshot']['supplement_plan']['generation_id'] == 'synthetic-supplement'
+    assert 'a1' in second.json()['supplement_plan']['impact']['affected_groups']
     old_supplement_id = supplement.json()['material_id']
     broken = client.post(f'{base}/tasks/{task_id}/materials/upload',
                          files={'file': ('broken.pdf', b'%PDF-broken', 'application/pdf')},
-                         data={'role': 'packet', 'replaces_material_id': str(old_supplement_id),
+                         data={'role': 'general', 'replaces_material_id': str(old_supplement_id),
                                'supplement_generation_id': 'second-supplement'})
     assert broken.status_code == 200, broken.text
     attempted = client.post(f'{base}/tasks/{task_id}/supplement-rerun')
@@ -300,6 +345,9 @@ def test_uploaded_pdf_starts_and_runs_checks_with_unavailable_knowledge(tmp_path
     assert failed_publication['publication_state'] == 'failed'
     assert failed_publication['publication_generation_id'] == 'synthetic-supplement'
     assert failed_publication['candidate_generation_id'] == 'second-supplement'
+    failed_scope = client.get(f'{base}/tasks/{task_id}/todo').json()['scope_coverage']
+    assert failed_scope['state'] == 'legacy_unknown'
+    assert prior['scope_coverage'] == new_scope_after_checks
     current_finding_id = failed_publication['findings'][0]['id']
     assert client.patch(f"{base}/findings/{current_finding_id}/review",
                         json={'decision': 'accepted', 'note': 'must remain baseline-only'}).status_code == 409

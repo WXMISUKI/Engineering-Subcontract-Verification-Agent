@@ -115,6 +115,9 @@ class BsMaterial(Base):
     # 主体中心归集：历史材料可为空；新上传的分包/报审材料由用户选择主体。
     subject_id = Column(Integer, ForeignKey("bs_subject.id", ondelete="SET NULL"), nullable=True)
     packet_id = Column(Integer, ForeignKey("bs_packet.id", ondelete="SET NULL"), nullable=True)
+    # Explicit user-confirmed grouping of files belonging to the same general contract.
+    general_source_set_id = Column(String(36), nullable=True)
+    general_source_set_version = Column(Integer, nullable=True)
     material_category = Column(String(30), nullable=True)  # general/sub/labor/packet；NULL=历史材料未标注
     file_name = Column(String(255), nullable=False)
     # classify.py 的五类；自动归类只是初始值，人工更正后 role_confirmed=True

@@ -336,17 +336,33 @@ def run_cert_validity_check(task, materials: list, baseline: date | None = None)
                       for p in readable_pages}
         records = extract_validity_records(page_texts, file_name=m.file_name,
                                            baseline=baseline)
+        record_counts = {page: sum(record.get("page") == page for record in records)
+                         for page in page_texts}
         recorded_pages = set()
         for record in records:
             r = _with_explicit_range_end(record, baseline)
             recorded_pages.add(r.get("page"))
             certificate = certificate_pages.get(r.get("page")) is not None
+            structured_clue = r.get("source_format") == "structured_certificate_text" and not certificate
             verdict = r.get("verdict")
             expiry = r.get("expiry_date", "")
             kind_name = r.get("kind", "证照文件")
+            page_text = page_texts.get(r.get("page")) or ""
+            filing_title = "建筑业企业施工劳务备案证书"
+            filing_clue = (not certificate and not structured_clue
+                           and page_text.count(filing_title) == 1 and record_counts.get(r.get("page")) == 1
+                           and "证书编号" in page_text and "发证机关" in page_text)
+            if filing_clue:
+                kind_name = "施工劳务备案证书"
             ref = {"material_id": m.id, "page": r.get("page"), "quote": r.get("snippet"),
-                   "source_kind": "certificate_text" if certificate else "contract_declaration",
+                   "source_kind": ("certificate_text" if certificate else "structured_certificate_clue"
+                                   if structured_clue else "certificate_page_clue"
+                                   if filing_clue else "contract_declaration"),
                    "expiry_date": expiry, "date_verification": r.get("date_verification")}
+            refs = [ref]
+            if filing_clue:
+                refs.append({"material_id": m.id, "page": r.get("page"), "quote": filing_title,
+                             "source_kind": "certificate_title_clue"})
             if baseline is None:
                 findings.append(BsFinding(
                     task_id=task.id, material_id=m.id, item_id=ITEM_ID,
@@ -355,7 +371,7 @@ def run_cert_validity_check(task, materials: list, baseline: date | None = None)
                              % (kind_name, "（材料记录至 %s）" % expiry if expiry else "")
                              + ("；" + _CERT_BOUNDARY_NOTICE if certificate else "；材料声明不代表实际证照")),
                     quote=r.get("snippet") or None, page=r.get("page"), source=SOURCE,
-                    evidence_json=[ref],
+                    evidence_json=refs,
                 ))
                 continue
             if certificate and verdict == "valid":
@@ -372,8 +388,15 @@ def run_cert_validity_check(task, materials: list, baseline: date | None = None)
                 status = STATUS_UNDECIDABLE
                 comparison = ("早于基准日" if verdict == "expired" else "覆盖基准日"
                               if verdict in ("valid", "expiring_soon") else "无法与基准日可靠比较")
-                message = ("材料声明填列期限（有效期至 %s）%s；不是实际证照核验，"
-                           "需核对最新证照、续期或变更资料" % (expiry or "不明确", comparison))
+                if structured_clue:
+                    message = ("证照识别结果（「%s」，有效期至 %s）%s；需核对最新证照、原件及续期情况"
+                               % (kind_name, expiry or "不明确", comparison))
+                elif filing_clue:
+                    message = ("材料页面标注「%s」，有效期至 %s（%s）；需核对原件及最新证照情况"
+                               % (kind_name, expiry or "不明确", comparison))
+                else:
+                    message = ("材料声明填列期限（「%s」，有效期至 %s）%s；不是实际证照核验，"
+                               "需核对最新证照、续期或变更资料" % (kind_name, expiry or "不明确", comparison))
             elif verdict == "expired":
                 message = "「%s」已超过有效期（有效期至 %s），需复检或重新取证后再报审" % (
                     kind_name, expiry)
@@ -396,7 +419,7 @@ def run_cert_validity_check(task, materials: list, baseline: date | None = None)
                 task_id=task.id, material_id=m.id, item_id=ITEM_ID,
                 kind="cert_validity", status=status, message=message,
                 quote=r.get("snippet") or None, page=r.get("page"), source=SOURCE,
-                evidence_json=[ref],
+                evidence_json=refs,
             ))
         for page_no, text in certificate_pages.items():
             if text is not None and page_no not in recorded_pages:

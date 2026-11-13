@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import ReviewQueue from './ReviewQueue'
+import ScopeCoverageNotice from './ScopeCoverageNotice'
 import ReviewActions from './ReviewActions'
 import MaterialPreviewPane from './MaterialPreviewPane'
 import ReviewCompareMode from './ReviewCompareMode'
@@ -652,6 +653,7 @@ export default function ReviewWorkbenchLayout({
   reviewFilter,
   onFilterChange,
     publication = null,
+  scopeCoverage = null,
   // V2：右栏顶部「待办与处置」分组（可选；不传时右栏保持原样，历史调用不受影响）。
   todoPanel = null,
   stepPanel = null,
@@ -1098,6 +1100,7 @@ export default function ReviewWorkbenchLayout({
           </div>
         </section>
       )}
+      <ScopeCoverageNotice coverage={scopeCoverage} />
       {!wide && !prototypeMode && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-[6px] border border-[#EFE6D8] bg-white px-3 py-2">
           <span className="text-[12px] text-[#6B7280]">窄屏：待办、问题详情与原文预览在抽屉中查看</span>

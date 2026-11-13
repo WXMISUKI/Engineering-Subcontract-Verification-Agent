@@ -20,6 +20,132 @@ def batch():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(('bad_split', 'persistent', 'expected_calls', 'expected_status'), [
+    (1, False, ['initial', 'split_1', 'split_1', 'split_2'], ['completed', 'completed']),
+    (2, False, ['initial', 'split_1', 'split_2', 'split_2'], ['completed', 'completed']),
+    (2, True, ['initial', 'split_1', 'split_2', 'split_2'], ['completed', 'failed']),
+])
+async def test_timeout_split_retries_only_invalid_child_within_shared_budget(
+        monkeypatch, bad_split, persistent, expected_calls, expected_status):
+    calls = []
+
+    async def request(_client, _system, _payload, *, diagnostic_context=None, **_kwargs):
+        part = diagnostic_context['recovery_part']
+        calls.append(part)
+        if part == 'initial':
+            raise TimeoutError('synthetic timeout')
+        if part == f'split_{bad_split}' and (persistent or calls.count(part) == 1):
+            raise json.JSONDecodeError('synthetic invalid', '', 0)
+        return {'proposals': []}
+
+    async def no_wait(_delay):
+        pass
+
+    monkeypatch.setattr(ai_review_batch, 'request_json', request)
+    monkeypatch.setattr(ai_review_batch, '_sleep_before_retry', no_wait)
+    rows = await ai_guarded_review._execute_with_timeout_recovery(batch(), client=object())
+    assert calls == expected_calls
+    assert [row['execution_status'] for row in rows] == expected_status
+    if persistent:
+        assert rows[1]['failure_category'] == 'invalid_response'
+        assert not ai_guarded_review._batch_checkpointable(rows)
+
+
+@pytest.mark.asyncio
+async def test_split_retry_reserves_request_for_remaining_child(monkeypatch):
+    calls = []
+
+    class RateLimited(Exception):
+        status_code = 429
+        response = httpx.Response(429, headers={'retry-after': '0'})
+
+    async def request(_client, _system, _payload, *, diagnostic_context=None, **_kwargs):
+        part = diagnostic_context['recovery_part']
+        calls.append(part)
+        if calls == ['initial']:
+            raise RateLimited()
+        if part == 'initial':
+            raise TimeoutError('synthetic timeout')
+        if part == 'split_1':
+            raise json.JSONDecodeError('synthetic invalid', '', 0)
+        return {'proposals': []}
+
+    async def no_wait(_delay):
+        pass
+
+    monkeypatch.setattr(ai_review_batch, 'request_json', request)
+    monkeypatch.setattr(ai_review_batch, '_sleep_before_retry', no_wait)
+    rows = await ai_guarded_review._execute_with_timeout_recovery(batch(), client=object())
+    assert calls == ['initial', 'initial', 'split_1', 'split_2']
+    assert [row['execution_status'] for row in rows] == ['failed', 'completed']
+    assert rows[0]['failure_category'] == 'invalid_response'
+
+
+@pytest.mark.asyncio
+async def test_recovery_progress_reports_timeout_and_invalid_format_retry(monkeypatch):
+    calls, progress = [], []
+
+    async def request(_client, _system, _payload, *, diagnostic_context=None, **_kwargs):
+        part = diagnostic_context['recovery_part']
+        calls.append(part)
+        if part == 'initial':
+            raise TimeoutError('synthetic timeout')
+        if part == 'split_2' and calls.count(part) == 1:
+            raise json.JSONDecodeError('synthetic invalid', '', 0)
+        return {'proposals': []}
+
+    async def no_wait(_delay):
+        pass
+
+    monkeypatch.setattr(ai_review_batch, 'request_json', request)
+    monkeypatch.setattr(ai_review_batch, '_sleep_before_retry', no_wait)
+    await ai_guarded_review._execute_with_timeout_recovery(batch(), client=object(), on_recovery=progress.append)
+    assert progress == ['timeout_split', 'invalid_retry']
+
+
+@pytest.mark.asyncio
+async def test_recovery_progress_context_change_stops_before_retry(monkeypatch):
+    calls = []
+
+    async def request(_client, _system, _payload, *, diagnostic_context=None, **_kwargs):
+        part = diagnostic_context['recovery_part']
+        calls.append(part)
+        if part == 'initial':
+            raise TimeoutError('synthetic timeout')
+        raise json.JSONDecodeError('synthetic invalid', '', 0)
+
+    def progress(status):
+        if status == 'invalid_retry':
+            raise ai_guarded_review.AiContextChanged('changed')
+
+    monkeypatch.setattr(ai_review_batch, 'request_json', request)
+    with pytest.raises(ai_guarded_review.AiContextChanged):
+        await ai_guarded_review._execute_with_timeout_recovery(batch(), client=object(), on_recovery=progress)
+    assert calls == ['initial', 'split_1']
+
+
+@pytest.mark.asyncio
+async def test_split_recovery_deduplicates_only_identical_validated_suggestions(monkeypatch):
+    source = batch()
+    source['items'][1] = dict(source['items'][0])
+    suggestion = {'finding_id': 1, 'item_id': 'RULE-1', 'subject_id': 1,
+                  'status': 'undecidable', 'message': '请核对原件。',
+                  'material_evidence': [{'material_id': 9, 'page': 1, 'quote': 'synthetic fact'}],
+                  'rule_evidence': [{'reference_id': 'ref', 'quote': 'synthetic'}]}
+
+    async def request(_client, _system, _payload, *, diagnostic_context=None, **_kwargs):
+        if diagnostic_context['recovery_part'] == 'initial':
+            raise TimeoutError('synthetic timeout')
+        return {'proposals': [suggestion]}
+
+    monkeypatch.setattr(ai_review_batch, 'request_json', request)
+    rows = await ai_guarded_review._execute_with_timeout_recovery(source, client=object())
+    assert len(rows) == 1
+    assert rows[0]['model_proposal_count'] == 2
+    assert len(rows[0]['proposals']) == 1
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(('scenario', 'expected_calls', 'expected_status'), [
     ('transient_429', 2, 'completed'),
     ('transient_500', 2, 'completed'),

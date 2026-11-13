@@ -76,6 +76,9 @@ def material_fingerprint(db: Session, task: BsTask, *, options_snapshot: dict | 
     source_options = task.options_snapshot_json if options_snapshot is None else options_snapshot
     options = {k: v for k, v in (source_options or {}).items()
                if k not in {LEGACY_POINTER, GROUP_POINTERS, REVIEW_POINTER,
+                            # Optional-source coverage current-run pointers are lifecycle bookkeeping,
+                            # not business input; check_run_id changes must not invalidate the generation.
+                            "bs_scope_check_runs",
                             # BS-P1-13（设计 98 §4.2）：`rerun` 是重跑回执携带表——它随
                             # 重跑写入、在收口/补件时清除，属过程簿记而非业务输入。
                             # 若不排除，清除那一刻指纹就变，收口后读报告会被误判
@@ -102,7 +105,8 @@ def load_reference_package(as_of=None) -> dict:
     package = json.loads((_DATA_DIR / "reference_package.json").read_text(encoding="utf-8"))
     mapping_path = os.environ.get('BS_REFERENCE_MAPPING_FILE', '').strip()
     if not mapping_path:
-        raise MappingError('知识库尚未完成初始化，参考依据无法核实')
+        raise MappingError('知识库尚未完成初始化，参考依据无法核实',
+                           code='mapping_file_unconfigured')
     package = apply_reference_mapping(package, Path(mapping_path))
     timing = next((s for s in package.get("sources", []) if s.get("item_id") == "A3-02-timing"
                    and s.get("clause_excerpt")), None)
@@ -1137,7 +1141,28 @@ def link_reference_findings(run: dict, findings: list) -> None:
 
 
 def get_reference_run(db: Session, task: BsTask, *, group_id: str = "a1") -> dict | None:
-    """只读当前精确run终态；旧任务无指针即无引用，不临时补查。"""
+    """只读当前精确run，并附上同代冻结的 AI 选页策略。"""
+    def with_frozen_scope_strategy(run):
+        if not isinstance(run, dict):
+            return run
+        from . import reference_snapshots
+
+        review_id = run.get("review_run_id")
+        seeds = (db.query(BsTaskEvent).filter(
+            BsTaskEvent.task_id == task.id,
+            BsTaskEvent.event_type == reference_snapshots.REVIEW_EVENT,
+            BsTaskEvent.payload_json["review_run_id"].as_string() == review_id,
+        ).all() if isinstance(review_id, str) and review_id else [])
+        strategy = None
+        if len(seeds) == 1:
+            frozen = (seeds[0].payload_json or {}).get("scope_strategy")
+            if isinstance(frozen, dict):
+                strategy = frozen
+        run["scope_strategy"] = deepcopy(
+            strategy or {"enabled": False, "version": "baseline"}
+        )
+        return run
+
     run_id = group_pointer(task, group_id)
     if not run_id:
         return None
@@ -1149,7 +1174,7 @@ def get_reference_run(db: Session, task: BsTask, *, group_id: str = "a1") -> dic
                              BsTaskEvent.payload_json["group_id"].as_string() == group_id)
     event = query.filter(BsTaskEvent.event_type == RUN_EVENT).first()
     if event:
-        return deepcopy(event.payload_json)
+        return with_frozen_scope_strategy(deepcopy(event.payload_json))
     started = query.filter(BsTaskEvent.event_type == "knowledge.reference_started").first()
     run = deepcopy(started.payload_json) if started else {"run_id": run_id, "group_id": group_id,
                                                           "review_run_id": review_id}
@@ -1159,4 +1184,4 @@ def get_reference_run(db: Session, task: BsTask, *, group_id: str = "a1") -> dic
     run.update(state="expired" if expired else "running", purpose="reference_only", references=[],
                limitations=[{"code": "reference_timeout" if expired else "reference_pending",
                    "message": "上次参考查询已中断，请重新核查" if expired else "参考依据正在查询，请稍后刷新"}])
-    return run
+    return with_frozen_scope_strategy(run)

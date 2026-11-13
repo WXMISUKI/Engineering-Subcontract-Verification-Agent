@@ -30,6 +30,7 @@ from .relation_resolution import (
     STATUS_MATCHED,
     STATUS_UNRESOLVED,
     STATUSES,
+    normalize_certificate_number,
     relation_reason_code,
 )
 
@@ -279,6 +280,21 @@ def _project_one(task, relation, materials) -> BsFinding | None:
         return None
     right_ref = (_located_ref(task.id, right, materials, role=right_role)
                  if right_role and right.get("material_id") else None)
+    if status == STATUS_CONFLICT and left_ref and right_ref:
+        dimensions = [dim for dim in (getattr(relation, "dimensions_json", None) or []) if isinstance(dim, dict)]
+        matched = {dim.get("field") for dim in dimensions if dim.get("result") == "matched"}
+        identity_proven = {"person.name", "subject", "company.name", "certificate.type"}.issubset(matched)
+        quality_uncertain = any(dim.get("field") == "evidence.quality" and dim.get("result") != "matched"
+                                for dim in dimensions)
+        fields = sorted({dim.get("field") for dim in dimensions
+                         if isinstance(dim, dict) and dim.get("result") == "conflict"
+                         and dim.get("field") == "certificate.number"
+                         and normalize_certificate_number(dim.get("expected"))
+                         and normalize_certificate_number(dim.get("actual"))
+                         and normalize_certificate_number(dim.get("expected")) != normalize_certificate_number(dim.get("actual"))})
+        if fields and identity_proven and not quality_uncertain:
+            left_ref["conflict_fields"] = fields
+            right_ref["conflict_fields"] = fields
     evidence = [ref for ref in (left_ref, right_ref) if ref]
     return BsFinding(
         task_id=task.id,

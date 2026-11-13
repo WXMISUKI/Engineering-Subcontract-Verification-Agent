@@ -26,11 +26,32 @@ def test_missing_or_conflicting_mapping_fails_closed(tmp_path):
         apply_reference_mapping(package, path)
 
 
+def test_missing_source_mapping_reports_safe_source_context(tmp_path):
+    path = tmp_path / 'mapping.json'
+    path.write_text(json.dumps({'version': 1, 'documents': [
+        {'sha256': 'b' * 64, 'kb_id': 'new-kb', 'knowledge_id': 'new-doc'}]}), encoding='utf-8')
+    package = {'sources': [{
+        'item_id': 'T15-01', 'original_sha256': 'a' * 64,
+        'kb_id': 'old-kb', 'knowledge_id': 'old-doc',
+    }]}
+
+    with pytest.raises(MappingError) as error:
+        apply_reference_mapping(package, path)
+
+    assert error.value.code == 'source_mapping_missing'
+    assert error.value.context == {
+        'source_index': 0, 'item_id': 'T15-01', 'source_hash_prefix': 'a' * 12,
+    }
+    assert 'old-kb' not in repr(error.value.context)
+    assert 'old-doc' not in repr(error.value.context)
+
+
 def test_runtime_reference_package_never_uses_old_ids(monkeypatch, tmp_path):
     from app.plus.blockchain_supervision.knowledge_runs import load_reference_package
     monkeypatch.delenv('BS_REFERENCE_MAPPING_FILE', raising=False)
-    with pytest.raises(MappingError):
+    with pytest.raises(MappingError) as error:
         load_reference_package()
+    assert error.value.code == 'mapping_file_unconfigured'
     from pathlib import Path
     source = json.loads((Path(__file__).parent.parent / 'app/plus/blockchain_supervision/data/reference_package.json').read_text(encoding='utf-8'))
     hashes = {row['original_sha256'] for row in source['sources']}

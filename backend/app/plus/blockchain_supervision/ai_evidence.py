@@ -11,6 +11,11 @@ import re
 from typing import Any
 
 MODEL_EVIDENCE_INSTRUCTIONS = (
+    "当前批次是当前模型输入，不代表完整报审资料或完整核查范围；"
+    "不能根据当前批次推断整包是否已读取、是否缺件或是否齐全。"
+    "同一核查项的同一事实只输出一次；不同事实或不同证据应分别保留。"
+    "仅需说明当前片段未观察到某信息时，采用‘已提供的文本片段中未见相关信息，请核对原件’，"
+    "可将相关信息替换为具体核查对象；不再追加缺件、缺失或未提供的判断。"
     "材料范围说明表明只看到部分材料时，不得断言未提供、缺失或不存在；"
     "可说‘已提供的文本片段中未见’，并建议人工核实是否缺失，status 使用 undecidable；"
     "不得笼统说材料中未见。"
@@ -23,8 +28,8 @@ MODEL_EVIDENCE_INSTRUCTIONS = (
 
 
 def model_scope_description(incomplete: bool) -> str:
-    return ("本次仅提供部分材料或片段，不能据此认定其他内容缺失或齐全"
-            if incomplete else "已按本次核查范围提供材料，请仅依据提供的原文判断")
+    return ("当前模型输入仅包含部分材料或片段，不能据此认定其他内容缺失或齐全"
+            if incomplete else "当前模型输入按本次核查范围提供材料，请仅依据提供的原文判断")
 
 
 @dataclass(frozen=True)
@@ -78,13 +83,20 @@ def validate_ai_proposal(proposal: Any, *, task_id: int, subject_id: int | None,
     # “请核实是否缺失”是待核问题，不是断言已经缺件。只豁免明确的
     # 询问措辞，其余肯定缺件表述仍按不完整范围拒绝。
     absence_claim = message
+    # 只豁免显式片段范围内“可见/仅见……，但未见”的最后一个未见；
+    # 保留其余文字继续检查，避免把同一句中的整包缺件断言一起抹掉。
+    scoped_comparison = (r"(?:已提供的文本片段|本次输入的文本片段|本次提供的文本片段|"
+                         r"已提供的材料片段|本次提供的材料片段)中(?:可见|仅见)"
+                         r"[^。；;\n]{1,120}?[，,](?:但)?未见")
+    absence_claim = re.sub(scoped_comparison, lambda match: match.group()[:-2], absence_claim)
     for qualified_scope in ("已提供的文本片段中未见", "本次输入的文本片段中未见",
-                            "本次提供的文本片段中未见"):
+                            "本次提供的文本片段中未见", "已提供的材料片段中未见",
+                            "本次提供的材料片段中未见"):
         absence_claim = absence_claim.replace(qualified_scope, "")
-    for qualified in ("是否缺失", "是否缺少", "是否未提供", "是否未提交", "是否未上传", "是否未附", "是否不存在", "是否没有"):
+    for qualified in ("是否缺失", "是否缺少", "是否未提供", "是否未提交", "是否未上传", "是否未附", "是否不存在", "是否没有", "是否未签字", "是否未盖章", "是否未签署", "是否未加盖", "是否无签章"):
         absence_claim = absence_claim.replace(qualified, "")
     if incomplete_material_scope and any(term in absence_claim for term in (
-            "未提供", "未提交", "未上传", "未附", "未见", "缺少", "缺失", "不存在", "没有")):
+            "未提供", "未提交", "未上传", "未附", "未见", "缺少", "缺失", "缺件", "不存在", "没有", "未签字", "未盖章", "未签署", "未加盖", "无签章")):
         return reject("当前只核对部分材料，建议中的缺件表述无法证实，请人工核实")
     material_refs, rule_refs = proposal.get("material_evidence"), proposal.get("rule_evidence")
     if not isinstance(material_refs, list) or not 1 <= len(material_refs) <= 20:

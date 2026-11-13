@@ -3,6 +3,7 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 import hashlib
+import logging
 import os
 import secrets
 
@@ -24,6 +25,8 @@ from ..auth.unified_user import get_current_any_user
 from ..limiter import limiter
 from .reference_mapping import MappingError
 from ..plus.blockchain_supervision.manifest import manifest
+
+logger = logging.getLogger(__name__)
 
 
 class Login(BaseModel):
@@ -72,6 +75,9 @@ def create_app(engine, secret_key: str, *, cookie_secure: bool = True, include_s
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
     @app.exception_handler(MappingError)
     async def mapping_error_handler(request, exc):
+        cause_type = type(exc.__cause__).__name__ if exc.__cause__ is not None else "none"
+        logger.error("[bs] 知识库依据映射检查失败 code=%s reason=%s context=%s cause_type=%s",
+                     exc.code, str(exc), exc.context, cause_type)
         return JSONResponse(status_code=503, content={'detail': '知识库依据无法核实，请联系管理员完成知识初始化'})
 
     app.add_api_route('/api/login', login, methods=['POST'])

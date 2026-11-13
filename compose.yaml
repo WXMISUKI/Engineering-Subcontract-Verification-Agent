@@ -33,6 +33,7 @@ services:
       WEKNORA_API_KEY_FILE: /data/knowledge/query-key
       BS_WEKNORA_KB_MAP: ${BS_WEKNORA_KB_MAP:-}
       BS_REFERENCE_MAPPING_FILE: /data/knowledge/reference-mapping.json
+      BS_OPTIONAL_SOURCE_SCOPE_LIMITATIONS_ENABLED: ${BS_OPTIONAL_SOURCE_SCOPE_LIMITATIONS_ENABLED:-false}
     volumes:
       - bs-uploads:/app/app/uploads
       - ./delivery-data/knowledge-config:/data/knowledge:ro

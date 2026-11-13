@@ -120,6 +120,37 @@ def test_confirmed_labor_subject_with_multiple_contract_types_requires_review(mo
     assert opinion['subject']['分包类型'] == '劳务分包（合同类型需分别核实）'
 
 
+def test_optional_scope_limited_opinion_does_not_suggest_pass(monkeypatch):
+    coverage = {
+        'schema_version': 'bs-scope-coverage.v1',
+        'generation_id': 'generation-1',
+        'policy': 'optional-source-scope.v1',
+        'state': 'partial',
+        'limitations': [{'rule_id': 'T15-01', 'source_state': 'absent'}],
+    }
+    report = {
+        'meta': {},
+        'sections': [],
+        'contract_facts': [],
+        'summary': {'missing_by_category': []},
+        'coverage': {'complete': True},
+        'scope_coverage': coverage,
+        'scope_limitations': ['T15-01 本轮未覆盖。'],
+        'scope_statements': ['T15-01 本轮未覆盖。'],
+        'checklist_summary': {'subjects': []},
+        'reference_snapshot': {'steps': []},
+    }
+    monkeypatch.setattr(reporting, 'build_report', lambda *_args, **_kwargs: report)
+
+    opinion = reporting.build_opinion(None, SimpleNamespace(baseline_date=None), scope_coverage=coverage)
+
+    assert opinion['conclusion']['code'] == 'scope_limited'
+    assert '不能解释为完整通过' in opinion['conclusion']['text']
+    assert opinion['conclusion']['total'] == 0
+    assert opinion['signature']['suggested_option'] is None
+    assert opinion['scope_coverage'] == coverage
+
+
 def test_report_contract_projection_preserves_rule_extractor():
     from app.plus.blockchain_supervision import extract
     material = SimpleNamespace(id=1, file_name='劳务分包合同.pdf', role='labor', pages_json=[])

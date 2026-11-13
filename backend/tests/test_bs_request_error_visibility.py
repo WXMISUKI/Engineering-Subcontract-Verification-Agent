@@ -66,6 +66,19 @@ def test_timeout_is_not_misreported_as_rate_limit():
     assert '超时' in message and '429' not in message
 
 
+@pytest.mark.parametrize(('status', 'expected'), [
+    ('timeout_split', '模型响应超时，正在拆分后继续核查'),
+    ('invalid_retry', '模型返回格式无效，正在重试该部分'),
+])
+def test_ai_recovery_progress_is_visible_in_timeline(status, expected):
+    ev = SimpleNamespace(sequence=1, event_type='check.ai_batch_progress', stage='check', created_at=None,
+                         payload_json={'group_id': 'signature_chain', 'batch_index': 3, 'batch_total': 5,
+                                       'status': status})
+    dto = event_dto(ev)
+    assert '3/5' in dto['message'] and expected in dto['message']
+    assert dto['diagnostics']['status'] == status
+
+
 def test_ocr_timeline_shows_failed_pages_without_raw_error():
     ev = SimpleNamespace(sequence=1, event_type='material.parsed', stage='check', created_at=None,
                          payload_json={'file_name': 'test.pdf', 'degraded': True,

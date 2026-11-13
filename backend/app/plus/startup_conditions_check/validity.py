@@ -18,6 +18,7 @@
 """
 from __future__ import annotations
 
+import json
 import re
 from datetime import date, datetime, timedelta
 from .date_reliability import build_date_fact, date_range_separator, date_review_note, date_token_spans, date_tokens, parse_date_text, source_date_facts
@@ -125,6 +126,38 @@ def extract_validity_records(
         text = str(page_texts.get(page_no) or "")
         if not text.strip():
             continue
+        # 一些 OCR 返回证照 JSON：字段引号不是日期限定语，不能让它们干扰
+        # 既有区间解析。仅接受唯一、原文未转义的安全生产许可证期限字段；
+        # 解析后的证据仍定位到页内的原始连续文本。
+        fenced = re.fullmatch(r"\s*```(?:json)?\s*\n([\s\S]*?)\n```\s*", text, re.I)
+        json_text = fenced.group(1) if fenced else text
+        try:
+            pairs = json.loads(json_text, object_pairs_hook=list)
+        except (ValueError, TypeError):
+            pairs = None
+        if isinstance(pairs, list) and all(isinstance(p, tuple) and len(p) == 2 for p in pairs):
+            titles = [value for key, value in pairs if key == "证照标题"]
+            periods = [value for key, value in pairs if key == "营业期限"]
+            if (len(titles) == len(periods) == 1 and isinstance(titles[0], str)
+                    and "安全生产许可证" in titles[0] and isinstance(periods[0], str)):
+                raw_field = '"营业期限": ' + json.dumps(periods[0], ensure_ascii=False)
+                if raw_field not in text:
+                    match = re.search(r'"营业期限"\s*:\s*"([^"\\]*)"', text)
+                    raw_field = match.group(0) if match and match.group(1) == periods[0] else ""
+                if raw_field:
+                    period = re.sub(r"^<\d+(?:,\d+){4}>,", "", periods[0])
+                    structured = extract_validity_records(
+                        {page_no: titles[0] + "\n营业期限：" + period},
+                        file_name=file_name, baseline=baseline, asset_id=asset_id)
+                    for record in structured:
+                        record["snippet"] = raw_field
+                        record["source_format"] = "structured_certificate_text"
+                        # 日期是在规范化视图内解析的，不能将视图坐标伪装为原页坐标。
+                        for fact in (record["date_verification"]["facts"]
+                                     + record["validity_start_facts"]):
+                            fact.pop("source_span", None)
+                    records.extend(structured)
+                    continue
         # 车辆/驾驶证件整文件域外排除（VETO 判例：行驶证年检状态需人工核验）
         if _VEHICLE_DOC_RE.search(file_name or ""):
             continue

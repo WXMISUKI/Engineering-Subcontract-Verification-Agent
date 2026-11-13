@@ -81,6 +81,7 @@ def _point_basis(items: list[dict], subject_types: dict | None = None) -> list[s
     result = []
     for item in items:
         source = " ".join(str(item.get("source") or "").split())
+        source = source.removeprefix("依据：").strip()
         if not source:
             continue
         if item.get("kind") == "signature_chain" and _SEAL_SOURCE_LIMIT in source:
@@ -140,10 +141,43 @@ def _proven_required_material_missing(items: list[dict], policy=None, subject_ty
            for item in items)
 
 
+def _proven_person_certificate_conflict(items, policy, subject_types, baseline_date):
+    if not policy:
+        return False
+    for item in items:
+        if (item.get("kind") != "cert_validity" or item.get("item_id") != "A2-05"
+                or item.get("status") != "hit" or item.get("reading_limited")
+                or not str(item.get("source") or "").strip()
+                or ((item.get("human_disposition") or {}).get("code") == "accepted"
+                    and str((item.get("human_disposition") or {}).get("note") or "").strip())):
+            continue
+        subject_type = (subject_types or {}).get(item.get("subject_id"))
+        if not any(rule["kind"] == "cert_validity" and rule["item_id"] == "A2-05"
+                   and rule["predicate"] == "verified_certificate_number_conflict"
+                   and subject_type in rule["subject_types"] and report_policy.rule_applies_on(rule, baseline_date)
+                   for rule in policy["rules"]):
+            continue
+        refs = item.get("evidence_list") or []
+        valid = [ref for ref in refs if isinstance(ref, dict)
+                 and ref.get("role") in {"support", "contradiction"}
+                 and "certificate.number" in (ref.get("conflict_fields") or [])
+                 and ref.get("material_id") is not None and type(ref.get("page")) is int and ref["page"] > 0
+                 and ref.get("location_mode") in {"page", "precise"}
+                 and str(ref.get("quote") or "").strip()
+                 and ref.get("quality") not in {"unreadable", "review_required"}]
+        if {ref["role"] for ref in valid} == {"support", "contradiction"}:
+            return True
+    return False
+
+
 def _point_verdict(items: list[dict], complete: bool, reading_incomplete: bool, scope_pending: bool = False,
                    policy=None, subject_types=None, baseline_date=None) -> str:
     # hit 包括预警，severity 是排序档位，均不足以判断不符合或基本符合。
-    if not items or not complete or reading_incomplete:
+    if not items or not complete:
+        return "待核实"
+    if _proven_person_certificate_conflict(items, policy, subject_types, baseline_date):
+        return "不符合"
+    if reading_incomplete:
         return "待核实"
     # 三类必需证照采用用户确认的缺件口径；不扩展至其他材料。
     if _proven_required_material_missing(items, policy, subject_types, baseline_date):
@@ -186,6 +220,13 @@ def report_display_sections(document: dict) -> list[dict]:
     sections = [{**section, "display_points": [dict(row) for row in
                  (section.get("key_points", section.get("fields")) or [])]}
                 for section in document.get("sections") or []]
+    scope_limitations = [str(value) for value in document.get("scope_limitations") or [] if value]
+    if scope_limitations:
+        sections.append({
+            "title": "规则范围限制",
+            "display_points": [{"label": "范围说明", "summary": value}
+                               for value in scope_limitations],
+        })
     # 旧版冻结投影尚未将事项摘要和人工备注放入要点；展示时补充，原快照不变。
     if document.get("schema_version") != "bs.business-report-document.v2":
         pending = document.get("pending_summaries")
@@ -220,7 +261,7 @@ def report_display_sections(document: dict) -> list[dict]:
     for text in limitations:
         text = str(text)
         lower = text.lower()
-        if any(word in lower for word in ("ocr", "未读", "读取", "识别质量", "文字质量", "可读正文", "存疑页")):
+        if any(word in lower for word in ("ocr", "未读", "读取", "识别质量", "文字质量", "质量可疑", "可读正文", "存疑页")):
             target = "报审资料"
         elif "AI" in text or "模型" in text:
             target = "报审资料"
@@ -237,7 +278,16 @@ def report_display_sections(document: dict) -> list[dict]:
         point = targets.get(target)
         if point is None:
             point = next((p for s in sections for p in s["display_points"]), None)
+        local_ai = "本阶段相关辅助核查未完成或依据关联不足，需结合相关资料核实。"
+        global_ai = "部分 AI 辅助核查未完成，相关事项需结合现有结果人工核实。"
+        if point is not None and text == global_ai and local_ai in str(point.get("summary") or ""):
+            point["summary"] = point["summary"].replace(
+                local_ai, "部分 AI 辅助核查未完成或依据关联不足，相关事项需结合现有资料核实。")
+            continue
         if point is not None and text not in str(point.get("summary") or ""):
+            placeholder = "当前没有可单独归纳的核查结果。"
+            if str(point.get("summary") or "").startswith(placeholder):
+                point["summary"] = point["summary"][len(placeholder):].lstrip()
             point["summary"] = " ".join(filter(None, [point.get("summary"), text]))
     return sections
 
@@ -269,12 +319,13 @@ def _field_summary(label: str, items: list[dict], complete: bool) -> str:
                 return label + "相关事项"
             names = re.findall(r"「([^」]+)」", str(item.get("message") or "")) if item.get("item_id") == "A2-02" else []
             return names[0] + "有效期" if len(names) == 1 and names[0] in {
-                "营业执照", "资质证书", "安全生产许可证", "特种作业操作证", "安全生产考核合格证"
+                "营业执照", "资质证书", "安全生产许可证", "施工劳务备案证书", "特种作业操作证", "安全生产考核合格证"
             } else str(item.get("label") or "核查事项")
         statements = []
         suggestions = []
         grouped_gaps = []
         unresolved_labels = []
+        seen_signature_clues = set()
         grouped_uncertain = sum(1 for item in pending if item.get("status") == "undecidable"
                                 and (item.get("missing") or {}).get("labels")) > 1
         group_plain_uncertain = sum(1 for item in pending if item.get("status") == "undecidable"
@@ -282,6 +333,19 @@ def _field_summary(label: str, items: list[dict], complete: bool) -> str:
                                     and not str((item.get("human_disposition") or {}).get("note") or "").strip()) > 3
         for item in pending:
             message = " ".join(str(item.get("message") or "").split())
+            if item.get("source_kind") == "negative_candidate":
+                # 引文校验仅证明摘录可定位，不能证明模型整段推理；摘要只展示
+                # 已引用的原文线索，人工意见仍由下方 notes 独立保留。
+                quotes = [" ".join(ref.get("quote", "").split())
+                          for ref in (item.get("evidence_list") or [])
+                          if isinstance(ref, dict) and isinstance(ref.get("quote"), str)]
+                quote = next((value for value in quotes if 4 <= len(value) <= 100), "")
+                message = ("材料原文提及“%s”；需结合完整资料和适用依据核对" % quote
+                           if quote else "已有模型辅助核查线索，需结合完整资料和适用依据核对")
+            message = re.sub(r"主体\s*\d+（([^（）]{1,120})）", r"\1", message)
+            if (item.get("status") == "undecidable" and message.startswith("不可判定：")
+                    and any(term in message[len("不可判定："):] for term in ("未", "无法", "不足", "缺"))):
+                message = message[len("不可判定："):]
             item_label = pending_label(item)
             if len(message) > 200:
                 # 仅使用完整句子，不在句中截断并伪造完整结论；详情仍保存在核查记录。
@@ -291,6 +355,18 @@ def _field_summary(label: str, items: list[dict], complete: bool) -> str:
             statement = (item_label + "：" + message.rstrip("。； ")
                          if message and len(message) <= 200 and item_label not in message
                          else message.rstrip("。； ") if message and len(message) <= 200 else item_label)
+            refs = item.get("evidence_list") or []
+            if (item.get("kind") == "signature_chain" and item.get("subject_id") is not None
+                    and message.startswith("报审表中识别到总监理工程师意见及指挥部意见栏目")
+                    and refs and all(isinstance(ref, dict) and type(ref.get("material_id")) is int
+                                     and type(ref.get("page")) is int and isinstance(ref.get("quote"), str)
+                                     and ref["quote"] for ref in refs)):
+                key = (item["subject_id"], message,
+                       tuple(sorted((ref["material_id"], ref["page"], ref["quote"]) for ref in refs)))
+                if key in seen_signature_clues:
+                    statement = ""
+                else:
+                    seen_signature_clues.add(key)
             missing = (item.get("missing") or {}).get("labels") or []
             if grouped_uncertain and item.get("status") == "undecidable" and missing:
                 for gap in missing:
@@ -298,16 +374,24 @@ def _field_summary(label: str, items: list[dict], complete: bool) -> str:
                     if gap and gap not in grouped_gaps:
                         grouped_gaps.append(gap)
             elif (group_plain_uncertain and item.get("status") == "undecidable" and not missing
+                  # 日期是具体可核对事实，不能因待核事项数量较多而折叠掉。
+                  and not (item.get("kind") == "cert_validity" and item.get("item_id") == "A2-02"
+                           and re.search(r"\d{4}-\d{2}-\d{2}", message))
                   and not str((item.get("human_disposition") or {}).get("note") or "").strip()):
                 if item_label not in unresolved_labels:
                     unresolved_labels.append(item_label)
             elif statement and statement not in statements:
                 statements.append(statement)
             suggestion = " ".join(str(item.get("recommendation") or "").split()).rstrip("。； ")
+            if (suggestion == "补充或核实与该项相关的原始资料，完成确认后重新核查"
+                    and statement in statements
+                     and any(action in message for action in ("需核对", "请核对", "结合原件核实", "需人工核实",
+                                                               "人工核对原件", "请补充"))):
+                suggestion = ""
             if suggestion and len(suggestion) <= 200 and suggestion not in suggestions and suggestion not in message:
                 suggestions.append(suggestion)
         if statements:
-            parts.append("核查情况：" + "；".join(statements))
+            parts.append("；".join(statements))
         if grouped_gaps:
             parts.append("相关事项因以下资料或事实不足尚无法判断：" + "、".join(grouped_gaps[:4])
                          + ("等相关资料或事实" if len(grouped_gaps) > 4 else ""))
@@ -315,7 +399,7 @@ def _field_summary(label: str, items: list[dict], complete: bool) -> str:
             parts.append("尚需核实：" + "、".join(unresolved_labels[:3])
                          + ("等事项" if len(unresolved_labels) > 3 else ""))
         if suggestions:
-            parts.append("核查建议：" + "；".join(suggestions))
+            parts.append("；".join(suggestions))
     if notes:
         parts.append("人工补充：" + "；".join(notes))
     if any(item.get("kind") == "signature_chain" and _SEAL_SOURCE_LIMIT in str(item.get("source") or "")
@@ -371,7 +455,7 @@ def _field_matches(field: str, item: dict, policy=None) -> bool:
             names = re.findall(r"「([^」]+)」", str(item.get("message") or ""))
             if len(names) == 1:
                 name = names[0]
-                if name in {"营业执照", "资质证书", "安全生产许可证"}:
+                if name in {"营业执照", "资质证书", "安全生产许可证", "施工劳务备案证书"}:
                     return field == "企业证照有效期"
                 if name in {"特种作业操作证", "安全生产考核合格证"}:
                     return field == "人员证件有效期"
@@ -583,6 +667,9 @@ def build_report_document(report: dict) -> dict:
     coverage = report.get("coverage") or {}
     reference = report.get("reference_snapshot") or {}
     policy = report_policy.read_frozen_policy(reference["report_policy"]) if "report_policy" in reference else None
+    scope_limitations = [str(value) for value in report.get("scope_limitations") or [] if value]
+    scope_limited = bool((report.get("scope_coverage") or {}).get("state") == "partial"
+                         and scope_limitations)
     selected, completed = _selected_groups(coverage), _complete_groups(coverage)
     subject_types = {row.get("subject_id"): row.get("subject_type")
                      for row in (report.get("checklist_summary") or {}).get("subjects") or []
@@ -682,7 +769,8 @@ def build_report_document(report: dict) -> dict:
             "summary": summary,
             "fields": [{"label": field, "summary": summaries[field],
                         "basis": _point_basis(by_label[field], subject_types),
-                        "verdict": ("—" if not _field_selected(title, field, selected)
+                        "verdict": ("—" if (not _field_selected(title, field, selected)
+                                             or (title == "内部信用与事故材料核查" and field == "核查范围及限制"))
                             else _point_verdict(by_label[field],
                             _field_groups(title, field).issubset(selected) and _field_groups(title, field).issubset(completed),
                             reading_incomplete,
@@ -750,6 +838,10 @@ def build_report_document(report: dict) -> dict:
     elif issues:
         conclusion_status = "attention"
         conclusion = "本次核查发现需关注或待核实事项，详见待处理事项摘要及人工意见。"
+    elif scope_limited:
+        conclusion_status = "scope_limited"
+        conclusion = ("在本次已覆盖核查范围内，未发现需要处理的问题；部分规则本轮未覆盖，"
+                      "相关规则未形成符合或不符合结论，不能解释为完整通过。具体规则见范围限制。")
     else:
         conclusion_status = "no_issue"
         conclusion = "在本次已完成核查范围内，未发现需要处理的问题。"
@@ -758,8 +850,10 @@ def build_report_document(report: dict) -> dict:
                                    for item in issues if item.get("status") == status))
         if names:
             conclusion += "%s：%s%s。" % (label, "、".join(names[:3]), "等" if len(names) > 3 else "")
+    scope_limitation_set = set(scope_limitations)
     limitations = list(dict.fromkeys(
-        [str(value) for value in report.get("scope_statements") or []]
+        [str(value) for value in report.get("scope_statements") or []
+         if str(value) not in scope_limitation_set]
         + [str(row.get("summary_text")) for row in report.get("reading_coverage") or []
            if row.get("summary_text")]
         + [str(row.get("message")) for row in (report.get("limitations") or [])
@@ -800,6 +894,7 @@ def build_report_document(report: dict) -> dict:
     return {"schema_version": "bs.business-report-document.v2",
             "basic_information": information, "basic_information_status": field_status,
             "sections": categories, "issues": issues,
+            "scope_limitations": scope_limitations,
             "pending_summaries": pending_summaries, "human_notes": human_notes,
             "conclusion": {"status": conclusion_status, "text": conclusion,
                            "limitations": limitations, "limitation_groups": _limitation_groups(limitations)}}

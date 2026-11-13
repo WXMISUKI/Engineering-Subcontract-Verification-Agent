@@ -1,6 +1,7 @@
 """冻结当前代模型建议，并在历史读取时重新检查依据授权。"""
 from copy import deepcopy
 from datetime import datetime, timezone
+import re
 from types import SimpleNamespace
 
 from fastapi import HTTPException
@@ -467,6 +468,19 @@ def collect_current_advisories(db, task):
     return result
 
 
+def project_advisory_for_business(advisory):
+    """片段未见仅供内部分析，展示副本保留双侧引文但不输出局部缺失判断。"""
+    projected = deepcopy(advisory)
+    for proposal in projected.get("proposals") or []:
+        if not isinstance(proposal, dict):
+            continue
+        message = proposal.get("message")
+        if isinstance(message, str) and re.search(r"(?:文本|材料)片段中[^。；;\n]{0,120}未见", message):
+            proposal["message"] = "请结合完整报审材料、相关核查结果及所引依据核对该事项。"
+            proposal["requires_full_scope_review"] = True
+    return projected
+
+
 def redact_unavailable_advisories(db, task, advisories):
     """只改返回副本；历史原始快照保持不可变。"""
     user = SimpleNamespace(id=task.created_by, user_type=task.created_by_type)
@@ -492,7 +506,7 @@ def redact_unavailable_advisories(db, task, advisories):
                 allowed = False
                 break
         if allowed:
-            output.append(deepcopy(advisory))
+            output.append(project_advisory_for_business(advisory))
         else:
             output.append({"finding_id": advisory.get("finding_id"), "group_id": advisory.get("group_id"),
                            "limitation": "历史建议的依据当前未获授权，暂不能查看内容"})

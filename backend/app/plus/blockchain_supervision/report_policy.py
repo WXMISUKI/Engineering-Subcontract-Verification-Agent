@@ -95,9 +95,13 @@ def _validate(policy, *, require_complete_bindings=False):
         subjects = rule["subject_types"]
         supported = {"required_certificate_missing": {"RC-A02", "RC-A03", "RC-A04"},
                      "required_document_missing": {"RC-A05", "RC-A06"}}
-        if (rule["kind"] != "completeness" or rule["point"] != "主体资料"
-                or not isinstance(rule["predicate"], str)
-                or rule["item_id"] not in supported.get(rule["predicate"], set()) or rule["verdict"] != "不符合"
+        is_missing_rule = (rule["kind"] == "completeness" and rule["point"] == "主体资料"
+                           and isinstance(rule["predicate"], str)
+                           and rule["item_id"] in supported.get(rule["predicate"], set()))
+        is_number_conflict = (rule["kind"] == "cert_validity" and rule["point"] == "证件信息一致性"
+                              and rule["item_id"] == "A2-05"
+                              and rule["predicate"] == "verified_certificate_number_conflict")
+        if (not (is_missing_rule or is_number_conflict) or rule["verdict"] != "不符合"
                 or rule["approved"] is not True or not isinstance(subjects, list)
                 or not subjects or any(not isinstance(s, str) or s not in {"professional", "labor"} for s in subjects)
                 or len(set(subjects)) != len(subjects)):

@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from .card_artifacts import build_review_flow_overlay
 from .cards import resolve_rule_cards
+from .ai_scope_selection import resolved_scope_strategy
 from .models import BsTask, BsTaskEvent
 from .rules import load_basis_clauses, load_review_flow
 
@@ -182,6 +183,7 @@ def build_review_seed(task: BsTask, *, review_run_id: str, material_fingerprint:
     return {
         "schema_version": "bs-reference-review.v1", "review_run_id": review_run_id,
         "material_fingerprint": material_fingerprint, "rule_fingerprint": rule_fingerprint,
+        "scope_strategy": resolved_scope_strategy(),
         "basis_package_version": package["version"],
         "basis_package_hash": package_hash,
         "ruleset_version": rule_fingerprint,

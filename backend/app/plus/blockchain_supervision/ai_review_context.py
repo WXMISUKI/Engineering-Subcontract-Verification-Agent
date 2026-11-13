@@ -7,6 +7,8 @@ from types import SimpleNamespace
 
 from .ai_review_execution import review_item
 from .ai_evidence import contains_quote
+from .ai_scope_mappings import rule_scope_mapping
+from .ai_scope_selection import fallback_scope, select_scope
 from .attachment_source import is_attachment_source
 from .internal_records import is_internal_record_candidate
 from .parsing import material_reading_gap, reading_coverage, reviewed_readable_pages
@@ -188,6 +190,100 @@ def build_review_context(*, finding, materials, run, subject_names_by_id=None):
         context["materials"] = scoped_materials
         context["incomplete_material_scope"] = True
         context["limitations"].append("模型上下文已按当前核查项材料锚点裁剪，其他材料页未纳入；不能据此证明完整范围")
+    strategy = run.get("scope_strategy") if isinstance(run, dict) else None
+    if (isinstance(strategy, dict) and strategy.get("enabled") is True
+            and finding.kind in {"transfer_scope", "illegal_subcontract"}):
+        mapping = rule_scope_mapping(finding.item_id)
+        if mapping:
+            required_categories, category_selectors = mapping
+            anchors = []
+            if type(getattr(finding, "material_id", None)) is int and type(getattr(finding, "page", None)) is int:
+                anchors.append((finding.material_id, finding.page))
+            anchors.extend(
+                (e.get("material_id"), e.get("page"))
+                for e in getattr(finding, "evidence_json", None) or []
+                if isinstance(e, dict) and type(e.get("material_id")) is int and type(e.get("page")) is int
+            )
+            strategy_version = strategy.get("version") or "category-adjacency-v1"
+            fallback_reason = (
+                "preexisting_incomplete_context" if context.get("incomplete_material_scope")
+                else "undecidable_finding" if getattr(finding, "status", None) == "undecidable"
+                else None
+            )
+            if fallback_reason:
+                selection = fallback_scope(
+                    context["materials"], reason=fallback_reason, strategy_version=strategy_version,
+                )
+            else:
+                selection = select_scope(
+                    context["materials"],
+                    required_categories=required_categories,
+                    category_selectors=category_selectors,
+                    anchor_pages=anchors,
+                    strategy_version=strategy_version,
+                )
+            context["scope_selection"] = {
+                "strategy_version": selection.strategy_version,
+                "narrowed": selection.narrowed,
+                "scope_incomplete": selection.scope_incomplete,
+                "matched_categories": selection.matched_categories,
+                "fallback_reason": selection.fallback_reason,
+                "excluded_page_count": selection.excluded_page_count,
+                "input_fingerprint": selection.input_fingerprint,
+                "selected_page_ids": selection.selected_page_ids,
+                "excluded_page_ids": selection.excluded_page_ids,
+            }
+            if selection.narrowed:
+                context["materials"] = list(selection.pages)
+                context["incomplete_material_scope"] = True
+                context["limitations"].append(
+                    "MoMA 输入按已审阅的规则证据类别裁剪，其他授权页面未纳入；不能据此认定完整范围"
+                )
+            elif selection.fallback_reason:
+                context["limitations"].append(
+                    "MoMA 证据类别范围未能可靠裁剪，已回退现有模型输入范围，请人工核实"
+                )
+        elif finding.kind == "transfer_scope" and finding.item_id == "T15-05":
+            from .ai_scope_evidence_graph import build_t15_05_shadow_graph
+
+            graph = build_t15_05_shadow_graph(
+                eligible_pages=context["materials"], materials=materials)
+            occurrences = graph["occurrences"]
+            relation_names = sorted({row["relation"] for row in occurrences})
+            page_ids = tuple(sorted({
+                (page.get("material_id"), page.get("subject_id"), page.get("page"))
+                for page in context["materials"]
+                if type(page.get("material_id")) is int and type(page.get("page")) is int
+            }))
+            context["scope_selection"] = {
+                "strategy_version": graph["strategy_version"],
+                "narrowed": False,
+                "scope_incomplete": bool(context.get("incomplete_material_scope")),
+                "matched_categories": tuple(relation_names),
+                "fallback_reason": graph["fallback_reason"],
+                "excluded_page_count": 0,
+                "input_fingerprint": graph["input_fingerprint"],
+                "selected_page_ids": page_ids,
+                "excluded_page_ids": (),
+                "shadow_evidence": {
+                    "rule_fingerprint": graph.get("rule_fingerprint"),
+                    "relation_counts": {
+                        name: sum(row["relation"] == name for row in occurrences)
+                        for name in relation_names
+                    },
+                    "relation_page_ids": {
+                        name: tuple(sorted({
+                            (row["material_id"], row["subject_id"], row["page"])
+                            for row in occurrences if row["relation"] == name
+                        }))
+                        for name in relation_names
+                    },
+                    "source_role_coverage": graph.get("role_coverage"),
+                },
+            }
+            context["limitations"].append(
+                "T15-05 结构化证据图仅作影子分析，当前模型输入保持基线范围"
+            )
     role = {"RC-L11": "安全员", "RC-P12": "项目总工"}.get(finding.item_id)
     if role and finding.subject_id is not None and context["materials"]:
         allowed = {(page["material_id"], page["page"]) for page in context["materials"]}
@@ -256,4 +352,7 @@ async def review_linked_finding(*, client, finding, materials, run, on_usage=Non
                                required_subject_name=context.get("required_subject_name"),
                                on_usage=on_usage)
     result["limitations"] = list(dict.fromkeys(context["limitations"] + result["limitations"]))
+    selection = context.get("scope_selection")
+    if isinstance(selection, dict):
+        result["scope_selection"] = selection
     return result

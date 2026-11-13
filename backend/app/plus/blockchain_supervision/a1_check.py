@@ -81,6 +81,17 @@ def _material_text(material) -> str:
     return "\n".join(p.get("text", "") for p in _readable_pages(material))
 
 
+def _optional_general_source_readable(materials: list, *, scope_policy_enabled: bool,
+                                     general_source_state: str | None) -> bool:
+    """Keep optional-source coverage decisions explicit and fail closed on mismatches."""
+    if not scope_policy_enabled:
+        return True
+    if general_source_state is not None and general_source_state != "readable":
+        return False
+    return any(m.role == "general" and m.parse_state == "done"
+               and _material_text(m).strip() for m in materials)
+
+
 def _detect_tax(window: str) -> str:
     if any(h in window for h in _EXCL_TAX_HINTS):
         return "excl"
@@ -162,8 +173,13 @@ def _fmt_wan(v: float) -> str:
     return format(v, ",.2f").rstrip("0").rstrip(".") + "万元"
 
 
-def run_amount_ratio_check(task, materials: list) -> list:
+def run_amount_ratio_check(task, materials: list, *, scope_policy_enabled: bool = False,
+                            general_source_state: str | None = None) -> list:
     """A1-01：分母=总包合同金额（已确认口径），分子=分包合同累计，双口径试算。"""
+    if not _optional_general_source_readable(
+            materials, scope_policy_enabled=scope_policy_enabled,
+            general_source_state=general_source_state):
+        return []
     general = [m for m in materials if m.role == "general" and m.parse_state == "done"]
     subs = [m for m in materials if m.role == "sub" and m.parse_state == "done"]
     labors = [m for m in materials if m.role == "labor" and m.parse_state == "done"]
@@ -1046,15 +1062,19 @@ def _run_t15_02(task, general: list, subs: list, rule: dict) -> BsFinding:
                                 missing=missing)
 
 
-def run_transfer_scope_check(task, materials: list) -> list:
+def run_transfer_scope_check(task, materials: list, *, scope_policy_enabled: bool = False,
+                             general_source_state: str | None = None) -> list:
     """A1-RULE-01：第十五条（一）（二）合同范围核查纯内核。
 
-    固定返回**恰好 2 条** finding，顺序 T15-01 → T15-02；每条规则跨材料聚合为 1 条
-    （与 A1-02「同一规则跨材料聚合」同构）。由 `service.run_a1_checks` 接线（service.py:1627），
-    金样 88 条里即有 T15-01/T15-02 结论。
+    默认固定返回恰好 2 条 finding，顺序 T15-01 → T15-02；启用可选来源范围策略且总包
+    不可用时，仅跳过依赖总包的规则。由 `service.run_a1_checks` 接线。
 
     材料筛选口径与既有内核一致：role ∈ {general, sub}、parse_state == "done"、文本非空。
     """
+    if not _optional_general_source_readable(
+            materials, scope_policy_enabled=scope_policy_enabled,
+            general_source_state=general_source_state):
+        return []
     general = [m for m in materials
                if m.role == "general" and m.parse_state == "done"
                and _material_text(m).strip()]
@@ -1337,10 +1357,12 @@ def _run_t15_04(task, evidence: list, rule: dict) -> BsFinding:
         source)
 
 
-def run_transfer_materials_check(task, materials: list) -> list:
+def run_transfer_materials_check(task, materials: list, *, scope_policy_enabled: bool = False,
+                                 general_source_state: str | None = None) -> list:
     """A1-RULE-02：第十五条（三）（四）采购租赁与现场/劳动关系核查纯内核。
 
-    固定返回**恰好 2 条** finding，顺序 T15-03 → T15-04；每条规则跨材料聚合为 1 条
+    默认固定返回恰好 2 条 finding，顺序 T15-03 → T15-04；启用可选来源范围策略时，
+    缺少可用总包只跳过 T15-03，T15-04 仍按原有材料集合运行。
     （与 run_transfer_scope_check 同构）。kind 仍为 transfer_scope（与 T15-01/T15-02 同
     kind，R05 一次登记四个条目）。由 `service.run_a1_checks` 接线（service.py:1628）——
     金样里的 T15-03/T15-04 结论就是这条路径产出的。
@@ -1357,8 +1379,13 @@ def run_transfer_materials_check(task, materials: list) -> list:
                 and m.parse_state == "done" and _material_text(m).strip()]
     r15_03 = _transfer_rule("T15-03")
     r15_04 = _transfer_rule("T15-04")
-    return [_run_t15_03(task, general, evidence, r15_03),
-            _run_t15_04(task, evidence, r15_04)]
+    findings = []
+    if _optional_general_source_readable(
+            materials, scope_policy_enabled=scope_policy_enabled,
+            general_source_state=general_source_state):
+        findings.append(_run_t15_03(task, general, evidence, r15_03))
+    findings.append(_run_t15_04(task, evidence, r15_04))
+    return findings
 
 
 # ==================== A1-03 第十五条（五）-（九）主体关系与资金流核查内核（A1-RULE-03） ====================
@@ -1907,10 +1934,12 @@ def _run_t15_09(task, evidence: list, rule: dict) -> BsFinding:
                                 missing=missing)
 
 
-def run_transfer_relations_check(task, materials: list) -> list:
+def run_transfer_relations_check(task, materials: list, *, scope_policy_enabled: bool = False,
+                                 general_source_state: str | None = None) -> list:
     """A1-RULE-03：第十五条（五）-（九）主体关系与资金流核查纯内核。
 
-    固定返回**恰好 5 条** finding，顺序 T15-05 → T15-06 → T15-07 → T15-08 → T15-09；
+    默认固定返回恰好 5 条 finding，顺序 T15-05 → T15-06 → T15-07 → T15-08 → T15-09；
+    启用可选来源范围策略时，缺少可用总包只跳过 T15-05；
     每条规则跨材料聚合为 1 条，kind 均为 transfer_scope（与 T15-01..T15-04 同 kind）。
     由 `service.run_a1_checks` 接线（service.py:1629，R05 已落地）。
 
@@ -1924,11 +1953,18 @@ def run_transfer_relations_check(task, materials: list) -> list:
     evidence = [m for m in materials
                 if m.role in ("general", "sub", "labor", "packet")
                 and m.parse_state == "done" and _material_text(m).strip()]
-    return [_run_t15_05(task, general, evidence, _transfer_rule("T15-05")),
-            _run_t15_06(task, evidence, _transfer_rule("T15-06")),
-            _run_t15_07(task, _transfer_rule("T15-07")),
-            _run_t15_08(task, evidence, _transfer_rule("T15-08")),
-            _run_t15_09(task, evidence, _transfer_rule("T15-09"))]
+    findings = []
+    if _optional_general_source_readable(
+            materials, scope_policy_enabled=scope_policy_enabled,
+            general_source_state=general_source_state):
+        findings.append(_run_t15_05(task, general, evidence, _transfer_rule("T15-05")))
+    findings.extend([
+        _run_t15_06(task, evidence, _transfer_rule("T15-06")),
+        _run_t15_07(task, _transfer_rule("T15-07")),
+        _run_t15_08(task, evidence, _transfer_rule("T15-08")),
+        _run_t15_09(task, evidence, _transfer_rule("T15-09")),
+    ])
+    return findings
 
 
 # ==================== 第十六条/十七条 违法分包与劳务名义分包核查内核（A1-RULE-04） ====================
@@ -3309,7 +3345,9 @@ _ILLEGAL_HANDLERS = {
 
 def run_illegal_subcontract_check(task, materials: list, a3_findings: list = None,
                                   negative_list_findings: list = None,
-                                  qualification_evidence: dict = None) -> list:
+                                  qualification_evidence: dict = None, *,
+                                  scope_policy_enabled: bool = False,
+                                  general_source_state: str | None = None) -> list:
     """A1-RULE-04：第十六条七类 + 第十六条视为四类 + 第十七条三类 违法分包纯内核。
 
     总包合同在场时固定返回**恰好 14 条** finding，顺序 W16-01→W16-07、V16-01→V16-04、
@@ -3332,6 +3370,10 @@ def run_illegal_subcontract_check(task, materials: list, a3_findings: list = Non
     """
     general = [m for m in materials if m.role == "general"
                and m.parse_state == "done" and _material_text(m).strip()]
+    if not _optional_general_source_readable(
+            materials, scope_policy_enabled=scope_policy_enabled,
+            general_source_state=general_source_state):
+        general = []
     subs = [m for m in materials if m.role == "sub"
             and m.parse_state == "done" and _material_text(m).strip()]
     labor = [m for m in materials if m.role == "labor"

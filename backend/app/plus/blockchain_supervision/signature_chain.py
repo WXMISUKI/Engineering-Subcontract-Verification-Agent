@@ -315,6 +315,23 @@ def _container_qualifier(members: list) -> str:
 _SOURCE_MISSING = "（缺：签署栏文本）"
 
 
+def _form_opinion_clue(members):
+    """只描述可读报审表上的栏目文字，不据此推断签署或审批有效。"""
+    candidates = []
+    labels = ("总监理工程师意见", "指挥部意见")
+    for material in members:
+        if material.parse_state != "done":
+            continue
+        for page in material.pages_json or []:
+            number = page.get("page")
+            text = page.get("text") or ""
+            if (type(number) is int and number > 0 and material_page_readable(material, number)
+                    and "分包报审表" in text[:300] and all(label in text for label in labels)
+                    and not re.search(r"空白模板|填写示例|样表", text[:300])):
+                candidates.append((material, number))
+    return candidates[0] if len(candidates) == 1 else None
+
+
 def _has_confirm_evidence(members: list, nodes: list) -> bool:
     """★分辨力判据：组内是否至少有一条**姓名（非纯日期）**的签署行。
 
@@ -432,6 +449,7 @@ def run_signature_chain_checks(task, materials: list, *, require_assigned: bool 
             status = verdict["status"]
             if status == STATUS_UNDECIDABLE:
                 reason = verdict.get("reason")
+                clue = _form_opinion_clue(group) if reason == "no_text" else None
                 if reason == "unread_pages":
                     scope = "；".join(
                         describe_reading_gap(member, gap)
@@ -443,14 +461,19 @@ def run_signature_chain_checks(task, materials: list, *, require_assigned: bool 
                     msg = ("暂时无法判断：%s签署栏在场，但未见可确认的签署人姓名"
                            "（签署栏仅含日期或空缺，无法确认签署人），需人工翻看原件"
                            "（缺：签署人姓名）%s" % (chain["name"], _group_seal_note(group)))
+                elif clue:
+                    msg = ("报审表中识别到总监理工程师意见及指挥部意见栏目；"
+                           "本项签署环节、签章及意见内容需结合原件核对%s" % _group_seal_note(group))
                 else:
                     msg = ("暂时无法判断：报审资料里没有读到签署栏文字，签署页可能为扫描件"
                            "（若为手写签名请人工翻看原件）%s%s"
                            % (_SOURCE_MISSING, _group_seal_note(group)))
                 findings.append(BsFinding(
-                    task_id=task.id, material_id=rep.id, subject_id=subject_id, item_id=item_id,
+                    task_id=task.id, material_id=clue[0].id if clue else rep.id, subject_id=subject_id, item_id=item_id,
                     kind=_KIND, status=STATUS_UNDECIDABLE, message=msg,
-                    quote=None, page=None, source=source))
+                    quote="总监理工程师意见" if clue else None, page=clue[1] if clue else None, source=source,
+                    evidence_json=([{"material_id": clue[0].id, "page": clue[1], "quote": label}
+                                    for label in ("总监理工程师意见", "指挥部意见")] if clue else None)))
                 continue
             if status == STATUS_MISS:
                 findings.append(BsFinding(

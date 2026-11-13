@@ -14,7 +14,7 @@ from types import SimpleNamespace
 
 from sqlalchemy.orm import Session
 
-from . import a2_check, ai_advisory_snapshots, business_report, certificate_number_check, checklist, contract_party_evidence as contract_party_evidence_module, extract, finding_text, identity_observation, material_confirmation, material_versions, parsing, qualification_summary, reference_snapshots, report_basic_facts, report_document
+from . import a2_check, ai_advisory_snapshots, business_report, certificate_number_check, checklist, contract_party_evidence as contract_party_evidence_module, extract, finding_text, identity_observation, material_confirmation, material_versions, optional_source_scope, parsing, qualification_summary, reference_snapshots, report_basic_facts, report_document
 from .classify import ROLE_LABELS, ROLE_PACKET, ROLE_UNKNOWN, classify_material
 from . import report_contract_type
 from .models import (STATUS_CODES, STATUS_LABELS, STATUS_UNDECIDABLE,
@@ -76,7 +76,42 @@ def mark_stage(payload: dict, stage: str) -> dict:
     return payload
 
 
-def scope_statements(db: Session, task: BsTask) -> list:
+_OPTIONAL_SOURCE_STATE_LABELS = {
+    "absent": "总包合同未提供",
+    "processing": "总包合同仍在读取",
+    "readable": "总包合同可读取",
+    "unreadable": "总包合同暂不可读取",
+    "required_pages_unreadable": "规则所需总包页面暂不可读取",
+    "unlinked": "总包合同尚未确认归属",
+    "conflicted": "总包合同存在主体或来源冲突",
+}
+
+
+def optional_scope_limitation_statements(scope_coverage: dict | None) -> list[str]:
+    if (not isinstance(scope_coverage, dict)
+            or scope_coverage.get("policy") != optional_source_scope.POLICY_VERSION
+            or scope_coverage.get("state") != "partial"):
+        return []
+    limitations = [row for row in scope_coverage.get("limitations") or [] if isinstance(row, dict)]
+    if not limitations:
+        return []
+    titles = {row.get("id"): row.get("title") for row in load_transfer_rules().get("rules") or []
+              if isinstance(row, dict) and row.get("id")}
+    statements = ["本轮存在以下规则范围限制；相关规则未形成符合或不符合结论，也不计入通过。"]
+    for row in limitations:
+        rule_id = row.get("rule_id")
+        if not isinstance(rule_id, str) or not rule_id.strip():
+            continue
+        title = titles.get(rule_id)
+        rule_label = "%s（%s）" % (rule_id, title) if title else rule_id
+        subject_id = row.get("subject_id")
+        subject = "主体 %s，" % subject_id if subject_id is not None else ""
+        source_label = _OPTIONAL_SOURCE_STATE_LABELS.get(row.get("source_state"), "总包来源状态待核实")
+        statements.append("%s%s：%s，本轮未覆盖该规则。" % (rule_label, subject, source_label))
+    return statements if len(statements) > 1 else []
+
+
+def scope_statements(db: Session, task: BsTask, *, scope_coverage: dict | None = None) -> list:
     """本次核查范围的显式声明：把「哪些情形本次没查、为什么」写在纸面上。
 
     三态只描述**已纳入核查**的项判成什么，不描述「哪些项没进范围」。范围缺口若只用三态
@@ -103,14 +138,17 @@ def scope_statements(db: Session, task: BsTask) -> list:
     if not_checked:
         statements.append(
             "本次未核查%s（当前未启用）。" % "、".join(not_checked))
-    flagged = [rule["title"] for rule in load_transfer_rules()["rules"]
-               if rule.get("requires_general_contract")]
-    task_materials = db.query(BsMaterial).filter(BsMaterial.task_id == task.id).all()
-    has_general = any(material.role == "general" for material in
-                      material_versions.active_input_materials(task_materials))
-    if flagged and not has_general:
-        statements.append(
-            "未上传总包合同，未核查需该合同原文的情形：「%s」。" % "」「".join(flagged))
+    if isinstance(scope_coverage, dict) and scope_coverage.get("policy") == optional_source_scope.POLICY_VERSION:
+        statements.extend(optional_scope_limitation_statements(scope_coverage))
+    else:
+        flagged = [rule["title"] for rule in load_transfer_rules()["rules"]
+                   if rule.get("requires_general_contract")]
+        task_materials = db.query(BsMaterial).filter(BsMaterial.task_id == task.id).all()
+        has_general = any(material.role == "general" for material in
+                          material_versions.active_input_materials(task_materials))
+        if flagged and not has_general:
+            statements.append(
+                "未上传总包合同，未核查需该合同原文的情形：「%s」。" % "」「".join(flagged))
     statements.append(
         "本次未核查合同条款用词与文字细节（合同语义核查）。")
     if task.scope_a3:
@@ -859,24 +897,29 @@ def page_ranges(pages: list) -> str:
 
 def reading_summary(file_name: str, coverage: dict, affected: int) -> str:
     """未读页「结论层」说明：未读页范围 + 受影响结论数（不改判定，只披露）。"""
-    unread = coverage.get("unread_pages") or []
+    def pages(key):
+        return {p for p in coverage.get(key) or [] if type(p) is int and p > 0}
+
+    unread = pages("unread_pages")
+    suspect = pages("suspect_pages")
+    blank = pages("blank_pages")
+    over_limit = pages("over_limit_pages")
     total = coverage.get("total_pages")
     head = "《%s》" % (file_name or "材料")
     if total:
         head += "共 %d 页，" % total
-    if unread:
-        text = "%s未取得可读正文的页码：第 %s 页" % (head, page_ranges(unread))
-        over_limit = coverage.get("over_limit_pages") or []
-        if over_limit:
-            text += "（其中第 %s 页超出本次文字识别页数上限）" % page_ranges(over_limit)
-        blank_pages = coverage.get("blank_pages") or []
-        if blank_pages:
-            text += ("（其中第 %s 页经识别为空白页，无正文、无图像、无图形，无需人工翻看）"
-                     % page_ranges(blank_pages))
-        suspect_pages = coverage.get("suspect_pages") or []
-        if suspect_pages:
-            text += "（其中第 %s 页文字质量可疑，需人工核对原件）" % page_ranges(suspect_pages)
-        return text + "；涉及 %d 条结论。" % affected
+    messages = []
+    unread_only = unread - suspect - blank
+    if unread_only:
+        messages.append("第 %s 页未取得可用正文" % page_ranges(unread_only))
+    if suspect:
+        messages.append("第 %s 页已取得文字但质量可疑，需人工核对原件" % page_ranges(suspect))
+    if blank:
+        messages.append("第 %s 页经识别为空白页，无正文、无图像、无图形，无需人工翻看" % page_ranges(blank))
+    if over_limit:
+        messages.append("第 %s 页超出本次文字识别页数上限" % page_ranges(over_limit))
+    if messages:
+        return head + "；".join(messages) + "；涉及 %d 条结论。" % affected
     # 整体读取失败/无文本层：页码本身未知（不猜），只如实说明没读到正文。
     return "%s未能读取正文；涉及 %d 条结论。" % (head, affected)
 
@@ -1060,10 +1103,25 @@ def _attach_qualification_summary(report: dict) -> dict:
     return report
 
 
-def build_report(db: Session, task: BsTask) -> dict:
+def _ai_scope_limitations(advisories: list[dict]) -> list[str]:
+    """Expose reduced AI input scope in report-level limitations."""
+    if any(
+        isinstance(advisory, dict)
+        and isinstance(advisory.get("scope_selection"), dict)
+        and advisory["scope_selection"].get("narrowed") is True
+        for advisory in advisories
+    ):
+        return ["部分 AI 辅助意见仅基于选取的材料页，未覆盖全部可用资料；不得据此认定无问题或缺件，相关事项需人工核实。"]
+    return []
+
+
+def build_report(db: Session, task: BsTask, *, scope_coverage: dict | None = None) -> dict:
     """聚合任务全部已落库结论为报告 dict（纯读，不写库）。"""
     reference_snapshot = reference_snapshots.get_reference_snapshot(db, task)
     ai_coverage = ai_advisory_snapshots.collect_current_coverage(db, task, reference_snapshot, report_review_blocking)
+    ai_advisories = ai_advisory_snapshots.redact_unavailable_advisories(
+        db, task, ai_advisory_snapshots.collect_current_advisories(db, task))
+    ai_scope_limitations = _ai_scope_limitations(ai_advisories)
     timeout_ids = {finding_id for group in (ai_coverage or {}).get("groups", [])
                    for finding_id in group.get("reviewable_timeout_finding_ids", [])}
     findings = (db.query(BsFinding)
@@ -1156,6 +1214,7 @@ def build_report(db: Session, task: BsTask) -> dict:
             items.append({
                 "finding_id": f.id,
                 "item_id": f.item_id,
+                "source_kind": f.kind,
                 "category": title,
                 "label": _item_label(f.item_id, neg_map, rc_map, sc_map, val_map),
                 "subject_id": f.subject_id,
@@ -1270,11 +1329,14 @@ def build_report(db: Session, task: BsTask) -> dict:
     counts = status_counts(countable)
     open_term_count = sum(1 for finding in countable_findings if is_open_term(finding))
     coverage = build_coverage(db, task, finding_count=len(findings))
+    scope_limitations = optional_scope_limitation_statements(scope_coverage)
+    scope_limited = bool(scope_limitations)
     headline = _headline(counts, len(countable))
     if coverage["complete"] and not countable:
         # 所有选定分组均已完成且没有构成问题的条目（包括仅登记开放条款）
         # 是完整的“未发现需要整改的问题”，不能再沿用空任务提示。
-        headline = "本次未发现需要整改的问题。"
+        headline = ("在本次已覆盖规则范围内，未发现需要整改的问题；部分规则本轮未覆盖。"
+                    if scope_limited else "本次未发现需要整改的问题。")
     elif not coverage["complete"]:
         # 空任务仍保留“尚未开始核查”的前置提示；一旦已有逐项 finding，
         # 中间报告既要显式说明覆盖未完成，也要保留风险/待确认摘要，避免
@@ -1313,6 +1375,10 @@ def build_report(db: Session, task: BsTask) -> dict:
         "subcontract_amount": amount_result,
         "baseline_date": task.baseline_date.isoformat() if task.baseline_date else None,
     }
+    advisory_code, advisory_text = derive_advisory_conclusion(counts)
+    if scope_limited and advisory_code == "pass":
+        advisory_code = "scope_limited"
+        advisory_text = "已覆盖范围内未发现需整改问题，但存在规则未覆盖，不构成完整通过建议。"
     report = {
         "meta": {
             "task_id": task.id,
@@ -1355,16 +1421,17 @@ def build_report(db: Session, task: BsTask) -> dict:
             "missing_by_category": missing_summary(countable_findings, checklist_summary),
         },
         "advisory_conclusion": {
-            "code": derive_advisory_conclusion(counts)[0],
-            "text": derive_advisory_conclusion(counts)[1],
+            "code": advisory_code,
+            "text": advisory_text,
         },
+        **({"scope_coverage": deepcopy(scope_coverage)} if isinstance(scope_coverage, dict) else {}),
+        "scope_limitations": scope_limitations,
         "sections": sections,
         "checklist_summary": checklist_summary,
         "reference_snapshot": reference_snapshot,
         "ai_coverage": ai_coverage,
         "negative_list_coverage": negative_coverage,
-        "ai_advisories": ai_advisory_snapshots.redact_unavailable_advisories(
-            db, task, ai_advisory_snapshots.collect_current_advisories(db, task)),
+        "ai_advisories": ai_advisories,
         # Q3：页面、报告与证据包共用同一运行回执投影；历史报告没有该字段时保持兼容。
         "run_lineage": build_run_lineage(db, task),
         "material_issues": degradations,
@@ -1376,7 +1443,7 @@ def build_report(db: Session, task: BsTask) -> dict:
         # 这是结论层披露：缺读页**不改判定**，报告/意见书/前端共用同一 summary_text。
         "reading_coverage": reading_coverage,
         # 本次核查范围声明（未纳入的情形 + 原因）；消费方=报告与意见书正文
-        "scope_statements": scope_statements(db, task) + (["部分 AI 辅助核查因超时未完成，相关问题已转人工核实，不代表 AI 已完成核查。"] if timeout_ids else []),
+        "scope_statements": scope_statements(db, task, scope_coverage=scope_coverage) + ai_scope_limitations + (["部分 AI 辅助核查因超时未完成，相关问题已转人工核实，不代表 AI 已完成核查。"] if timeout_ids else []),
         # A-15（B1）合同要素事实认定：三类合同材料逐份 9 字段三态结果
         # （extract 层消费方；空则 []，与 meta/summary/sections/material_issues 键并存不互斥）。
         "contract_facts": contract_facts,
@@ -1410,6 +1477,8 @@ OPINION_CONCLUSION_PENDING = ("本次审查存在无法核实项，暂不足以�
                               "请完成人工核实后复核。")
 OPINION_CONCLUSION_INTERMEDIATE = ("本轮核查尚未形成完整结论，当前意见书为中间结果；"
                                    "请完成未完成核查范围后复核。")
+OPINION_CONCLUSION_SCOPE_LIMITED = ("本次仅能就已覆盖范围形成意见；仍有规则未覆盖，"
+                                    "不能解释为完整通过，具体范围见下文。")
 OPINION_MACHINE_NOTICE = ("本结论由智能体依据已上传材料自动生成，仅为提示，"
                           "不替代监理与直属单位的审查意见，须经人工复核确认后生效。")
 
@@ -1485,13 +1554,19 @@ def _opinion_subject_type(subjects: list[dict], contract_facts: list[dict]) -> s
     return label
 
 
-def build_opinion(db: Session, task: BsTask) -> dict:
+def build_opinion(db: Session, task: BsTask, *, scope_coverage: dict | None = None) -> dict:
     """已落库结论 → 审查意见书内容（纯读：不重算、不写库）。
 
     与 `build_report` 的分工：报告回答「要改什么」（只铺命中/不可判定项），
     意见书回答「这一单能不能过」（抬头 + 结论 + 明细 + 补件 + 依据 + 签署区）。
     """
-    report = build_report(db, task)
+    report = (build_report(db, task, scope_coverage=scope_coverage)
+              if isinstance(scope_coverage, dict) else build_report(db, task))
+    scope_coverage = report.get("scope_coverage") or scope_coverage
+    scope_limitations = list(report.get("scope_limitations") or [])
+    scope_limited = bool(isinstance(scope_coverage, dict)
+                         and scope_coverage.get("state") == "partial"
+                         and scope_limitations)
     material_gaps = []
     material_finding_ids = [item.get("finding_id")
         for subject in (report.get("checklist_summary") or {}).get("subjects", [])
@@ -1555,6 +1630,9 @@ def build_opinion(db: Session, task: BsTask) -> dict:
                      for i in items
                      if (i["status"] == "undecidable" and not i.get("open_term") and not i.get("material_only"))]
     advisory_code, advisory_text = derive_advisory_conclusion(counts)
+    if scope_limited and advisory_code == "pass":
+        advisory_code = "scope_limited"
+        advisory_text = "已覆盖范围内未发现需整改问题，但存在规则未覆盖，不构成完整通过建议。"
     if (report.get("coverage") or {}).get("complete") is False:
         code, conclusion = "pending", OPINION_CONCLUSION_INTERMEDIATE
         if counts.get("undecidable"):
@@ -1564,6 +1642,8 @@ def build_opinion(db: Session, task: BsTask) -> dict:
                 conclusion += "当前无材料缺件，相关异常需人工核实。"
     else:
         code, conclusion = derive_opinion_conclusion(counts)
+        if scope_limited and code == "pass":
+            code, conclusion = "scope_limited", OPINION_CONCLUSION_SCOPE_LIMITED
         if code == "pending":
             if missing or material_gaps:
                 conclusion += "材料待核实或需补充事项见材料清单；其余异常需人工核实。"
@@ -1699,6 +1779,8 @@ def build_opinion(db: Session, task: BsTask) -> dict:
         "field_missing": field_missing,
         # 范围说明与报告同源（同一函数产出，不各存一份副本）
         "scope_statements": report.get("scope_statements") or [],
+        "scope_limitations": scope_limitations,
+        **({"scope_coverage": deepcopy(scope_coverage)} if isinstance(scope_coverage, dict) else {}),
         # BS-P1-09：材料未读页限制项（与报告 reading_coverage 同一文案，不另写一份）
         "reading_limitations": reading_limitations,
         "basis": basis,

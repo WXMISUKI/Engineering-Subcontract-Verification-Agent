@@ -1,9 +1,54 @@
 import asyncio
+import json
 from types import SimpleNamespace
 
 import pytest
 
 from app.plus.blockchain_supervision import ai_guarded_review, ai_review_batch, semantic_review
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(('raw', 'reason'), [
+    ('private response {', 'json_parse_error'),
+    ('["private response"]', 'top_level_not_object'),
+])
+async def test_invalid_response_logs_safe_parse_reason_and_correlation(raw, reason, caplog):
+    class Client:
+        async def complete(self, *_args, **_kwargs):
+            return raw
+
+    caplog.set_level('WARNING', logger='app.plus.blockchain_supervision.semantic_review')
+    with pytest.raises((json.JSONDecodeError, semantic_review.InvalidModelResponse)):
+        await semantic_review.request_json(
+            Client(), 'secret prompt', {'task_id': 7, 'items': []},
+            diagnostic_context={'job_id': 'job-1', 'request_id': 'request-1', 'recovery_part': 'split_2'})
+    for field in (f'reason={reason}', 'job_id=job-1', 'request_id=request-1', 'recovery_part=split_2',
+                  f'output_chars={len(raw)}'):
+        assert field in caplog.text
+    assert 'private response' not in caplog.text
+    assert 'secret prompt' not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(('proposals', 'reason'), [
+    ('private value', 'proposals_not_list'),
+    ([{}] * 201, 'proposals_limit_exceeded'),
+])
+async def test_invalid_batch_shape_logs_safe_reason(monkeypatch, caplog, proposals, reason):
+    async def fake_request(*_args, **_kwargs):
+        return {'proposals': proposals}
+
+    monkeypatch.setattr(ai_review_batch, 'request_json', fake_request)
+    caplog.set_level('WARNING', logger='app.plus.blockchain_supervision.ai_review_batch')
+    with pytest.raises(ai_review_batch.InvalidBatchResponse):
+        await ai_review_batch._request_review_json(
+            object(), 'secret prompt', {'task_id': 7, 'items': []}, max_attempts=1,
+            diagnostic_context={'job_id': 'job-1', 'recovery_part': 'split_2'})
+    assert f'reason={reason}' in caplog.text
+    assert 'job_id=job-1' in caplog.text
+    assert 'recovery_part=split_2' in caplog.text
+    assert 'private value' not in caplog.text
+    assert 'secret prompt' not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -142,6 +187,31 @@ async def test_request_rate_limit_logs_batch_correlation_and_safe_provider_heade
     assert 'private-token' not in message
     assert 'private material' not in message
     assert 'must not enter diagnostics' not in message
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(('code', 'expected'), [
+    ('AccessDenied.Unpurchased', 'provider_error_code=AccessDenied.Unpurchased'),
+    ('private-business-token', 'provider_error_code=None'),
+    ({'unexpected': 'private-business-token'}, 'provider_error_code=None'),
+])
+async def test_model_denial_logs_only_allowlisted_provider_error_code(caplog, code, expected):
+    class Denied(Exception):
+        status_code = 403
+
+    class Client:
+        async def complete(self, *_args, **_kwargs):
+            error = Denied('private response body')
+            error.code = code
+            raise error
+
+    caplog.set_level('WARNING', logger='app.plus.blockchain_supervision.semantic_review')
+    with pytest.raises(Denied):
+        await semantic_review.request_json(Client(), 'private prompt', {'items': []})
+    assert expected in caplog.text
+    assert 'private-business-token' not in caplog.text
+    assert 'private response body' not in caplog.text
+    assert 'private prompt' not in caplog.text
 
 
 @pytest.mark.asyncio

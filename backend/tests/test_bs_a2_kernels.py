@@ -233,6 +233,43 @@ def test_year_month_expiry_uses_month_end():
     assert findings[0].status == STATUS_HIT and "2026-08-31" in findings[0].message
 
 
+def test_packet_structured_ocr_period_is_attributed_to_page_and_not_latest_certificate():
+    text = '{"证照标题":"安全生产许可证","营业期限":"2023年03月31日至2026年03月31日","格式化营业期限终止日期":""}'
+    mat = _mat(30, "报审包.pdf", role="packet")
+    mat.pages_json = [{"page": 1, "text": "报审表"}, {"page": 5, "text": text}]
+    findings = a2_check.run_cert_validity_check(_task(), [mat], baseline=date(2026, 11, 11))
+    item = next(f for f in findings if f.page == 5)
+    assert item.status == STATUS_UNDECIDABLE
+    assert "「安全生产许可证」" in item.message
+    assert "证照识别结果" in item.message
+    assert "材料声明填列期限" not in item.message
+    assert item.evidence_json[0]['source_kind'] == 'structured_certificate_clue'
+    assert "2026-03-31" in item.message and "核对最新证照" in item.message
+    assert item.quote in text
+
+
+def test_packet_labor_filing_period_is_a_named_page_clue_not_verified_status():
+    text = ('建筑业企业施工劳务备案证书\n企业名称：某公司\n证书编号：D342238415\n'
+            '有效期至：2029年08月04日\n备案编号：BA442046932\n发证机关：住建局')
+    mat = _mat(31, '报审包.pdf', role='labor')
+    mat.pages_json = [{'page': 1, 'text': '报审表'}, {'page': 4, 'text': text}]
+    findings = a2_check.run_cert_validity_check(_task(), [mat], baseline=date(2026, 11, 11))
+    item = next(f for f in findings if f.page == 4)
+    assert item.status == STATUS_UNDECIDABLE
+    assert '「施工劳务备案证书」' in item.message and '2029-08-04' in item.message
+    assert '核对原件' in item.message
+    assert any(ref['quote'] == '建筑业企业施工劳务备案证书' for ref in item.evidence_json)
+
+
+def test_labor_filing_clue_does_not_associate_multiple_periods_on_one_page():
+    text = ('建筑业企业施工劳务备案证书\n证书编号：D342238415\n发证机关：住建局\n'
+            '有效期至：2029年08月04日\n有效期至：2030年08月04日')
+    mat = _mat(32, '报审包.pdf', role='packet')
+    mat.pages_json = [{'page': 1, 'text': '报审表'}, {'page': 4, 'text': text}]
+    findings = a2_check.run_cert_validity_check(_task(), [mat], baseline=date(2026, 11, 11))
+    assert all('「施工劳务备案证书」' not in f.message for f in findings)
+
+
 def test_contract_labor_validity_range_uses_end_on_review_date():
     """劳务P5为合同声明；保留截止日抽取，不升级为当前证照已核实。"""
     mat = _mat(30, "劳务合同.pdf", role="labor")

@@ -9,7 +9,7 @@ from app.plus.blockchain_supervision import negative_candidate_plan as plan
 from app.plus.blockchain_supervision import service
 from app.plus.blockchain_supervision import ai_advisory_snapshots as snapshots
 from app.plus.blockchain_supervision import reporting
-from app.plus.blockchain_supervision.models import BsFinding
+from app.plus.blockchain_supervision.models import BsFinding, BsTask
 from app.database import Base
 
 
@@ -85,6 +85,34 @@ def test_scope_records_are_persisted_idempotently_and_preserve_human_receipt():
             service.sync_candidate_review_records(db, task, [], records, [], unlocated=[])
         db.rollback()
         assert db.get(BsFinding, records[0]['finding_id']).review_json['decision'] == 'accepted'
+
+
+def test_reviewed_candidate_projects_note_and_ignored_stays_out_of_report(monkeypatch):
+    """验证候选复核落库后，完整报告投影保留采纳备注并排除忽略项。"""
+    from app.plus.blockchain_supervision.report_document import build_report_document, report_display_sections
+    engine = create_engine('sqlite://')
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        task = BsTask(id=1, conversation_id=1, title='合成测试', state='running',
+                      created_by=1, created_by_type='web', scope_a1=True)
+        finding = BsFinding(task_id=1, subject_id=7, kind='negative_candidate', item_id='A1-01',
+                            status='undecidable', message='候选范围需人工核对', source='合成规则原文')
+        db.add_all([task, finding])
+        db.commit()
+        # 本测试聚焦处置与报告投影；候选授权有效性的守卫由独立测试覆盖。
+        monkeypatch.setattr(reporting.ai_advisory_snapshots, 'filter_current_candidate_findings',
+                            lambda _db, _task, _user, findings: findings)
+        service.review_finding(db, finding, reviewer='测试人员', decision='accepted', note='已联系核对')
+        accepted = reporting.build_report(db, task)
+        accepted_text = str(report_display_sections(build_report_document(accepted)))
+        assert '已联系核对' in accepted_text
+        assert '候选范围需人工核对' in accepted_text
+        service.review_finding(db, finding, reviewer='测试人员', decision='ignored', note='忽略原因')
+        ignored = reporting.build_report(db, task)
+        ignored_text = str(report_display_sections(build_report_document(ignored)))
+        assert '候选范围需人工核对' not in ignored_text
+        assert '忽略原因' not in ignored_text
+        assert db.get(BsFinding, finding.id).review_json['note'] == '忽略原因'
 
 
 def test_only_valid_persisted_scope_candidate_is_reviewable_in_coverage():
