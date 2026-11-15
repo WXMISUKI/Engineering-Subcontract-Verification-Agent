@@ -9,13 +9,37 @@ from .knowledge_runs import references_for_source
 from .ai_evidence import validate_ai_proposal
 from .models import BsFinding, STATUS_UNDECIDABLE
 from .parsing import material_page_readable, material_reading_gap, reading_coverage
-from .rules import negative_list_rules
+from .rules import load_negative_matchers, negative_list_rules
 
-SCHEMA_VERSION = "bs-negative-candidate-v2"
+SCHEMA_VERSION = "bs-negative-candidate-v4"
+VALIDATION_VERSION = "bs-negative-candidate-evidence-v2"
 _SCOPE_HEADING = re.compile(r"工程范围|承包范围|分包范围|工作内容|施工内容|施工范围")
 _SCOPE_BEFORE = 80
 _SCOPE_AFTER = 1600
 _CONTINUATION_CHARS = 1200
+_CLAUSE_BOUNDARY = re.compile(r"[。；;！？!?]")
+
+
+def _has_rule_signal(item_id: str, text: str) -> bool:
+    """Require a configured rule trigger and its context in one source clause."""
+    matcher = (load_negative_matchers().get("matchers") or {}).get(item_id)
+    triggers = matcher.get("triggers") if isinstance(matcher, dict) else None
+    if not isinstance(triggers, list) or not triggers:
+        return False
+    context = matcher.get("context")
+    try:
+        context_re = re.compile(re.sub(r"\s+", "", context)) if isinstance(context, str) and context else None
+    except re.error:
+        return False
+    normalized_triggers = [re.sub(r"\s+", "", value) for value in triggers
+                           if isinstance(value, str) and value.strip()]
+    for clause in _CLAUSE_BOUNDARY.split(text or ""):
+        normalized = re.sub(r"\s+", "", clause)
+        if not normalized or not any(trigger in normalized for trigger in normalized_triggers):
+            continue
+        if context_re is None or context_re.search(normalized):
+            return True
+    return False
 
 
 def _scope_excerpts(pages: list[dict]) -> list[dict]:
@@ -76,15 +100,21 @@ def plan_negative_candidates(*, task_id: int, run: dict, subjects: list, materia
                  and material_page_readable(m, p["page"])]
         scope_pages = _scope_excerpts(pages)
         original = {(page["material_id"], page["page"]): page for page in pages}
-        incomplete = (any(material_reading_gap(m) is not None or not reading_coverage(m)["reading_complete"]
-                          for m in contracts)
-                      or len(scope_pages) != len(pages)
-                      or any(loc["text_start"] != 0 or loc["text_end"] != len(original[(loc["material_id"], loc["page"])]["text"])
-                             for loc in scope_pages))
+        source_reading_complete = bool(contracts) and all(
+            material_reading_gap(material) is None
+            and (reading_coverage(material) or {}).get("reading_complete") is True
+            for material in contracts)
+        incomplete_scope = (not source_reading_complete
+                            or len(scope_pages) != len(pages)
+                            or any(loc["text_start"] != 0 or loc["text_end"] != len(original[(loc["material_id"], loc["page"])]["text"])
+                                   for loc in scope_pages))
         for rule in rules:
             item_id = rule["id"]
             if (subject.id, item_id) in existing:
                 continue
+            rule_scope_pages = [loc for loc in scope_pages
+                                if _has_rule_signal(item_id, original[(loc["material_id"], loc["page"])]["text"][
+                                    loc["text_start"]:loc["text_end"]])]
             matching = [source for source in sources if source.get("item_id") == item_id
                         and ("subject_ids" not in source or subject.id in source["subject_ids"])]
             references = references_for_source(run, matching[0]) if len(matching) == 1 else []
@@ -95,7 +125,9 @@ def plan_negative_candidates(*, task_id: int, run: dict, subjects: list, materia
                       else "contract_scope_unlocated" if not scope_pages
                       else "source_ambiguous" if len(matching) > 1 or duplicate_reference_ids
                       else "reference_missing" if not references
+                      else "rule_signal_not_found" if not rule_scope_pages
                       else None)
+            candidate_pages = rule_scope_pages if reason is None else []
             identity = {"schema": SCHEMA_VERSION, "task_id": task_id, "run_id": run["run_id"],
                         "review_run_id": run["review_run_id"], "material_fingerprint": run["material_fingerprint"],
                         "rule_fingerprint": run["rule_fingerprint"], "subject_id": subject.id,
@@ -104,7 +136,9 @@ def plan_negative_candidates(*, task_id: int, run: dict, subjects: list, materia
             payload = json.dumps(identity, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
             output.append({**identity, "candidate_id": "nc-" + hashlib.sha256(payload.encode("utf-8")).hexdigest(),
                            "state": "not_run", "unavailable_reason": reason,
-                           "incomplete_material_scope": incomplete, "material_pages": scope_pages})
+                           "source_reading_complete": source_reading_complete,
+                           "incomplete_material_scope": incomplete_scope or len(rule_scope_pages) != len(scope_pages),
+                           "material_pages": candidate_pages})
     return output
 
 
@@ -153,6 +187,7 @@ def prepare_candidate_batch_inputs(*, task_id: int, run: dict, subjects: list, m
                        if candidate["incomplete_material_scope"] else [])
         items.append({"candidate_id": candidate["candidate_id"], "task_id": task_id,
                       "item_id": candidate["item_id"], "item_label": rule_labels[candidate["item_id"]],
+                      "kind": "negative_candidate",
                       "subject_id": candidate["subject_id"], "materials": pages, "references": references,
                       "incomplete_material_scope": candidate["incomplete_material_scope"], "limitations": limitations})
     return {"candidates": candidates, "items": items}
@@ -186,7 +221,8 @@ def reviewable_candidate_proposals(prepared: dict, result: dict) -> list[dict]:
             validation = validate_ai_proposal(proposal, task_id=item["task_id"],
                 subject_id=item["subject_id"], item_id=item["item_id"],
                 materials=item["materials"], references=item["references"],
-                incomplete_material_scope=item.get("incomplete_material_scope", False))
+                incomplete_material_scope=item.get("incomplete_material_scope", False),
+                kind=item.get("kind"))
             if validation.accepted:
                 output.append({"candidate_id": row["candidate_id"], "proposal": validation.proposal,
                                "limitations": list(dict.fromkeys(

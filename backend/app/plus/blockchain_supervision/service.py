@@ -2505,7 +2505,7 @@ def task_progress(db: Session, task: BsTask, *, materials=None, snapshot=None,
                 ai_current = pending_groups[0]
         elif any((g.get("counts") or {}).get("failed", 0) > g.get("reviewable_failed", 0)
                  or (g.get("counts") or {}).get("partial", 0) > g.get("reviewable_partial", 0)
-                 or (g.get("counts") or {}).get("not_run", 0) > g.get("reviewable_not_run", 0)
+                 or ai_advisory_snapshots.blocking_not_run_count(g) != 0
                  for g in groups):
             ai_state = "failed"
         else:
@@ -3850,6 +3850,19 @@ def _latest_negative_candidate_event(db, task_id: int, run_id: str):
         .order_by(BsTaskEvent.sequence.desc()).first())
 
 
+def _current_negative_candidate_records(last_finished, validation_version: str) -> list[dict]:
+    """Only carry findings from the same candidate contract into a new generation.
+
+    Rows and decisions from older contracts remain attached to their historical
+    event and database records; they are not silently transferred to the new run.
+    """
+    if (not last_finished or last_finished.event_type != "check.negative_candidates_finished"
+            or (last_finished.payload_json or {}).get("validation_version") != validation_version):
+        return []
+    records = (last_finished.payload_json or {}).get("finding_records")
+    return deepcopy(records) if isinstance(records, list) else []
+
+
 def sync_candidate_review_records(db: Session, task: BsTask, reviewable: list, previous_records: list,
                                   materials: list, *, unlocated: list = ()) -> list[dict]:
     """在调用方事务内同步当前代候选；调用方负责锁、授权与事件同事务提交。"""
@@ -3926,7 +3939,7 @@ async def run_negative_candidate_ai_advisory(db: Session, task: BsTask, user, *,
         raise ValueError("候选核查预算或运行标识无效")
     task_id, user_id, user_type, conversation_id = task.id, task.created_by, task.created_by_type, task.conversation_id
     model_code = effective_model_code_or_default(db, "bs_task", task_id)
-    validation_version, bind, request_id = ai_review_batch.CHECKPOINT_SCHEMA_VERSION, db.get_bind(), uuid.uuid4().hex
+    validation_version, bind, request_id = negative_candidate_plan.VALIDATION_VERSION, db.get_bind(), uuid.uuid4().hex
     db.rollback()
     with SessionLocal(bind=bind) as reservation_db:
         current = reservation_db.query(BsTask).filter_by(id=task_id).with_for_update().one_or_none()
@@ -3952,7 +3965,7 @@ async def run_negative_candidate_ai_advisory(db: Session, task: BsTask, user, *,
             BsTaskEvent.event_type == "check.negative_candidates_finished",
             BsTaskEvent.payload_json["run_id"].as_string() == run["run_id"])
             .order_by(BsTaskEvent.sequence.desc()).first())
-        previous_records = deepcopy((last_finished.payload_json or {}).get("finding_records", [])) if last_finished else []
+        previous_records = _current_negative_candidate_records(last_finished, validation_version)
         if previous and not retry:
             if (previous.event_type == "check.negative_candidates_finished" and data.get("model_code") == model_code
                     and data.get("validation_version") == validation_version and isinstance(data.get("result"), dict)):
@@ -5923,7 +5936,7 @@ def _report_output_readiness_base(db: Session, task: BsTask, *, require_reading_
                            any((group.get("counts") or {}).get(name, 0) for name in ("not_started", "pending")) or
                            (group.get("counts") or {}).get("failed", 0) > group.get("reviewable_failed", 0) or
                            (group.get("counts") or {}).get("partial", 0) > group.get("reviewable_partial", 0) or
-                           (group.get("counts") or {}).get("not_run", 0) > group.get("reviewable_not_run", 0)
+                           ai_advisory_snapshots.blocking_not_run_count(group) != 0
                            for group in groups)):
                 return {"ok": False, "code": "supplement_in_progress", "missing_groups": [],
                         "pending_groups": [], "detail": "本轮 AI 辅助核查尚未完成，请等待或重试"}
@@ -6041,6 +6054,7 @@ def complete_review(db: Session, task: BsTask) -> dict:
         return {"ok": False, "detail": "AI 辅助核查正在进行，请等待完成后再收口任务"}
     reference_snapshot = reference_snapshots.get_reference_snapshot(db, task)
     if reference_snapshot and reference_snapshot.get("ai_auto_enabled") is True:
+        from . import background_ai_review, reading_gap_scope
         coverage = ai_advisory_snapshots.collect_current_coverage(db, task, reference_snapshot, reporting.report_review_blocking)
         groups = (coverage or {}).get("groups") or []
         if (not coverage or coverage.get("state") != "available"
@@ -6050,10 +6064,13 @@ def complete_review(db: Session, task: BsTask) -> dict:
         if coverage and any(group.get("counts", {}).get("not_started", 0)
                             for group in coverage.get("groups") or [] if group.get("state") == "available"):
             return {"ok": False, "detail": "仍有 AI 辅助核查尚未开始，请返回核查页等待或重试"}
+        job = background_ai_review.job_status(db, task, reference_snapshot.get("review_run_id"))
+        scope_rows = (reading_gap_scope.collect(db, task, reference_snapshot, coverage)
+                      if job.get("scope_gap_review_available") is True else None)
         if any((group.get("counts") or {}).get("pending", 0)
                or (group.get("counts") or {}).get("failed", 0) > group.get("reviewable_failed", 0)
                or (group.get("counts") or {}).get("partial", 0) > group.get("reviewable_partial", 0)
-               or (group.get("counts") or {}).get("not_run", 0) > group.get("reviewable_not_run", 0)
+               or (ai_advisory_snapshots.blocking_not_run_count(group) != 0 and not scope_rows)
                for group in coverage.get("groups") or []):
             return {"ok": False, "detail": "部分 AI 辅助核查未完成，请返回核查页重试"}
     pending_undecidable = (db.query(BsFinding)

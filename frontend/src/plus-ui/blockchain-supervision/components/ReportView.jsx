@@ -132,6 +132,11 @@ function BusinessDocument({ document, basicInformation, onOpenSource, onShowBasi
     <section><h2 className="text-base font-semibold text-[#1A1A1A]">二、核查摘要</h2>
       {displaySections.map((section, index) => <section key={section.title} className="mt-4"><h3 className="font-semibold text-[#173A64]">{index + 1}. {section.title}</h3><div className="overflow-x-auto"><table className="mt-2 w-full border-collapse text-left"><thead><tr>{['审查要点及主要依据', '核查情况', '判定'].map((label) => <th key={label} className="border border-[#D4DCE5] bg-[#173A64] p-2 text-white">{label}</th>)}</tr></thead><tbody>{section.displayPoints.map((field, pointIndex) => <tr key={`${field.label}-${pointIndex}`} className={pointIndex % 2 === 0 ? 'bg-[#F2F5F9]' : 'bg-white'}><td className="border border-[#D4DCE5] p-2 align-top"><div className="font-semibold text-[#173A64]">{field.label}</div><div className="text-xs text-[#536477]">主要依据：{field.basis?.length ? field.basis.join('；') : '暂无可展示依据'}</div></td><td className="border border-[#D4DCE5] p-2 align-top">{field.summary}</td><td className={`border border-[#D4DCE5] p-2 text-center align-top font-semibold ${['不符合', '待核实'].includes(field.verdict || '待核实') ? 'text-[#A52B27]' : 'text-[#173A64]'}`}>{field.verdict || '待核实'}</td></tr>)}</tbody></table></div></section>)}
     </section>
+    {document.scope_limitations?.length > 0 && <section data-testid="business-scope-limitations">
+      <h2 className="text-base font-semibold text-[#1A1A1A]">核查范围限制</h2>
+      <ul className="mt-2 list-disc space-y-1 pl-5">{document.scope_limitations.map((item, index) => <li key={index}>{item}</li>)}</ul>
+      {document.conclusion?.text && <p className="mt-2">{document.conclusion.text}</p>}
+    </section>}
   </article>
 }
 

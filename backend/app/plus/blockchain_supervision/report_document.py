@@ -668,8 +668,7 @@ def build_report_document(report: dict) -> dict:
     reference = report.get("reference_snapshot") or {}
     policy = report_policy.read_frozen_policy(reference["report_policy"]) if "report_policy" in reference else None
     scope_limitations = [str(value) for value in report.get("scope_limitations") or [] if value]
-    scope_limited = bool((report.get("scope_coverage") or {}).get("state") == "partial"
-                         and scope_limitations)
+    scope_limited = bool(scope_limitations)
     selected, completed = _selected_groups(coverage), _complete_groups(coverage)
     subject_types = {row.get("subject_id"): row.get("subject_type")
                      for row in (report.get("checklist_summary") or {}).get("subjects") or []

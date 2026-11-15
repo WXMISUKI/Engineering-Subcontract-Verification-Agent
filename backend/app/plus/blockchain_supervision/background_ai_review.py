@@ -72,6 +72,15 @@ def project_job_state(event, *, active_job_ids, instance_id, progress_event=None
     if state == 'completed':
         result['warning'] = payload.get('warning') is True
         result['unlocated_scope_count'] = payload.get('unlocated_scope_count', 0)
+        no_signal_count = payload.get('not_assessed_no_signal_count', 0)
+        if type(no_signal_count) is int and no_signal_count >= 0:
+            result['not_assessed_no_signal_count'] = no_signal_count
+        needs_human_review = payload.get('needs_human_review')
+        if type(needs_human_review) is bool:
+            result['needs_human_review'] = needs_human_review
+        else:
+            result['needs_human_review'] = result['warning'] and not (
+                type(no_signal_count) is int and no_signal_count > 0)
     if state == 'failed':
         result['reason'] = payload.get('reason', 'execution_failed')
         categories = payload.get('failure_categories')
@@ -103,6 +112,12 @@ def job_status(db, task, review_run_id):
         state = project_job_state(_latest(db, task.id, review_run_id),
                                   active_job_ids=set(ACTIVE_JOBS), instance_id=INSTANCE_ID,
                                   progress_event=progress)
+    if state['state'] == 'failed' and state.get('failure_categories') == ['incomplete_material_scope']:
+        try:
+            state['scope_gap_review_available'] = _scope_gap_review_available(db, task, review_run_id)
+        except Exception:
+            logger.warning('AI scope gap review availability could not be verified task_id=%s', task.id, exc_info=True)
+            state['scope_gap_review_available'] = False
     return state
 
 
@@ -124,9 +139,41 @@ def _completed_coverage_valid(db, task, review_run_id):
                 or counts['not_started'] or counts['pending']
                 or counts['failed'] > row.get('reviewable_failed', 0)
                 or counts['partial'] > row.get('reviewable_partial', 0)
-                or counts['not_run'] > row.get('reviewable_not_run', 0)):
+                or ai_advisory_snapshots.blocking_not_run_count(row) != 0):
             return False
     return True
+
+
+def _scope_gap_review_available(db, task, review_run_id):
+    snapshot = reference_snapshots.get_reference_snapshot(db, task)
+    if (not snapshot or snapshot.get('state') != 'completed' or snapshot.get('review_run_id') != review_run_id
+            or snapshot.get('ai_auto_enabled') is not True):
+        return False
+    groups = snapshot.get('ai_auto_groups')
+    if not isinstance(groups, list) or not groups or len(set(groups)) != len(groups):
+        return False
+    coverage = ai_advisory_snapshots.collect_current_coverage(db, task, snapshot, reporting.report_review_blocking)
+    rows = (coverage or {}).get('groups')
+    if ((coverage or {}).get('state') != 'available' or not isinstance(rows, list)
+            or len(rows) != len(groups) or {row.get('group_id') for row in rows} != set(groups)):
+        return False
+    has_gap = False
+    for row in rows:
+        counts = row.get('counts') or {}
+        if (row.get('state') != 'available' or any(type(counts.get(key)) is not int or counts[key] < 0
+                for key in ('not_started', 'pending', 'failed', 'partial', 'not_run'))
+                or counts['not_started'] or counts['pending']
+                or counts['failed'] > row.get('reviewable_failed', 0)
+                or counts['partial'] > row.get('reviewable_partial', 0)):
+            return False
+        blocking = ai_advisory_snapshots.blocking_not_run_count(row)
+        gap = row.get('reading_gap_not_run', 0)
+        if blocking is None or type(gap) is not int or gap < 0 or blocking != gap:
+            return False
+        if gap and set(row.get('failure_categories') or []) != {'incomplete_material_scope'}:
+            return False
+        has_gap |= gap > 0
+    return has_gap
 
 
 def running_job(db, task):
@@ -196,7 +243,9 @@ async def _run_background(bind, task_id, user_id, user_type, review_run_id, job_
     from . import service
     from ...standalone.identity import User
     actor = SimpleNamespace(id=user_id, user_type=user_type)
-    warning, unlocated_count = False, 0
+    warning, needs_human_review = False, False
+    unlocated_count, not_assessed_no_signal_count = 0, 0
+    deferred_scope_gap = False
     phase = 'checking_group'
     try:
         for group in groups:
@@ -220,8 +269,16 @@ async def _run_background(bind, task_id, user_id, user_type, review_run_id, job_
                 counts = status['counts']
                 if counts['pending']:
                     raise ValueError('先前核查仍在运行或租约未到期')
+                blocking_not_run = ai_advisory_snapshots.blocking_not_run_count(status)
+                if blocking_not_run is None:
+                    raise ValueError('未执行项覆盖状态无效')
+                reading_gap = status.get('reading_gap_not_run', 0)
+                deferred_retry_gap = (reading_gap if type(reading_gap) is int and reading_gap > 0
+                                      and reading_gap == blocking_not_run
+                                      and set(status.get('failure_categories') or []) == {'incomplete_material_scope'}
+                                      else 0)
                 retryable = (counts['failed'] - status['reviewable_failed'] + counts['partial'] - status['reviewable_partial']
-                             + counts['not_run'] - status['reviewable_not_run'])
+                             + blocking_not_run - deferred_retry_gap)
                 service.add_event(db, task_id, PROGRESS, stage='check', payload={
                     'job_id': job_id, 'review_run_id': review_run_id, 'group_id': group}, commit=False)
                 db.commit()
@@ -246,11 +303,24 @@ async def _run_background(bind, task_id, user_id, user_type, review_run_id, job_
                 if not status or status.get('state') != 'available':
                     raise ValueError('核查状态不可用')
                 counts = status['counts']
+                blocking_not_run = ai_advisory_snapshots.blocking_not_run_count(status)
+                reading_gap = status.get('reading_gap_not_run', 0)
+                defer_gap = (type(reading_gap) is int and reading_gap > 0
+                             and blocking_not_run == reading_gap
+                             and set(status.get('failure_categories') or []) == {'incomplete_material_scope'})
                 if (counts['not_started'] or counts['pending'] or counts['failed'] > status['reviewable_failed']
-                        or counts['partial'] > status['reviewable_partial'] or counts['not_run'] > status['reviewable_not_run']):
+                        or counts['partial'] > status['reviewable_partial']
+                        or blocking_not_run is None or (blocking_not_run > 0 and not defer_gap)):
                     raise BackgroundReviewIncomplete(status.get('failure_categories') or [])
+                deferred_scope_gap |= defer_gap
                 warning |= bool(status['skipped'] or counts['partial'] or counts['not_run'] or counts['failed'])
                 unlocated_count += status.get('unlocated_scope_reviewable', 0)
+                not_assessed_no_signal_count += status.get('not_assessed_no_signal', 0)
+                needs_human_review |= bool(
+                    status['skipped'] or counts['partial'] or counts['failed']
+                    or status.get('reviewable_not_run', 0) > status.get('unlocated_scope_reviewable', 0))
+        if deferred_scope_gap:
+            raise BackgroundReviewIncomplete(['incomplete_material_scope'])
         with Session(bind) as db:
             phase = 'finishing_job'
             task = db.query(BsTask).filter_by(id=task_id).with_for_update().one_or_none()
@@ -258,13 +328,17 @@ async def _run_background(bind, task_id, user_id, user_type, review_run_id, job_
                 raise ValueError('核查运行已变化')
             service.add_event(db, task_id, COMPLETED, stage='check', payload={
                 'job_id': job_id, 'review_run_id': review_run_id, 'instance_id': INSTANCE_ID,
-                'warning': warning, 'unlocated_scope_count': unlocated_count}, commit=False)
+                'warning': warning, 'needs_human_review': needs_human_review,
+                'unlocated_scope_count': unlocated_count,
+                'not_assessed_no_signal_count': not_assessed_no_signal_count}, commit=False)
             db.commit()
     except asyncio.CancelledError:
         raise
     except Exception as exc:
         failure_categories = (exc.categories if isinstance(exc, BackgroundReviewIncomplete)
                               else ['timeout'] if isinstance(exc, (TimeoutError, asyncio.TimeoutError)) else [])
+        if deferred_scope_gap:
+            failure_categories = sorted(set(failure_categories) | {'incomplete_material_scope'})
         diagnostic = {'task_id': task_id, 'review_run_id': review_run_id, 'job_id': job_id,
                       'group_id': group if 'group' in locals() else None,
                       'phase': phase,

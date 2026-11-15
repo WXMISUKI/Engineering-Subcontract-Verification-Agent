@@ -10,6 +10,8 @@ from dataclasses import dataclass
 import re
 from typing import Any
 
+from .rules import load_negative_matchers
+
 MODEL_EVIDENCE_INSTRUCTIONS = (
     "当前批次是当前模型输入，不代表完整报审资料或完整核查范围；"
     "不能根据当前批次推断整包是否已读取、是否缺件或是否齐全。"
@@ -44,6 +46,32 @@ def contains_quote(text: Any, quote: Any) -> bool:
         return False
     needle = "".join(quote.split())
     return 4 <= len(needle) <= 1000 and needle in "".join(text.split())
+
+
+def _negative_candidate_quote_relevance(item_id: str, quote: str) -> str | None:
+    matcher = (load_negative_matchers().get("matchers") or {}).get(item_id)
+    triggers = matcher.get("triggers") if isinstance(matcher, dict) else None
+    if not isinstance(triggers, list) or not triggers:
+        return "本规则没有已审核的辅助核查触发信号"
+    normalized = "".join(quote.split())
+    normalized_triggers = ["".join(value.split()) for value in triggers
+                           if isinstance(value, str) and value.strip()]
+    context = matcher.get("context")
+    try:
+        context_re = (re.compile(re.sub(r"\s+", "", context))
+                      if isinstance(context, str) and context.strip() else None)
+    except re.error:
+        return "本规则的工程场景配置无效"
+    trigger_seen = False
+    for clause in re.split(r"[。；;！？!?]", normalized):
+        if not any(trigger in clause for trigger in normalized_triggers):
+            continue
+        trigger_seen = True
+        if context_re is None or context_re.search(clause):
+            return None
+    if not trigger_seen:
+        return "材料引文未包含本规则的工程信号"
+    return "材料引文未包含本规则要求的工程场景限定"
 
 
 def validate_ai_proposal(proposal: Any, *, task_id: int, subject_id: int | None, item_id: str,
@@ -121,6 +149,10 @@ def validate_ai_proposal(proposal: Any, *, task_id: int, subject_id: int | None,
         matches = [row for row in page_rows if contains_quote(row.get("text"), ref.get("quote"))]
         if not matches:
             return reject("引用文字未在本次提供的原页片段中找到")
+        if kind == "negative_candidate":
+            relevance_error = _negative_candidate_quote_relevance(item_id, ref["quote"])
+            if relevance_error:
+                return reject(relevance_error)
         if (len(matches) != 1 or (matches[0].get("subject_id") is not None
                                   and type(matches[0].get("subject_id")) is not int)):
             return reject("材料证据不属于本次任务主体或无法在原页核验")

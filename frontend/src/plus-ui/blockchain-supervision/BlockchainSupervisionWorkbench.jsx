@@ -1616,6 +1616,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
       const snapshot = result?.reference_snapshot
       let aiWarning = false
       let unlocatedScopeCount = 0
+      let notAssessedNoSignalCount = 0
       if (snapshot?.ai_auto_enabled === true) {
         doingAi = true
         aiResumeSeenRef.current = snapshot.review_run_id
@@ -1638,8 +1639,9 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
           throw new Error(`部分 AI 辅助核查未完成${reasons.length ? `（${reasons.join('、')}）` : ''}，请重试或人工核实`)
         }
         if (aiResult.state === 'interrupted') throw new Error('后台核查已中断，已完成结果已保留；请确认服务正常后重试')
-        aiWarning = aiResult.warning
+        aiWarning = aiResult.needsHumanReview
         unlocatedScopeCount = aiResult.unlocatedScopeCount || 0
+        notAssessedNoSignalCount = aiResult.notAssessedNoSignalCount || 0
         // 模型候选可能新增复核问题；收口前读取同一核查代的最新清单。
         if (await loadFindings({ throwOnError: true }) === null) {
           throw new Error('核查结果读取失败，请点击“重试核查”')
@@ -1649,8 +1651,12 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
       writeAutoRunStatus(taskId, runId, 'completed')
       // Plus 任务收口：通知顶栏积分徽标与积分页刷新（与 AS/Chat 同一事件）。
       window.dispatchEvent(new CustomEvent('billing:mutated'))
+      const completionWarnings = []
+      if (unlocatedScopeCount) completionWarnings.push(`有 ${unlocatedScopeCount} 项未定位合同分包范围，请补充材料或在人工复核中逐项核实`)
+      if (notAssessedNoSignalCount) completionWarnings.push(`有 ${notAssessedNoSignalCount} 项负面清单候选未发现规则触发信号，未进入 AI 核查，也未形成符合或不符合结论`)
+      if (aiWarning) completionWarnings.push('部分核查项的依据、材料或 AI 建议需要人工核实')
       setAutoCheck({ phase: 'done', index: steps.length, total: steps.length, error: '',
-        warning: unlocatedScopeCount ? `有 ${unlocatedScopeCount} 项未定位合同分包范围，请补充材料或在人工复核中逐项核实` : aiWarning ? '部分核查项的依据、材料或 AI 建议需要人工核实' : '' })
+        warning: completionWarnings.join('；') })
       // AI 结果在最后一个批次落库，刷新权威进度，避免沿用重试前的失败状态。
       await reload()
       await loadRuleset()

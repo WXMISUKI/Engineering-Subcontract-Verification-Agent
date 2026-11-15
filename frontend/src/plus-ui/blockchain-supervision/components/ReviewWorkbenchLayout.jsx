@@ -1088,14 +1088,23 @@ export default function ReviewWorkbenchLayout({
           className="col-span-full shrink-0 rounded-[6px] border border-[#E5C79C] bg-[#FFF8EC] px-3 py-2 text-[12px] text-[#765B36]"
           role="status"
         >
-          <div className="font-medium">部分页面识别不完整，可能存在模糊或遮挡，请结合原件核对。</div>
+          <div className="font-medium">部分页面识别不完整，请结合原件核对；相关内容尚未完整评估。</div>
           <div className="mt-1 space-y-0.5 text-[11px] text-[#8A6B42]">
             {incompleteReadingRows.length > 0 ? incompleteReadingRows.map((row) => {
               const unread = Array.isArray(row.unread_pages) ? row.unread_pages : []
               const suspect = Array.isArray(row.suspect_pages) ? row.suspect_pages : []
               const label = row.file_name || `材料 ${row.material_id ?? ''}`
-              const pages = [...new Set([...unread, ...suspect])].sort((a, b) => a - b)
-              return <div key={String(row.material_id ?? label)}>{label}：{pages.length ? `第 ${pages.join('、')} 页` : '读取状态待确认'}</div>
+              const pages = [...new Set([...unread, ...suspect])].filter((page) => Number.isInteger(page) && page > 0 &&
+                (!Number.isInteger(row.total_pages) || page <= row.total_pages)).sort((a, b) => a - b)
+              const material = (model?.materialsById || {})[row.material_id]
+              return <div key={String(row.material_id ?? label)} className="flex flex-wrap items-center gap-x-2">
+                <span>{label}：</span>{pages.length ? pages.map((page) => {
+                  const location = sourceLocation({ finding: { material_id: row.material_id, page, location_mode: 'page' }, material, containerIds })
+                  return location.canOpen && onOpenSource
+                    ? <button key={page} type="button" className="min-h-8 underline" aria-label={`${label} 第 ${page} 页（待读）`} onClick={() => onOpenSource(row.material_id, page, null)}>第 {page} 页</button>
+                    : <span key={page}>第 {page} 页</span>
+                }) : <span>读取状态待确认</span>}
+              </div>
             }) : <div>存在材料读取覆盖缺口，请先查看材料状态或补充清晰材料。</div>}
           </div>
         </section>

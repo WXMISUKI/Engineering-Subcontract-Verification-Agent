@@ -25,6 +25,16 @@ it('服务端确认失败时，在本地没有失败状态也提供显式重试�
   expect(onRetry).toHaveBeenCalledTimes(1)
 })
 
+it('明确仅有读取缺口且其他组已处理时可查看已有结果', () => {
+  const enter = vi.fn()
+  render(<CheckRunView taskState="running" snapshot={snapshot} autoCheck={{ phase: 'idle' }} onEnterReview={enter}
+    progress={{ phase: 'failed', ai_job: { state: 'failed', failure_categories: ['incomplete_material_scope'],
+      scope_gap_review_available: true } }} />)
+  fireEvent.click(screen.getByRole('button', { name: /查看已有核查结果/ }))
+  expect(enter).toHaveBeenCalledTimes(1)
+  expect(screen.getByTestId('check-run-error')).toBeTruthy()
+})
+
 it('任务仍有活动工作时，重试入口保持禁用', () => {
   render(<CheckRunView taskState="running" snapshot={snapshot} autoCheck={{ phase: 'failed' }} mutationBusy
     progress={{ phase: 'ai_checking', ai_job: { state: 'failed' } }} />)

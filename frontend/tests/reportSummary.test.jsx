@@ -81,6 +81,18 @@ it('renders business report content without showing ignored audit items', () => 
   expect(screen.queryByTestId('report-ignored-items')).toBeNull()
 })
 
+it('shows uncovered rules and pages in the business report', () => {
+  const data = report()
+  data.business_document = { basic_information: {}, sections: [], issues: [],
+    scope_limitations: ['负面清单 AI 辅助候选未覆盖规则 NL-B-01；材料「报审.pdf」第 63 页识别不完整。'],
+    conclusion: { text: '本次核查不构成完整通过。', limitations: [] } }
+  render(<ReportView report={data} />)
+  const content = screen.getByTestId('business-document').textContent
+  expect(content).toContain('NL-B-01')
+  expect(content).toContain('第 63 页')
+  expect(content).toContain('不构成完整通过')
+})
+
 it('renders projected themes and human notes instead of raw issue text', () => {
   const data = report()
   data.business_document = {

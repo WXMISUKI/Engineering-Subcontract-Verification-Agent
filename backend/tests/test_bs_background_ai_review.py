@@ -29,6 +29,21 @@ def test_live_job_and_finished_job_have_distinct_states():
     assert jobs.project_job_state(event, active_job_ids=set(), instance_id='new-process')['state'] == 'completed'
 
 
+def test_completed_job_projection_preserves_no_signal_disclosure_count():
+    event = SimpleNamespace(event_type=jobs.COMPLETED, payload_json={
+        'job_id': 'job-1', 'review_run_id': 'review-1', 'warning': True,
+        'not_assessed_no_signal_count': 20,
+        'needs_human_review': False,
+    })
+
+    projected = jobs.project_job_state(event, active_job_ids=set(), instance_id='instance')
+
+    assert projected['state'] == 'completed'
+    assert projected['warning'] is True
+    assert projected['not_assessed_no_signal_count'] == 20
+    assert projected['needs_human_review'] is False
+
+
 def test_running_job_projection_includes_last_progress_and_stale_diagnostic():
     now = time.time()
     event = SimpleNamespace(event_type=jobs.STARTED, created_at=None, payload_json={
@@ -123,6 +138,104 @@ def test_completed_job_is_not_reused_when_current_coverage_is_incomplete(monkeyp
         'group_id': 'a1', 'state': 'available', 'counts': {'not_started': 1, 'pending': 0, 'failed': 0,
         'partial': 0, 'not_run': 0}, 'reviewable_failed': 0, 'reviewable_partial': 0, 'reviewable_not_run': 0}]})
     assert jobs._completed_coverage_valid(None, None, 'review-1') is False
+
+
+def test_scope_gap_review_availability_requires_all_groups_terminal(monkeypatch):
+    snapshot = {'state': 'completed', 'review_run_id': 'review-1', 'ai_auto_enabled': True,
+                'ai_auto_groups': ['a1', 'a2']}
+    monkeypatch.setattr(reference_snapshots, 'get_reference_snapshot', lambda *_: snapshot)
+    rows = [
+        {'group_id': 'a1', 'state': 'available', 'counts': {'not_started': 0, 'pending': 0, 'failed': 0,
+         'partial': 0, 'not_run': 20}, 'reviewable_failed': 0, 'reviewable_partial': 0,
+         'reviewable_not_run': 0, 'reading_gap_not_run': 20, 'failure_categories': ['incomplete_material_scope']},
+        {'group_id': 'a2', 'state': 'available', 'counts': {'not_started': 0, 'pending': 0, 'failed': 0,
+         'partial': 1, 'not_run': 0}, 'reviewable_failed': 0, 'reviewable_partial': 1, 'reviewable_not_run': 0},
+    ]
+    monkeypatch.setattr(jobs.ai_advisory_snapshots, 'collect_current_coverage', lambda *_: {'state': 'available', 'groups': rows})
+    assert jobs._scope_gap_review_available(None, None, 'review-1') is True
+    rows[1]['counts']['not_started'] = 1
+    assert jobs._scope_gap_review_available(None, None, 'review-1') is False
+    rows[1]['counts']['not_started'] = 0
+    rows[0]['reading_gap_not_run'] = 19
+    assert jobs._scope_gap_review_available(None, None, 'review-1') is False
+
+
+def test_completed_job_is_reused_when_only_no_signal_candidates_were_skipped(monkeypatch):
+    snapshot = {'state': 'completed', 'review_run_id': 'review-1', 'ai_auto_enabled': True, 'ai_auto_groups': ['a1']}
+    monkeypatch.setattr(reference_snapshots, 'get_reference_snapshot', lambda *_: snapshot)
+    monkeypatch.setattr(jobs.ai_advisory_snapshots, 'collect_current_coverage', lambda *_: {'groups': [{
+        'group_id': 'a1', 'state': 'available', 'counts': {'not_started': 0, 'pending': 0, 'failed': 0,
+        'partial': 0, 'not_run': 20}, 'reviewable_failed': 0, 'reviewable_partial': 0,
+        'reviewable_not_run': 0, 'not_assessed_no_signal': 20, 'blocking_not_run': 0}]})
+
+    assert jobs._completed_coverage_valid(None, None, 'review-1') is True
+
+
+def test_worker_completes_no_signal_candidates_with_a_neutral_warning(tmp_path, monkeypatch):
+    engine = create_engine('sqlite:///' + (tmp_path / 'no-signal.sqlite').as_posix(),
+                           connect_args={'check_same_thread': False})
+    Base.metadata.create_all(engine)
+    create_account(engine, 'alice', 'Alice-password-123')
+    with Session(engine) as db:
+        db.add(BsTask(id=1, conversation_id=1, title='synthetic', state='running', created_by=1,
+                      created_by_type='web', options_snapshot_json={reference_snapshots.REVIEW_POINTER: 'review-1'}))
+        db.commit()
+    run = {'group_id': 'a1', 'run_id': 'a1-run', 'state': 'completed'}
+    snapshot = {'state': 'completed', 'review_run_id': 'review-1', 'ai_auto_enabled': True,
+                'ai_auto_groups': ['a1'], 'runs': [run]}
+    monkeypatch.setattr(reference_snapshots, 'get_reference_snapshot', lambda *_: snapshot)
+    monkeypatch.setattr(jobs.knowledge_runs, 'get_reference_run', lambda *_args, **_kwargs: run)
+    monkeypatch.setattr(jobs.ai_advisory_snapshots, 'advisory_group_ids', lambda _run: [])
+    status = {'group_id': 'a1', 'state': 'available',
+              'counts': {'not_started': 0, 'pending': 0, 'completed': 0, 'partial': 0, 'failed': 0, 'not_run': 20},
+              'skipped': 0, 'reviewable_partial': 0, 'reviewable_failed': 0, 'reviewable_not_run': 0,
+              'not_assessed_no_signal': 20, 'blocking_not_run': 0,
+              'unlocated_scope_reviewable': 0, 'failure_categories': []}
+    monkeypatch.setattr(jobs.ai_advisory_snapshots, 'collect_current_coverage', lambda *_: {
+        'state': 'available', 'groups': [status]})
+    async def unexpected_model_call(*_args, **_kwargs):
+        raise AssertionError('no-signal candidates must not trigger a model call')
+    monkeypatch.setattr(service, 'run_linked_batch_ai_advisory', unexpected_model_call)
+    monkeypatch.setattr(service, 'run_negative_candidate_ai_advisory', unexpected_model_call)
+
+    asyncio.run(jobs._run_background(engine, 1, 1, 'web', 'review-1', 'job-1', ['a1'], False))
+
+    with Session(engine) as db:
+        event = jobs._latest(db, 1, 'review-1')
+        assert event.event_type == jobs.COMPLETED
+        assert event.payload_json['warning'] is True
+        assert event.payload_json['needs_human_review'] is False
+        assert event.payload_json['not_assessed_no_signal_count'] == 20
+
+
+@pytest.mark.parametrize(('not_assessed', 'blocking', 'expected_phase'), [
+    (20, 0, 'completed'),
+    (0, 20, 'failed'),
+])
+def test_task_progress_distinguishes_no_signal_from_blocking_not_run(
+    tmp_path, monkeypatch, not_assessed, blocking, expected_phase,
+):
+    engine = create_engine('sqlite:///' + (tmp_path / f'progress-{expected_phase}.sqlite').as_posix())
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        task = BsTask(id=1, conversation_id=1, title='synthetic', state='running', created_by=1,
+                      created_by_type='web')
+        db.add(task)
+        db.commit()
+        coverage_row = {
+            'group_id': 'a1', 'state': 'available',
+            'counts': {'not_started': 0, 'pending': 0, 'completed': 0, 'partial': 0, 'failed': 0, 'not_run': 20},
+            'reviewable_failed': 0, 'reviewable_partial': 0, 'reviewable_not_run': 0,
+            'not_assessed_no_signal': not_assessed, 'blocking_not_run': blocking,
+        }
+        monkeypatch.setattr(jobs.ai_advisory_snapshots, 'collect_current_coverage', lambda *_: {
+            'state': 'available', 'groups': [coverage_row]})
+
+        progress = service.task_progress(
+            db, task, materials=[], snapshot={'steps': [{'state': 'completed'}],
+                'ai_auto_enabled': True, 'ai_auto_groups': ['a1']}, zip_summary={'containers': []})
+
+        assert progress['phase'] == expected_phase
 
 
 def test_submit_returns_without_waiting_and_deduplicates_running_job(monkeypatch):
@@ -288,6 +401,58 @@ def test_worker_processes_all_groups_and_preserves_completed_partial(tmp_path, m
         event = jobs._latest(db, 1, 'review-1')
         assert event.event_type == jobs.COMPLETED
         assert event.payload_json['warning'] is True
+
+
+@pytest.mark.parametrize('scope_count,retry,timeout,expected_calls,expected_categories', [
+    (20, False, False, ['a2', 'internal_records'], ['incomplete_material_scope']),
+    (20, True, False, ['a2', 'internal_records'], ['incomplete_material_scope']),
+    (19, False, False, [], ['incomplete_material_scope']),
+    (20, False, True, ['a2'], ['incomplete_material_scope', 'timeout']),
+])
+def test_worker_continues_only_identified_reading_gaps(tmp_path, monkeypatch, scope_count, retry, timeout,
+                                                       expected_calls, expected_categories):
+    engine = create_engine('sqlite:///' + (tmp_path / 'scope-worker.sqlite').as_posix())
+    Base.metadata.create_all(engine)
+    create_account(engine, 'alice', 'Alice-password-123')
+    with Session(engine) as db:
+        db.add(BsTask(id=1, conversation_id=1, title='synthetic', state='running', created_by=1,
+                      created_by_type='web', options_snapshot_json={reference_snapshots.REVIEW_POINTER: 'review-1'}))
+        db.commit()
+    groups = ['a1', 'a2', 'internal_records']
+    runs = {g: {'group_id': g, 'run_id': g + '-run', 'state': 'completed'} for g in groups}
+    snapshot = {'state': 'completed', 'review_run_id': 'review-1', 'ai_auto_enabled': True,
+                'ai_auto_groups': groups, 'runs': list(runs.values())}
+    monkeypatch.setattr(reference_snapshots, 'get_reference_snapshot', lambda *_: snapshot)
+    monkeypatch.setattr(jobs.knowledge_runs, 'get_reference_run', lambda _db, _task, group_id: runs[group_id])
+    monkeypatch.setattr(jobs.ai_advisory_snapshots, 'advisory_group_ids', lambda _run: [1])
+    pending = {'a2': True, 'internal_records': True}
+    def coverage(*_args):
+        rows = [{'group_id': 'a1', 'state': 'available', 'counts': {'not_started': 0, 'pending': 0,
+                 'completed': 0, 'partial': 0, 'failed': 0, 'not_run': 20}, 'skipped': 0,
+                 'reviewable_partial': 0, 'reviewable_failed': 0, 'reviewable_not_run': 0,
+                 'reading_gap_not_run': scope_count, 'failure_categories': ['incomplete_material_scope']}]
+        for group in groups[1:]:
+            rows.append({'group_id': group, 'state': 'available', 'counts': {'not_started': int(pending[group]),
+                         'pending': 0, 'completed': int(not pending[group]), 'partial': 0, 'failed': 0, 'not_run': 0},
+                         'skipped': 0, 'reviewable_partial': 0, 'reviewable_failed': 0, 'reviewable_not_run': 0})
+        return {'state': 'available', 'groups': rows}
+    monkeypatch.setattr(jobs.ai_advisory_snapshots, 'collect_current_coverage', coverage)
+    calls = []
+    async def linked(_db, _task, _user, *, group_id, **_kwargs):
+        calls.append(group_id)
+        if timeout:
+            raise TimeoutError('synthetic timeout')
+        pending[group_id] = False
+    monkeypatch.setattr(service, 'run_linked_batch_ai_advisory', linked)
+    async def negative(*_args, **_kwargs):
+        calls.append('negative')
+    monkeypatch.setattr(service, 'run_negative_candidate_ai_advisory', negative)
+    asyncio.run(jobs._run_background(engine, 1, 1, 'web', 'review-1', 'job-1', groups, retry))
+    assert calls == expected_calls
+    with Session(engine) as db:
+        event = jobs._latest(db, 1, 'review-1')
+        assert event.event_type == jobs.FAILED
+        assert event.payload_json['failure_categories'] == expected_categories
 
 
 def test_worker_failure_never_records_completion(tmp_path, monkeypatch, caplog):

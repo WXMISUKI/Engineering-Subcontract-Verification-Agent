@@ -158,6 +158,8 @@ export default function CheckRunView({
     && !completed
     && !['done', 'failed'].includes(autoCheck?.phase)))
   const aiJob = progress?.ai_job || autoCheck?.job || null
+  const partialReviewAvailable = !coverageUnavailable && !publicationPending && !mutationBusy &&
+    aiJob?.state === 'failed' && aiJob?.scope_gap_review_available === true && !running
   const staleCandidate = progress?.activity_health?.stale_candidate === true || aiJob?.stale_candidate === true
   const showStaleNotice = staleCandidate && !coverageUnavailable && !completed && !failed
   // 只有后端标记 running 的步骤才显示具体步骤，不根据完成数猜测当前步骤。
@@ -330,6 +332,8 @@ export default function CheckRunView({
         </ol>
 
         <div className="mt-4 flex min-h-9 items-center justify-end gap-3">
+          {partialReviewAvailable && onEnterReview && <button type="button" onClick={onEnterReview}
+            className="min-h-9 rounded-[6px] border border-[#8B7355] px-3 text-[14px] text-[#8B7355]">查看已有核查结果</button>}
           {(autoCheck?.phase === 'failed' || (serverFailed && aiJob?.state === 'failed')) && <button type="button" disabled={mutationBusy || (autoCheck?.recheckRequired ? !onRecheck : !onRetry)} onClick={autoCheck?.recheckRequired ? onRecheck : onRetry} className="min-h-9 rounded-[6px] border border-[#C62828] px-3 text-[14px] text-[#C62828] disabled:cursor-not-allowed disabled:opacity-50">{autoCheck?.recheckRequired ? '重新核查' : '重试核查'}</button>}
           {showStaleNotice && <button type="button" disabled={mutationBusy || !onRetry} onClick={onRetry} className="min-h-9 rounded-[6px] border border-[#8A5E1C] px-3 text-[14px] text-[#8A5E1C] disabled:cursor-not-allowed disabled:opacity-50">重试核查</button>}
           {completed && autoCheck?.phase !== 'failed' && onRecheck && (

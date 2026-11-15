@@ -1119,6 +1119,9 @@ def build_report(db: Session, task: BsTask, *, scope_coverage: dict | None = Non
     """聚合任务全部已落库结论为报告 dict（纯读，不写库）。"""
     reference_snapshot = reference_snapshots.get_reference_snapshot(db, task)
     ai_coverage = ai_advisory_snapshots.collect_current_coverage(db, task, reference_snapshot, report_review_blocking)
+    from . import reading_gap_scope
+    reading_gap_rows = reading_gap_scope.collect(db, task, reference_snapshot, ai_coverage) or []
+    reading_gap_statements = reading_gap_scope.statements(reading_gap_rows)
     ai_advisories = ai_advisory_snapshots.redact_unavailable_advisories(
         db, task, ai_advisory_snapshots.collect_current_advisories(db, task))
     ai_scope_limitations = _ai_scope_limitations(ai_advisories)
@@ -1329,7 +1332,7 @@ def build_report(db: Session, task: BsTask, *, scope_coverage: dict | None = Non
     counts = status_counts(countable)
     open_term_count = sum(1 for finding in countable_findings if is_open_term(finding))
     coverage = build_coverage(db, task, finding_count=len(findings))
-    scope_limitations = optional_scope_limitation_statements(scope_coverage)
+    scope_limitations = optional_scope_limitation_statements(scope_coverage) + reading_gap_statements
     scope_limited = bool(scope_limitations)
     headline = _headline(counts, len(countable))
     if coverage["complete"] and not countable:
@@ -1426,6 +1429,7 @@ def build_report(db: Session, task: BsTask, *, scope_coverage: dict | None = Non
         },
         **({"scope_coverage": deepcopy(scope_coverage)} if isinstance(scope_coverage, dict) else {}),
         "scope_limitations": scope_limitations,
+        "ai_reading_gap_scope": reading_gap_rows,
         "sections": sections,
         "checklist_summary": checklist_summary,
         "reference_snapshot": reference_snapshot,
@@ -1443,7 +1447,7 @@ def build_report(db: Session, task: BsTask, *, scope_coverage: dict | None = Non
         # 这是结论层披露：缺读页**不改判定**，报告/意见书/前端共用同一 summary_text。
         "reading_coverage": reading_coverage,
         # 本次核查范围声明（未纳入的情形 + 原因）；消费方=报告与意见书正文
-        "scope_statements": scope_statements(db, task, scope_coverage=scope_coverage) + ai_scope_limitations + (["部分 AI 辅助核查因超时未完成，相关问题已转人工核实，不代表 AI 已完成核查。"] if timeout_ids else []),
+        "scope_statements": scope_statements(db, task, scope_coverage=scope_coverage) + reading_gap_statements + ai_scope_limitations + (["部分 AI 辅助核查因超时未完成，相关问题已转人工核实，不代表 AI 已完成核查。"] if timeout_ids else []),
         # A-15（B1）合同要素事实认定：三类合同材料逐份 9 字段三态结果
         # （extract 层消费方；空则 []，与 meta/summary/sections/material_issues 键并存不互斥）。
         "contract_facts": contract_facts,
@@ -1564,9 +1568,7 @@ def build_opinion(db: Session, task: BsTask, *, scope_coverage: dict | None = No
               if isinstance(scope_coverage, dict) else build_report(db, task))
     scope_coverage = report.get("scope_coverage") or scope_coverage
     scope_limitations = list(report.get("scope_limitations") or [])
-    scope_limited = bool(isinstance(scope_coverage, dict)
-                         and scope_coverage.get("state") == "partial"
-                         and scope_limitations)
+    scope_limited = bool(scope_limitations)
     material_gaps = []
     material_finding_ids = [item.get("finding_id")
         for subject in (report.get("checklist_summary") or {}).get("subjects", [])

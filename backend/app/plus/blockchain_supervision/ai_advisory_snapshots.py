@@ -34,7 +34,13 @@ def advisory_pending(event):
 
 def advisory_validation_current(event):
     """历史事件不更改，但只有当前校验版本的结果能作为当前建议复用。"""
-    return bool(event and (event.payload_json or {}).get("validation_version") == ai_review_batch.CHECKPOINT_SCHEMA_VERSION)
+    if not event:
+        return False
+    payload = event.payload_json or {}
+    if event.event_type in {"check.negative_candidates_started", "check.negative_candidates_finished",
+                            "check.negative_candidates_failed"}:
+        return payload.get("validation_version") == negative_candidate_plan.VALIDATION_VERSION
+    return payload.get("validation_version") == ai_review_batch.CHECKPOINT_SCHEMA_VERSION
 
 
 def summarize_negative_list_entries(run, findings, candidates):
@@ -222,6 +228,21 @@ def timeout_reviewable_ids(db, task, runs, reviewable_predicate):
     return allowed
 
 
+def blocking_not_run_count(group):
+    """未运行项中既未进入人工复核、也非明确无信号跳过的数量。"""
+    counts = group.get("counts") if isinstance(group, dict) else None
+    if not isinstance(counts, dict):
+        return None
+    total = counts.get("not_run")
+    reviewable = group.get("reviewable_not_run", 0)
+    not_assessed = group.get("not_assessed_no_signal", 0)
+    if any(type(value) is not int or value < 0 for value in (total, reviewable, not_assessed)):
+        return None
+    if reviewable + not_assessed > total:
+        return None
+    return total - reviewable - not_assessed
+
+
 def summarize_coverage(snapshot, runs, events, *, timeout_reviewable_ids=None, scope_reviewable_ids=None):
     """仅描述本次自动核查范围；历史未标记的任务不推测覆盖情况。"""
     if not snapshot or snapshot.get("ai_auto_enabled") is not True:
@@ -245,6 +266,8 @@ def summarize_coverage(snapshot, runs, events, *, timeout_reviewable_ids=None, s
         latest = {}
         reviewable_partial = 0
         reviewable_not_run = 0
+        not_assessed_no_signal = 0
+        reading_gap_not_run = 0
         unlocated_scope_reviewable = 0
         reviewable_failed_ids = []
         failure_categories = set()
@@ -313,13 +336,20 @@ def summarize_coverage(snapshot, runs, events, *, timeout_reviewable_ids=None, s
                         counts[state] += 1
                         if state == "partial" and row.get("reviewable_partial") is True:
                             reviewable_partial += 1
-                        if (state == "not_run" and row.get("unavailable_reason") == "contract_scope_unlocated"
-                                and row.get("candidate_id") in (scope_reviewable_ids or set())):
+                        if state == "not_run" and row.get("unavailable_reason") == "rule_signal_not_found" \
+                                and row.get("source_reading_complete") is True \
+                                and isinstance(row.get("candidate_id"), str) and row.get("candidate_id"):
+                            not_assessed_no_signal += 1
+                        elif (state == "not_run" and row.get("unavailable_reason") == "rule_signal_not_found"
+                              and row.get("source_reading_complete") is False
+                              and isinstance(row.get("candidate_id"), str) and row.get("candidate_id")):
+                            reading_gap_not_run += 1
+                            failure_categories.add("incomplete_material_scope")
+                        elif (state == "not_run" and row.get("unavailable_reason") == "contract_scope_unlocated"
+                              and row.get("candidate_id") in (scope_reviewable_ids or set())):
                             reviewable_not_run += 1
                             unlocated_scope_reviewable += 1
-                        if state == "not_run" and (
-                                row.get("candidate_id") not in (scope_reviewable_ids or set())
-                                or row.get("unavailable_reason") != "contract_scope_unlocated"):
+                        elif state == "not_run":
                             # 仅把不能转人工的未执行候选标成阻断原因；已形成可追溯人工项的
                             # contract_scope_unlocated 仍允许进入人工复核，不应伪装成模型失败。
                             failure_categories.add("incomplete_material_scope")
@@ -330,7 +360,17 @@ def summarize_coverage(snapshot, runs, events, *, timeout_reviewable_ids=None, s
             # 避免页面恢复把版本升级变成隐式模型调用。
             counts["failed"] += counts["not_started"]
             counts["not_started"] = 0
-        output.append({"group_id": group, "label": CHECK_GROUPS[group]["label"], "state": "available", "counts": counts, "skipped": len(ids - linked), "reviewable_partial": reviewable_partial, "reviewable_not_run": reviewable_not_run, "unlocated_scope_reviewable": unlocated_scope_reviewable, "reviewable_failed": len(reviewable_failed_ids), "reviewable_timeout_finding_ids": sorted(reviewable_failed_ids), "failure_categories": sorted(failure_categories)})
+        coverage_row = {"group_id": group, "label": CHECK_GROUPS[group]["label"], "state": "available",
+                        "counts": counts, "skipped": len(ids - linked), "reviewable_partial": reviewable_partial,
+                        "reviewable_not_run": reviewable_not_run,
+                        "not_assessed_no_signal": not_assessed_no_signal,
+                        "reading_gap_not_run": reading_gap_not_run,
+                        "unlocated_scope_reviewable": unlocated_scope_reviewable,
+                        "reviewable_failed": len(reviewable_failed_ids),
+                        "reviewable_timeout_finding_ids": sorted(reviewable_failed_ids),
+                        "failure_categories": sorted(failure_categories)}
+        coverage_row["blocking_not_run"] = blocking_not_run_count(coverage_row)
+        output.append(coverage_row)
     return {"state": "available", "groups": output}
 
 

@@ -119,7 +119,7 @@ def test_only_valid_persisted_scope_candidate_is_reviewable_in_coverage():
     prepared, result, run = inputs()
     run.update({'group_id': 'a1', 'state': 'completed', 'finding_ids': [], 'basis_sources': []})
     event = SimpleNamespace(event_type='check.negative_candidates_finished', payload_json={
-        'run_id': run['run_id'], 'validation_version': snapshots.ai_review_batch.CHECKPOINT_SCHEMA_VERSION,
+        'run_id': run['run_id'], 'validation_version': plan.VALIDATION_VERSION,
         'result': result,
     })
     snapshot = {'ai_auto_enabled': True, 'ai_auto_groups': ['a1']}
@@ -136,7 +136,7 @@ def test_non_reviewable_contract_missing_is_exposed_as_material_scope_category()
     result['candidates'][0]['unavailable_reason'] = 'contract_missing'
     run.update({'group_id': 'a1', 'state': 'completed', 'finding_ids': [], 'basis_sources': []})
     event = SimpleNamespace(event_type='check.negative_candidates_finished', payload_json={
-        'run_id': run['run_id'], 'validation_version': snapshots.ai_review_batch.CHECKPOINT_SCHEMA_VERSION,
+        'run_id': run['run_id'], 'validation_version': plan.VALIDATION_VERSION,
         'result': result,
     })
     row = snapshots.summarize_coverage({'ai_auto_enabled': True, 'ai_auto_groups': ['a1']},
@@ -157,7 +157,7 @@ def test_scope_coverage_requires_matching_active_persisted_finding(monkeypatch):
         records = service.sync_candidate_review_records(db, task, [], [], [], unlocated=entries)
         db.commit()
         event = SimpleNamespace(event_type='check.negative_candidates_finished', payload_json={
-            'run_id': run['run_id'], 'validation_version': snapshots.ai_review_batch.CHECKPOINT_SCHEMA_VERSION,
+            'run_id': run['run_id'], 'validation_version': plan.VALIDATION_VERSION,
             'result': result, 'finding_records': records,
         })
         monkeypatch.setattr(snapshots, 'active_candidate_finding_ids', lambda *_: {records[0]['finding_id']})

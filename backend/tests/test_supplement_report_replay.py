@@ -28,6 +28,25 @@ from test_bs_person_certificate_relations import COMPANY, _build, _cert_facts, _
 from test_report_document import _report
 
 
+def test_reading_gap_scope_is_present_in_word_and_pdf():
+    from app.plus.blockchain_supervision import reading_gap_scope
+    statement = reading_gap_scope.statements([{'file_name': '报审包.pdf', 'pages': [63, 64],
+                                               'rule_ids': ['NL-B-01', 'NL-T-01']}])[0]
+    report = _report([], selected=['a1'], completed=['a1'])
+    report['meta'].update({'title': '范围限制验证', 'scope': {}})
+    report['scope_limitations'] = [statement]
+    report['scope_statements'] = [statement]
+    report['business_document'] = build_report_document(report)
+    word = Document(BytesIO(export.word_bytes(report)))
+    word_text = ''.join(p.text for p in word.paragraphs) + ''.join(cell.text for table in word.tables for row in table.rows for cell in row.cells)
+    pdf = fitz.open(stream=export.pdf_bytes(report), filetype='pdf')
+    pdf_text = ''.join(page.get_text() for page in pdf)
+    for text in (word_text, pdf_text):
+        compact = ''.join(text.split())
+        assert 'NL-B-01' in compact and 'NL-T-01' in compact and '63、64' in compact
+        assert '未覆盖' in compact and '不能解释为完整通过' in compact
+
+
 def test_structured_ocr_date_and_form_clues_reach_both_exports():
     form = '劳务分包报审表\n总监理工程师意见：\n意见文字\n指挥部意见：\n意见文字'
     cert = ('```json\n{"证照标题":"<576,302,57,299,90>,安全生产许可证",'
