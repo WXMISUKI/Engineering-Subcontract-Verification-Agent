@@ -1194,7 +1194,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
   // ── 报告两稿别（设计 100 §5）──
   // stage=draft：AI 初稿；stage=confirmed：确认稿。两稿别各自缓存、各自记录技术前提
   // 错误，人工未处置不作为报告资格；读取/导出都绑定当前组件、运行代及依据代。
-  const [reportStage, setReportStage] = useState('draft')
+  const reportStage = 'confirmed'
   const [reports, setReports] = useState({ draft: null, confirmed: null })
   const [opinion, setOpinion] = useState(null)
   const [opinionMarkdown, setOpinionMarkdown] = useState(null)
@@ -1268,6 +1268,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
     if (publicationPending && ['overview', 'review', 'report'].includes(activeView)) setActiveView('run')
   }, [publicationPending, activeView, setActiveView])
   const [completing, setCompleting] = useState(false)
+  const completingRef = useRef(false)
   const [runVersion, setRunVersion] = useState(0)
   const events = useBsEventStream(taskId, runVersion)
   const loadTaskUsage = useCallback(async () => {
@@ -1633,6 +1634,12 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
           setAutoCheck({ phase: 'waiting', stage: 'ai', index: 0, total: snapshot.ai_auto_groups.length, error: '' })
           return { ok: false, pending: true }
         }
+        if (aiResult.state === 'review_required') {
+          aiResumeSeenRef.current = snapshot.review_run_id
+          setAutoCheck({ phase: 'idle', index: 0, total: 0, error: '' })
+          await reload()
+          return { ok: false, reviewRequired: true }
+        }
         if (aiResult.state === 'failed') {
           const labels = { timeout: '模型响应超时', invalid_response: '模型返回格式无效', input_budget: '输入超过处理范围', model_call_error: '模型调用异常', rate_limit: '模型服务请求受限（HTTP 429）', authentication: '模型服务认证、权限或额度异常', service_error: '模型服务暂时不可用', incomplete_material_scope: '合同范围材料不完整，请补充合同范围页或人工核实' }
           const reasons = (aiResult.failureCategories || []).map((code) => labels[code]).filter(Boolean)
@@ -1697,9 +1704,11 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
     if (runningKey !== null) return
     const serverAiClosed = detail.progress?.ai_coverage?.state === 'unavailable'
       || detail.progress?.phase === 'completed'
+      || detail.progress?.phase === 'review_required'
       || detail.progress?.phase === 'failed'
       || detail.progress?.ai_job?.state === 'failed'
-      || ['check.ai_background_completed', 'check.ai_background_failed'].includes(detail.progress?.activity_health?.last_event_type)
+      || detail.progress?.ai_job?.state === 'review_required'
+      || ['check.ai_background_completed', 'check.ai_background_failed', 'check.ai_background_review_required'].includes(detail.progress?.activity_health?.last_event_type)
     if (serverAiClosed) {
       aiResumeSeenRef.current = reviewRunId
       clearAutoRunStatus(taskId, reviewRunId)
@@ -1740,6 +1749,8 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
   // 缺组时后端 409 + detail，由 onError 呈现（文案已说明缺哪些分组）。
   // 刀B：收口成功后刷新规则集视图——此时后端才写 ruleset_version，更新提示应随之消失/更新。
   const completeTask = async () => {
+    if (completingRef.current) return
+    completingRef.current = true
     try {
       setCompleting(true)
       await completeBsTask(taskId)
@@ -1749,7 +1760,10 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
       await reload()
       await loadRuleset()
       setActiveView('report')
-    } catch (e) { onError(e.message) } finally { setCompleting(false) }
+    } catch (e) { onError(e.message) } finally {
+      completingRef.current = false
+      setCompleting(false)
+    }
   }
 
   // 刀B（BS-P1-13）：重核查支持可选局部范围。默认（无参数）保持旧行为 = 全量重跑；
@@ -1924,8 +1938,6 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
       setOpinionMarkdown(preview.markdown)
     } catch (e) {
       if (!current()) return
-      setOpinion(null)
-      setOpinionMarkdown(null)
       setOpinionError(e.message || '正式意见书暂时无法读取')
     } finally {
       if (current()) setOpinionLoading(false)
@@ -1941,14 +1953,6 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
     } catch (e) {
       if (reportIsCurrent(context)) onError(e.message || '正式意见书导出失败')
     } finally { if (reportIsCurrent(context)) setOpinionExporting(null) }
-  }
-  const changeReportStage = (stage) => {
-    if (stage !== 'draft' && stage !== 'confirmed') return
-    opinionRequest.current += 1
-    setOpinionLoading(false)
-    setOpinion(null)
-    setOpinionMarkdown(null)
-    setReportStage(stage)
   }
   const exportReport = async (stageOrFmt = 'docx', requestedFmt) => {
     const context = { ...reportContext.current }
@@ -2472,7 +2476,6 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
           <ReportView
             report={reports[reportStage]}
             stage={reportStage}
-            onStageChange={changeReportStage}
             prototypeMode
             stageBusy={reportLoading[reportStage]}
             blockingByStage={reportGates}
@@ -2485,10 +2488,6 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
             refreshMessage={reportRefreshMessage}
             onDownloadReference={downloadReference}
             onOpenSource={openSource}
-            onShowBasicInformation={() => {
-              setActiveView('materials')
-              requestAnimationFrame(() => document.getElementById('project-basic-information')?.focus())
-            }}
             onComplete={!done ? completeTask : undefined}
             completing={completing}
              completeDisabled={pendingProblems > 0 || mutationBusy}
@@ -2632,6 +2631,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
             submitting={submitting}
             onError={onError}
             onComplete={openReportFromReview}
+            completing={completing}
             completeLabel="生成审查报告"
             completeDisabled={blockingUndecidable > 0 || checking}
             previewMaterialId={previewRequest?.materialId ?? null}

@@ -2512,12 +2512,16 @@ def task_progress(db: Session, task: BsTask, *, materials=None, snapshot=None,
             ai_state = "completed"
         # 未开始的分组不是活动工作。已有可靠失败终态、覆盖可确认且没有
         # 其他活动租约时，不能把后续未开始的项投影为仍在运行。
-        if ai_state == "running":
+        if ai_state in {"running", "failed"}:
             try:
                 from . import background_ai_review
                 review_run_id = (task.options_snapshot_json or {}).get(reference_snapshots.REVIEW_POINTER)
                 job = background_ai_review.job_status(db, task, review_run_id) if review_run_id else {}
-                if job.get("state") == "failed" and not current_ai_advisory_pending(db, task):
+                if job.get("state") == "running":
+                    ai_state = "running"
+                elif job.get("state") == "review_required":
+                    ai_state = "review_required"
+                elif job.get("state") == "failed" and not current_ai_advisory_pending(db, task):
                     ai_state = "failed"
             except Exception:
                 logger.warning("[bs] AI terminal status unavailable task_id=%s", task.id, exc_info=True)
@@ -2531,6 +2535,8 @@ def task_progress(db: Session, task: BsTask, *, materials=None, snapshot=None,
         phase = "failed"
     elif checks_done and ai_state in {"running", "unknown"}:
         phase = "ai_checking"
+    elif checks_done and ai_state == "review_required":
+        phase = "review_required"
     elif checks_done:
         phase = "completed"
     else:
@@ -2582,6 +2588,8 @@ def task_progress(db: Session, task: BsTask, *, materials=None, snapshot=None,
             "done_pages": page_data.get("done_pages"), "total_work_pages": page_data.get("total_work_pages"),
             "remaining_seconds": None,
         }
+    elif phase == "review_required":
+        current = {"key": "review_required", "label": "AI 核查组已执行完成，材料范围不完整，待人工复核", "current": None, "total": None}
     elif phase == "completed":
         current = {"key": "completed", "label": "核查已完成，等待人工复核", "current": 1, "total": 1}
     elif phase == "ai_checking":
@@ -2618,7 +2626,7 @@ def task_progress(db: Session, task: BsTask, *, materials=None, snapshot=None,
         },
         {
             "key": "intelligent_check", "label": "五步智能核查",
-            "state": "failed" if phase == "failed" else "completed" if phase == "completed" else "running" if phase in {"checking", "ai_checking"} else "waiting",
+            "state": "failed" if phase == "failed" else "completed" if phase in {"completed", "review_required"} else "running" if phase in {"checking", "ai_checking"} else "waiting",
             "completed_units": check_done, "total_units": check_total,
         },
         {
@@ -2628,7 +2636,7 @@ def task_progress(db: Session, task: BsTask, *, materials=None, snapshot=None,
         },
     ]
     ai_job = None
-    if phase == "ai_checking" or (phase == "failed" and snapshot.get("ai_auto_enabled") is True):
+    if phase in {"ai_checking", "review_required"} or (phase == "failed" and snapshot.get("ai_auto_enabled") is True):
         try:
             from . import background_ai_review
             review_run_id = (task.options_snapshot_json or {}).get(reference_snapshots.REVIEW_POINTER)
@@ -7334,6 +7342,7 @@ EVENT_LABELS = {
     "check.ai_background_progress": "后台 AI 核查进展",
     "check.ai_background_completed": "后台 AI 核查已结束",
     "check.ai_background_failed": "后台 AI 核查未完成",
+    "check.ai_background_review_required": "后台 AI 核查完成，待人工复核",
     "check.ai_advisory_completed": "AI 辅助核查已完成",
     "check.ai_adjudication_applied": "AI 判定已写入",
     "check.ai_advisory_started": "AI 辅助核查进行中",
@@ -7568,7 +7577,7 @@ def event_dto(ev: BsTaskEvent) -> dict:
                  optional_source_scope.CHECK_STARTED_EVENT, optional_source_scope.CHECK_RECORDED_EVENT,
                  "knowledge.reference_started", knowledge_runs.RUN_EVENT,
                  "check.ai_background_started", "check.ai_background_progress",
-                 "check.ai_background_completed", "check.ai_background_failed",
+                 "check.ai_background_completed", "check.ai_background_failed", "check.ai_background_review_required",
                  "check.ai_advisory_started", "check.ai_advisory_completed",
                  "check.ai_advisory_failed", "check.ai_batch_checkpoint", "check.ai_batch_progress",
                  "check.negative_candidates_started", "check.negative_candidates_finished",

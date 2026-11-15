@@ -63,3 +63,17 @@ it('整体失败时不将最近分组误认成失败分组', () => {
   expect(steps[1].textContent).toContain('AI 状态待核实')
   expect(steps[1].textContent).not.toContain('AI 未完成')
 })
+
+it('keeps the review-required state in one summary and collapses the detailed timeline', () => {
+  render(<CheckRunView taskState="running" snapshot={snapshot} autoCheck={{
+    phase: 'idle', warning: '核查待人工复核：存在材料读取缺口。',
+  }} activity="后台 AI 核查完成，待人工复核" progress={{
+    phase: 'review_required', ai_job: { state: 'review_required' },
+  }} />)
+
+  expect(screen.getByTestId('check-run-title').textContent).toContain('核查待人工复核')
+  expect(screen.getByRole('heading', { name: '五步智能核查' })).toBeTruthy()
+  expect(screen.queryByText('核查待人工复核：存在材料读取缺口。')).toBeNull()
+  expect(screen.queryByText('后台 AI 核查完成，待人工复核')).toBeNull()
+  expect(screen.getByTestId('check-run-timeline').open).toBe(false)
+})

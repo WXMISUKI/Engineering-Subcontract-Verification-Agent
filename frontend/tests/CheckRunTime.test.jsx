@@ -52,6 +52,21 @@ it('核查失败时展示后台任务的失败分类', () => {
   expect(screen.queryByTestId('check-run-stale')).toBeNull()
 })
 
+it('规则步骤完成但 AI 回执无法确认时不显示规则 100%', () => {
+  const snapshot = {
+    ai_auto_enabled: true,
+    steps: [{ step_id: 'a1', title: '资质核查', state: 'completed' }],
+  }
+  render(<CheckRunView taskState="running" snapshot={snapshot} progress={{
+    phase: 'completed', percent: 100,
+  }} />)
+  expect(screen.getByTestId('progress-percent').textContent).toBe('待核实')
+  expect(screen.getByTestId('check-run-title').textContent).toBe('核查结果待核实')
+  expect(screen.queryByText('规则 100%')).toBeNull()
+  expect(screen.getByTestId('check-run-progress-bar').style.width).toBe('100%')
+  expect(screen.getByText('执行进度 100%')).toBeTruthy()
+})
+
 it('版本不一致时明确显示无法核实，不把后台已完成显示为正在执行', () => {
   const onReviewReady = vi.fn()
   render(<CheckRunView taskState="running" onReviewReady={onReviewReady} progress={{

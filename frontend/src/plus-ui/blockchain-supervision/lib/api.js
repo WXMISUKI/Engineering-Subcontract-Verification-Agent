@@ -561,6 +561,7 @@ export const BS_EVENT_TYPES = [
   'check.semantic_started', 'check.semantic_progress', 'check.coverage_started', 'check.rule_coverage_recorded',
   'check.ai_advisory_completed', 'check.ai_advisory_started',
   'check.ai_background_started', 'check.ai_background_progress', 'check.ai_background_completed', 'check.ai_background_failed',
+  'check.ai_background_review_required',
   'check.ai_advisory_failed', 'check.ai_batch_checkpoint', 'check.ai_batch_progress',
   'check.negative_candidates_started', 'check.negative_candidates_finished',
   'check.negative_candidates_failed', 'check.negative_candidate_checkpoint',

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { LoaderCircle } from 'lucide-react'
 import { isMaterialOnly, reviewBucket } from '../lib/reviewDecision'
 import { collectContainerIds } from '../lib/materialState'
 import { buildReviewQueueSections, reviewQueueCounts } from '../lib/reviewQueueModel'
@@ -375,8 +376,9 @@ export default function ReviewQueue({
       {onComplete && <footer className="shrink-0 border-t border-[#EFE6D8] bg-white p-2">
         <p className="mb-1 text-[11px] text-[#6B7280]">已复核 {prototypeMode ? prototypeCounts.accepted + prototypeCounts.ignored : bucketCounts.accepted + bucketCounts.ignored} / {prototypeMode ? prototypeCounts.total : bucketCounts.all}</p>
         {prototypeCounts.undecidable > 0 && <p className="mb-2 text-[11px] leading-relaxed text-[#92400E]">还有 {prototypeCounts.undecidable} 项无法核实，可查看原文并处理。</p>}
-        <button type="button" onClick={onComplete} disabled={completing || completeDisabled} aria-disabled={completeDisabled || undefined} className="min-h-10 w-full rounded-[4px] bg-[#8B7355] px-3 py-2 text-xs font-medium text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50">
-          {completing ? '正在生成报告…' : completeLabel}
+        <button type="button" onClick={onComplete} disabled={completing || completeDisabled} aria-disabled={completeDisabled || undefined} aria-busy={completing || undefined} className="inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-[4px] bg-[#8B7355] px-3 py-2 text-xs font-medium text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50">
+          {completing && <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin motion-reduce:animate-none" />}
+          <span aria-live="polite">{completing ? '正在生成报告…' : completeLabel}</span>
         </button>
       </footer>}
     </aside>

@@ -23,3 +23,10 @@ it('opens a suspect source page directly from reading coverage', () => {
   fireEvent.click(screen.getByRole('button', { name: '报审表.pdf 第 21 页（待读）' }))
   expect(open).toHaveBeenCalledWith(7, 21, null)
 })
+
+it('shows the report-generation busy state in the review queue', () => {
+  render(<ReviewWorkbenchLayout prototypeMode model={{ groups: [] }} onComplete={vi.fn()} completing />)
+  const button = screen.getByRole('button', { name: '正在生成报告…' })
+  expect(button.disabled).toBe(true)
+  expect(button.getAttribute('aria-busy')).toBe('true')
+})

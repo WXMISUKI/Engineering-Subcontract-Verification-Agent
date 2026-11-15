@@ -53,15 +53,25 @@ it('discloses rule-level scope limitations in the formal report view', () => {
     .toContain('规则 T15-01 本轮未覆盖')
 })
 
-it('shows prototype report exports and keeps confirmed export behind its gate', () => {
+it('shows only Word and PDF exports for the confirmed report and keeps its gate', () => {
   const onExport = vi.fn()
-  render(<ReportView report={report()} prototypeMode onExport={onExport} blockingByStage={{ confirmed: { message: '尚有问题待复核' } }} />)
-  expect(screen.getByTestId('prototype-report-export-draft-docx').disabled).toBe(false)
-  expect(screen.getByTestId('prototype-report-export-draft-pdf').disabled).toBe(false)
-  expect(screen.getByTestId('prototype-report-export-confirmed-docx').disabled).toBe(true)
-  expect(screen.getByTestId('prototype-report-export-confirmed-pdf').disabled).toBe(true)
-  fireEvent.click(screen.getByTestId('prototype-report-export-draft-pdf'))
-  expect(onExport).toHaveBeenCalledWith('draft', 'pdf')
+  const view = render(<ReportView report={report()} prototypeMode onExport={onExport} blockingByStage={{ confirmed: { message: '尚有问题待复核' } }} />)
+  expect(screen.queryByTestId('prototype-report-export-draft-docx')).toBeNull()
+  expect(screen.getByTestId('prototype-report-export-word').disabled).toBe(true)
+  expect(screen.getByTestId('prototype-report-export-pdf').disabled).toBe(true)
+  expect(onExport).not.toHaveBeenCalled()
+  view.rerender(<ReportView report={report()} prototypeMode onExport={onExport} />)
+  fireEvent.click(screen.getByTestId('prototype-report-export-pdf'))
+  expect(onExport).toHaveBeenCalledWith('confirmed', 'pdf')
+})
+
+it('offers regeneration while retaining the current formal opinion during a refresh', () => {
+  const onGenerateOpinion = vi.fn()
+  render(<ReportView report={report()} prototypeMode opinion={{ opinion_digest: 'current' }} onGenerateOpinion={onGenerateOpinion} />)
+  fireEvent.click(screen.getByTestId('regenerate-formal-opinion'))
+  expect(onGenerateOpinion).toHaveBeenCalledOnce()
+  expect(screen.getByTestId('opinion-export-word')).toBeTruthy()
+  expect(screen.getByTestId('opinion-export-pdf')).toBeTruthy()
 })
 
 it('renders business report content without showing ignored audit items', () => {
@@ -173,17 +183,18 @@ it('uses the same business themes for legacy snapshots as exports', () => {
   expect(text).not.toContain('忽略事项')
 })
 
-it('opens a field source from the business report', () => {
+it('shows basic information without source links', () => {
   const data = report()
   data.basic_information = { general_contractor: { evidence: [{ material_id: 7, page: 1 }] } }
   data.business_document = { basic_information: { '施工总承包单位': '示例总包' }, sections: [], issues: [], conclusion: {} }
   const onOpenSource = vi.fn()
   render(<ReportView report={data} onOpenSource={onOpenSource} />)
-  fireEvent.click(screen.getByText('查看原文'))
-  expect(onOpenSource).toHaveBeenCalledWith(7, 1)
+  expect(screen.getByText('示例总包')).toBeTruthy()
+  expect(screen.queryByText('查看原文')).toBeNull()
+  expect(onOpenSource).not.toHaveBeenCalled()
 })
 
-it('marks a conflicting value and opens the first usable source', () => {
+it('marks a conflicting value and shows source candidates inline', () => {
   const data = report()
   data.basic_information = { general_contractor: { evidence: [{ material_id: 5 }, { material_id: 7, page: 2 }] } }
   data.business_document = { basic_information: { '施工总承包单位': '候选总包' },
@@ -191,11 +202,11 @@ it('marks a conflicting value and opens the first usable source', () => {
   const onOpenSource = vi.fn()
   render(<ReportView report={data} onOpenSource={onOpenSource} />)
   expect(screen.getByText('候选总包（待核实）')).toBeTruthy()
-  fireEvent.click(screen.getByText('查看原文'))
-  expect(onOpenSource).toHaveBeenCalledWith(7, 2)
+  expect(screen.queryByText('查看原文')).toBeNull()
+  expect(onOpenSource).not.toHaveBeenCalled()
 })
 
-it('offers each located source for conflicting field candidates', () => {
+it('lists conflicting source values without exposing original-source controls', () => {
   const data = report()
   data.basic_information = { general_contractor: { evidence: [
     { material_id: 7, page: 1, file_name: '报审表.pdf', value: '甲公司' },
@@ -205,8 +216,8 @@ it('offers each located source for conflicting field candidates', () => {
     basic_information_status: { '施工总承包单位': 'conflict' }, sections: [], issues: [], conclusion: {} }
   const onOpenSource = vi.fn()
   render(<ReportView report={data} onOpenSource={onOpenSource} />)
-  fireEvent.click(screen.getByRole('button', { name: /合同.pdf.*第4页/ }))
-  expect(onOpenSource).toHaveBeenCalledWith(8, 4)
   expect(screen.getByText(/甲公司/)).toBeTruthy()
   expect(screen.getByText(/乙公司/)).toBeTruthy()
+  expect(screen.queryByText(/查看原文/)).toBeNull()
+  expect(onOpenSource).not.toHaveBeenCalled()
 })

@@ -48,7 +48,7 @@
 
 - [x] 6.1 Read-only verification of task 4 and original suspect pages; confirm personnel evidence and contract/signature or work-schedule pages are mixed in one material.
 - [x] 6.2 Confirm with user: continue independent groups, retain uncovered status and human review, keep existing report gate.
-- [x] 6.3 Add regression and implement continuation for verified material-scope gaps, with a failed terminal receipt after all independent groups; preserve fail-closed handling for other failures.
+- [x] 6.3 Add regression and implement continuation for verified material-scope gaps; preserve incomplete coverage and fail-closed handling for other failures. (Execution receipt semantics superseded by section 8: use review-required, not execution-failed.)
 - [x] 6.4 Provide actionable access to each original suspect page; viewing does not change coverage. Reuse existing material replacement flow, without adding OCR editing or confirmation.
 - [ ] 6.5 Verify retries, report gate, UI and offline real-scenario replay; run focused regressions and strict validation. Focused tests and real-task continuation passed; full report acceptance remains open.
 - [ ] 6.6 Verify the complete real-material workflow within explicit authorization; record remaining limits without modifying historical outcomes.
@@ -75,3 +75,17 @@
 - The real task remains `running` with 34 undecidable findings awaiting user review. No real finding was accepted or ignored, and no confirmed report was generated. Final business acceptance requires authorized human decisions and verification of the resulting report.
 - A subsequent read-only check compared the active original files for task 2 and task 4: each has one active material, and their SHA-256 hashes match. This establishes that task 4 uses the same file as task 2; it does not by itself complete the remaining report acceptance or establish that every condition of 4.2 has been met.
 - Functional closure verification: at the user's explicit request, the 34 current review-blocking findings on task 4 were accepted through the existing review handler, each with a note that this was an authorized functional test and the business facts were not individually verified. The workbench showed 34/34 processed and generated the report; task 4 became `done`. The report displayed all 20 uncovered rule IDs, the 12 physical pages, and an incomplete conclusion. Confirmed Word and PDF were downloaded and text-checked: both contain all 20 IDs, the 12-page list, the no-conclusion wording, and the test-disposition note. These artifacts are functional test results, not expert acceptance or a full compliance finding. The failed `incomplete_material_scope` outcome and uncovered status remain historical/current evidence respectively.
+
+## 8. Execution outcome versus coverage outcome
+
+- [x] 8.1 Reproduce the new-task symptom from job `bb08b670868e4435b152b03d9cacb234`: all five groups terminal, 20 A1 candidates not run due incomplete reading, later groups executed, then terminal failed event.
+- [x] 8.2 Add regression coverage for `review_required` event projection, legacy failed-event projection, all-groups continuation, and no same-generation retry.
+- [x] 8.3 Implement a distinct `review_required` terminal event/state while retaining the incomplete coverage/report gates and true execution failure behavior.
+- [x] 8.4 Show a human-review action and prevent duplicate retry messaging for material gaps; keep actual execution failures retryable.
+- [x] 8.5 Verify task progress, automatic review orchestration, real local candidate task 5 read-only projection, focused regressions, and strict OpenSpec validation. Preserve task 5's existing events and business data.
+
+### Execution/coverage state verification
+
+- The exact task 5 job `bb08b670868e4435b152b03d9cacb234` was not retried. After candidate redeploy, read-only projection reports task `running`, job `review_required`, `diagnostic_state=待人工复核`, and `scope_gap_review_available=true`; the original `check.ai_background_failed` event remains unchanged. Coverage shows 20 A1 candidates uncovered across rules `NL-B-01..12` and `NL-T-01..08`, attributable to physical pages 20, 21, 26, 28, 31, 37, 39, 43, 61, 63 and 64. Other configured groups remain terminal; reviewable not-run items in signature/internal-record groups do not block this disposition.
+- Runtime UI verification shows “核查待人工复核”, material reading 1/1, five rule steps 5/5, result closure 0/1, and an “进入人工复核” action. The stale-execution alert and retry control are absent for this terminal coverage state. Opening the review workbench is navigational; no review receipt, task closure, or model call was made.
+- Backend focused regression: 94 passed. Frontend focused regression: 39 passed. OpenSpec strict validation and `git diff --check` passed. Candidate backend/frontend images rebuilt and restarted; `/api/health` is `ok` and frontend returns HTTP 200.

@@ -28,11 +28,16 @@ it('服务端确认失败时，在本地没有失败状态也提供显式重试�
 it('明确仅有读取缺口且其他组已处理时可查看已有结果', () => {
   const enter = vi.fn()
   render(<CheckRunView taskState="running" snapshot={snapshot} autoCheck={{ phase: 'idle' }} onEnterReview={enter}
-    progress={{ phase: 'failed', ai_job: { state: 'failed', failure_categories: ['incomplete_material_scope'],
-      scope_gap_review_available: true } }} />)
-  fireEvent.click(screen.getByRole('button', { name: /查看已有核查结果/ }))
+    progress={{ phase: 'review_required', ai_job: { state: 'review_required', failure_categories: [],
+      scope_gap_review_available: true }, activity_health: { stale_candidate: true } }} />)
+  expect(screen.getByRole('heading', { name: '五步智能核查' })).toBeTruthy()
+  expect(screen.getByTestId('check-run-title').textContent).toContain('核查待人工复核')
+  expect(screen.getByText(/AI 核查组已执行完成.*材料读取范围不完整/u)).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: '进入人工复核' }))
   expect(enter).toHaveBeenCalledTimes(1)
-  expect(screen.getByTestId('check-run-error')).toBeTruthy()
+  expect(screen.queryByTestId('check-run-error')).toBeNull()
+  expect(screen.queryByTestId('check-run-stale')).toBeNull()
+  expect(screen.queryByRole('button', { name: '重试核查' })).toBeNull()
 })
 
 it('任务仍有活动工作时，重试入口保持禁用', () => {

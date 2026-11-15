@@ -44,6 +44,20 @@ def test_completed_job_projection_preserves_no_signal_disclosure_count():
     assert projected['needs_human_review'] is False
 
 
+def test_review_required_job_projection_is_not_an_execution_failure():
+    event = SimpleNamespace(event_type=jobs.REVIEW_REQUIRED, payload_json={
+        'job_id': 'job-1', 'review_run_id': 'review-1',
+        'reason': 'incomplete_material_scope',
+    })
+
+    projected = jobs.project_job_state(event, active_job_ids=set(), instance_id='instance')
+
+    assert projected['state'] == 'review_required'
+    assert projected['reason'] == 'incomplete_material_scope'
+    assert projected['failure_categories'] == []
+    assert projected['diagnostic_state'] == '待人工复核'
+
+
 def test_running_job_projection_includes_last_progress_and_stale_diagnostic():
     now = time.time()
     event = SimpleNamespace(event_type=jobs.STARTED, created_at=None, payload_json={
@@ -95,6 +109,49 @@ def test_job_status_uses_latest_group_or_batch_event(monkeypatch):
         assert status['current_batch'] is None
 
 
+def test_legacy_material_scope_failure_is_projected_as_review_required(monkeypatch):
+    engine = create_engine('sqlite://')
+    Base.metadata.create_all(engine)
+    monkeypatch.setattr(jobs, '_scope_gap_review_available', lambda *_: True)
+    with Session(engine) as db:
+        task = BsTask(id=1, conversation_id=1, title='synthetic', state='running', created_by=3, created_by_type='web',
+                      options_snapshot_json={reference_snapshots.REVIEW_POINTER: 'review-1'})
+        db.add(task)
+        db.commit()
+        service.add_event(db, task.id, jobs.FAILED, payload={
+            'job_id': 'job-1', 'review_run_id': 'review-1',
+            'failure_categories': ['incomplete_material_scope']})
+
+        status = jobs.job_status(db, task, 'review-1')
+
+        assert status['state'] == 'review_required'
+        assert status['scope_gap_review_available'] is True
+        assert status['failure_categories'] == []
+        assert status['diagnostic_state'] == '待人工复核'
+        assert jobs._latest(db, task.id, 'review-1').event_type == jobs.FAILED
+
+
+def test_review_required_job_does_not_start_another_model_run(tmp_path, monkeypatch):
+    engine = create_engine('sqlite:///' + (tmp_path / 'review-required.sqlite').as_posix())
+    Base.metadata.create_all(engine)
+    create_account(engine, 'alice', 'Alice-password-123')
+    with Session(engine) as db:
+        task = BsTask(id=1, conversation_id=1, title='synthetic', state='running', created_by=1,
+                      created_by_type='web', options_snapshot_json={reference_snapshots.REVIEW_POINTER: 'review-1'})
+        db.add(task)
+        db.commit()
+        user = db.query(__import__('app.standalone.identity', fromlist=['User']).User).filter_by(username='alice').one()
+        snapshot = {'state': 'completed', 'review_run_id': 'review-1', 'ai_auto_enabled': True,
+                    'ai_auto_groups': ['a2'],
+                    'runs': [{'group_id': 'a2', 'run_id': 'a2-run', 'state': 'completed'}]}
+        monkeypatch.setattr(reference_snapshots, 'get_reference_snapshot', lambda *_: snapshot)
+        monkeypatch.setattr(jobs, 'job_status', lambda *_: {'state': 'review_required', 'job_id': 'job-1'})
+        result = jobs.submit_background_job(db, task.id, user, 'review-1', retry=True)
+
+        assert result == {'state': 'review_required', 'job_id': 'job-1'}
+        assert jobs._latest(db, task.id, 'review-1') is None
+
+
 def test_task_progress_exposes_failed_ai_job_diagnostics(monkeypatch):
     engine = create_engine('sqlite://')
     Base.metadata.create_all(engine)
@@ -114,6 +171,35 @@ def test_task_progress_exposes_failed_ai_job_diagnostics(monkeypatch):
         assert progress['phase'] == 'failed'
         assert progress['ai_job']['state'] == 'failed'
         assert progress['ai_job']['failure_categories'] == ['timeout']
+
+
+def test_task_progress_exposes_scope_gap_as_review_required_not_failed(monkeypatch):
+    engine = create_engine('sqlite://')
+    Base.metadata.create_all(engine)
+    monkeypatch.setattr(jobs.ai_advisory_snapshots, 'collect_current_coverage', lambda *_: {
+        'state': 'available', 'groups': [{'group_id': 'a1', 'state': 'available',
+            'counts': {'not_started': 0, 'pending': 0, 'completed': 0, 'partial': 0, 'failed': 0, 'not_run': 20},
+            'reviewable_failed': 0, 'reviewable_partial': 0, 'reviewable_not_run': 0,
+            'reading_gap_not_run': 20, 'blocking_not_run': 20,
+            'failure_categories': ['incomplete_material_scope']}]})
+    monkeypatch.setattr(jobs, '_scope_gap_review_available', lambda *_: True)
+    with Session(engine) as db:
+        task = BsTask(id=1, conversation_id=1, title='synthetic', state='running', created_by=3,
+                      created_by_type='web',
+                      options_snapshot_json={reference_snapshots.REVIEW_POINTER: 'review-1'})
+        db.add(task)
+        db.commit()
+        service.add_event(db, task.id, jobs.REVIEW_REQUIRED, payload={
+            'job_id': 'job-1', 'review_run_id': 'review-1', 'reason': 'incomplete_material_scope'})
+        snapshot = {'ai_auto_enabled': True, 'ai_auto_groups': ['a1'], 'steps': [{'state': 'completed'}]}
+
+        progress = service.task_progress(db, task, materials=[], snapshot=snapshot, zip_summary={'containers': []})
+
+        assert progress['phase'] == 'review_required'
+        assert progress['stages'][1]['state'] == 'completed'
+        assert progress['stages'][2]['state'] == 'waiting'
+        assert progress['ai_job']['state'] == 'review_required'
+        assert progress['ai_job']['scope_gap_review_available'] is True
 
 
 def test_malformed_job_event_never_fabricates_a_success():
@@ -403,14 +489,14 @@ def test_worker_processes_all_groups_and_preserves_completed_partial(tmp_path, m
         assert event.payload_json['warning'] is True
 
 
-@pytest.mark.parametrize('scope_count,retry,timeout,expected_calls,expected_categories', [
-    (20, False, False, ['a2', 'internal_records'], ['incomplete_material_scope']),
-    (20, True, False, ['a2', 'internal_records'], ['incomplete_material_scope']),
-    (19, False, False, [], ['incomplete_material_scope']),
-    (20, False, True, ['a2'], ['incomplete_material_scope', 'timeout']),
+@pytest.mark.parametrize('scope_count,retry,timeout,expected_calls,expected_event,expected_categories', [
+    (20, False, False, ['a2', 'internal_records'], jobs.REVIEW_REQUIRED, []),
+    (20, True, False, ['a2', 'internal_records'], jobs.REVIEW_REQUIRED, []),
+    (19, False, False, [], jobs.FAILED, ['incomplete_material_scope']),
+    (20, False, True, ['a2'], jobs.FAILED, ['incomplete_material_scope', 'timeout']),
 ])
 def test_worker_continues_only_identified_reading_gaps(tmp_path, monkeypatch, scope_count, retry, timeout,
-                                                       expected_calls, expected_categories):
+                                                       expected_calls, expected_event, expected_categories):
     engine = create_engine('sqlite:///' + (tmp_path / 'scope-worker.sqlite').as_posix())
     Base.metadata.create_all(engine)
     create_account(engine, 'alice', 'Alice-password-123')
@@ -451,7 +537,7 @@ def test_worker_continues_only_identified_reading_gaps(tmp_path, monkeypatch, sc
     assert calls == expected_calls
     with Session(engine) as db:
         event = jobs._latest(db, 1, 'review-1')
-        assert event.event_type == jobs.FAILED
+        assert event.event_type == expected_event
         assert event.payload_json['failure_categories'] == expected_categories
 
 

@@ -16,6 +16,7 @@ ACTIVE_JOBS = {}
 STARTED = 'check.ai_background_started'
 COMPLETED = 'check.ai_background_completed'
 FAILED = 'check.ai_background_failed'
+REVIEW_REQUIRED = 'check.ai_background_review_required'
 PROGRESS = 'check.ai_background_progress'
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,8 @@ def project_job_state(event, *, active_job_ids, instance_id, progress_event=None
         state = 'completed'
     elif event.event_type == FAILED:
         state = 'failed'
+    elif event.event_type == REVIEW_REQUIRED:
+        state = 'review_required'
     else:
         return {'state': 'unavailable'}
     result = {'state': state, 'job_id': payload['job_id'], 'review_run_id': payload['review_run_id']}
@@ -86,12 +89,16 @@ def project_job_state(event, *, active_job_ids, instance_id, progress_event=None
         categories = payload.get('failure_categories')
         result['failure_categories'] = [value for value in categories if isinstance(value, str)
                                         and value in ai_advisory_snapshots.FAILURE_CATEGORIES] if isinstance(categories, list) else []
+    if state == 'review_required':
+        result['reason'] = payload.get('reason', 'incomplete_material_scope')
+        result['failure_categories'] = []
+        result['diagnostic_state'] = '待人工复核'
     return result
 
 
 def _latest(db, task_id, review_run_id):
     return (db.query(BsTaskEvent).filter(BsTaskEvent.task_id == task_id,
-            BsTaskEvent.event_type.in_((STARTED, COMPLETED, FAILED)),
+            BsTaskEvent.event_type.in_((STARTED, COMPLETED, FAILED, REVIEW_REQUIRED)),
             BsTaskEvent.payload_json['review_run_id'].as_string() == review_run_id)
             .order_by(BsTaskEvent.sequence.desc()).first())
 
@@ -104,6 +111,12 @@ def job_status(db, task, review_run_id):
     if state['state'] == 'completed' and not _completed_coverage_valid(db, task, review_run_id):
         return {'state': 'unavailable', 'last_recorded_state': 'completed',
                 'job_id': state['job_id'], 'review_run_id': state['review_run_id'], 'diagnostic_state': '无法核实'}
+    if state['state'] == 'review_required':
+        state['scope_gap_review_available'] = _scope_gap_review_available(db, task, review_run_id)
+        if not state['scope_gap_review_available']:
+            return {'state': 'unavailable', 'last_recorded_state': 'review_required',
+                    'job_id': state['job_id'], 'review_run_id': state['review_run_id'],
+                    'diagnostic_state': '无法核实'}
     if state['state'] in {'running', 'interrupted', 'failed'}:
         progress = (db.query(BsTaskEvent).filter(BsTaskEvent.task_id == task.id,
                     BsTaskEvent.event_type.in_((PROGRESS, 'check.ai_batch_progress')),
@@ -115,6 +128,11 @@ def job_status(db, task, review_run_id):
     if state['state'] == 'failed' and state.get('failure_categories') == ['incomplete_material_scope']:
         try:
             state['scope_gap_review_available'] = _scope_gap_review_available(db, task, review_run_id)
+            if state['scope_gap_review_available']:
+                # Older events used FAILED for this controlled coverage outcome; keep
+                # the immutable event while projecting its current meaning accurately.
+                state.update(state='review_required', reason='incomplete_material_scope', failure_categories=[],
+                             diagnostic_state='待人工复核')
         except Exception:
             logger.warning('AI scope gap review availability could not be verified task_id=%s', task.id, exc_info=True)
             state['scope_gap_review_available'] = False
@@ -201,7 +219,7 @@ def submit_background_job(db, task_id, user, review_run_id, *, retry=False):
                            for run in runs) for group in groups)):
         raise ValueError('AI 核查范围或运行记录无效')
     existing = job_status(db, task, review_run_id)
-    if existing['state'] in ('running', 'completed') or (existing['state'] in ('failed', 'interrupted') and not retry):
+    if existing['state'] in ('running', 'completed', 'review_required') or (existing['state'] in ('failed', 'interrupted') and not retry):
         return existing
     if existing['state'] == 'unavailable':
         raise ValueError('已有后台任务记录无法核实')
@@ -320,7 +338,16 @@ async def _run_background(bind, task_id, user_id, user_type, review_run_id, job_
                     status['skipped'] or counts['partial'] or counts['failed']
                     or status.get('reviewable_not_run', 0) > status.get('unlocated_scope_reviewable', 0))
         if deferred_scope_gap:
-            raise BackgroundReviewIncomplete(['incomplete_material_scope'])
+            with Session(bind) as db:
+                phase = 'recording_review_required'
+                task = db.query(BsTask).filter_by(id=task_id).with_for_update().one_or_none()
+                if not task or (task.options_snapshot_json or {}).get(reference_snapshots.REVIEW_POINTER) != review_run_id:
+                    raise ValueError('核查运行已变化')
+                service.add_event(db, task_id, REVIEW_REQUIRED, stage='check', payload={
+                    'job_id': job_id, 'review_run_id': review_run_id, 'instance_id': INSTANCE_ID,
+                    'reason': 'incomplete_material_scope', 'failure_categories': []}, commit=False)
+                db.commit()
+            return
         with Session(bind) as db:
             phase = 'finishing_job'
             task = db.query(BsTask).filter_by(id=task_id).with_for_update().one_or_none()

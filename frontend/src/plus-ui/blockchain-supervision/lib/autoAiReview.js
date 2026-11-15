@@ -20,6 +20,8 @@ export async function runBackgroundAiReview({ taskId, reviewRunId, startJob, get
     }
     if (job.state === 'failed' || job.state === 'interrupted') return { state: job.state,
       failureCategories: Array.isArray(job.failure_categories) ? job.failure_categories : [] }
+    if (job.state === 'review_required') return { state: 'review_required',
+      failureCategories: [], scopeGapReviewAvailable: job.scope_gap_review_available === true }
     if (job.state !== 'running') throw new Error('后台核查状态无法确认，请刷新后重试')
     onProgress(job.current_group || null)
     await wait()

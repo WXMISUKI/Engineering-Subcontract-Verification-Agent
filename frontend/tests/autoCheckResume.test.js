@@ -4,7 +4,7 @@ import { BS_EVENT_TYPES } from '../src/plus-ui/blockchain-supervision/lib/api'
 
 describe('auto-check stale recovery', () => {
   it('subscribes to background lifecycle events so the timeline and task status can refresh', () => {
-    for (const state of ['started', 'progress', 'completed', 'failed']) {
+    for (const state of ['started', 'progress', 'completed', 'failed', 'review_required']) {
       expect(BS_EVENT_TYPES).toContain(`check.ai_background_${state}`)
     }
   })

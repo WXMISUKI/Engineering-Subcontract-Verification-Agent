@@ -43,8 +43,19 @@ The system SHALL continue independent review groups when a candidate is not run 
 
 #### Scenario: Unread material blocks negative candidates
 - **WHEN** the A1 candidate lane has only identified source-reading gaps and later review groups are independently executable
-- **THEN** later groups SHALL execute, and the job SHALL end incomplete with the material-scope reason rather than report success
+- **THEN** later groups SHALL execute, and the job execution SHALL end in `review_required` with partial coverage rather than `failed` or full success
 - **AND** the unread material and affected items SHALL remain unassessed and available for traceable human review
+
+#### Scenario: A review-required result is not retried as an execution failure
+- **WHEN** all configured groups have reached terminal states and the only blocking coverage is attributable to identified source-reading gaps
+- **THEN** the system SHALL expose the completed execution and incomplete coverage as separate states
+- **AND** it SHALL direct the user to human review without offering a same-generation model retry
+- **AND** genuine model, service, lease, or coverage failures SHALL remain failed and retain their explicit retry path
+
+#### Scenario: Historical material-scope failure event
+- **WHEN** a historical failed event has only the `incomplete_material_scope` category and current coverage proves all groups terminal with only identified reading gaps
+- **THEN** the system MAY project the current status as `review_required` without rewriting or deleting the historical event
+- **AND** the system SHALL fail closed if the current coverage no longer proves that condition
 
 #### Scenario: Scope-limited report after review
 - **WHEN** all independent groups have terminal reviewable outcomes, the only unresolved AI candidates have identified reading gaps with attributable rule IDs, material IDs and pages, and required human reviews are complete

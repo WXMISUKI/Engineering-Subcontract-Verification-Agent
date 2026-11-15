@@ -57,7 +57,7 @@ export function shouldResumeAiAfterReload({
   if (taskState !== 'running' && taskState !== 'review') return false
   if (aiCoverage?.state === 'unavailable') return false
   if (progressPhase === 'completed' || progressPhase === 'failed') return false
-  if (['check.ai_background_completed', 'check.ai_background_failed'].includes(activityHealth?.last_event_type)) return false
+  if (['check.ai_background_completed', 'check.ai_background_failed', 'check.ai_background_review_required'].includes(activityHealth?.last_event_type)) return false
   if (seenRunId === referenceSnapshot?.review_run_id) return false
   if (referenceSnapshot?.ai_auto_enabled !== true) return false
   const groups = referenceSnapshot?.ai_auto_groups

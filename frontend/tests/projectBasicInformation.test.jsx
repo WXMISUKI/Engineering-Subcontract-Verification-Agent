@@ -15,14 +15,15 @@ it('shows parsed facts and lets users open their source without confirmation', (
   expect(onOpenSource).toHaveBeenCalledWith(3, 1)
 })
 
-it('offers a return to basic information for unresolved report fields', () => {
+it('keeps unresolved report fields visible without a duplicate navigation link', () => {
   const onShowBasicInformation = vi.fn()
   const report = { meta: {}, sections: [], summary: {}, business_document: {
     basic_information: { '拟分包范围': null }, sections: [], issues: [], conclusion: {},
   } }
   render(<ReportView report={report} prototypeMode onShowBasicInformation={onShowBasicInformation} />)
-  fireEvent.click(screen.getByRole('button', { name: '查看项目基本信息' }))
-  expect(onShowBasicInformation).toHaveBeenCalledOnce()
+  expect(screen.getByText('部分基本信息待核实')).toBeTruthy()
+  expect(screen.queryByRole('button', { name: '查看项目基本信息' })).toBeNull()
+  expect(onShowBasicInformation).not.toHaveBeenCalled()
 })
 
 it('shows task and resolved contract facts before a report exists', () => {

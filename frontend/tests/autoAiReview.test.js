@@ -49,6 +49,17 @@ describe('auto AI review scope handling', () => {
       notAssessedNoSignalCount: 20 })
   })
 
+  it('returns review-required without polling or restarting the completed review job', async () => {
+    const startJob = vi.fn().mockResolvedValue({ job_id: 'job-1', review_run_id: 'review-1',
+      state: 'review_required', scope_gap_review_available: true, reason: 'incomplete_material_scope' })
+    const getJob = vi.fn()
+    const result = await runBackgroundAiReview({ taskId: 1, reviewRunId: 'review-1', startJob, getJob })
+
+    expect(result).toMatchObject({ state: 'review_required', scopeGapReviewAvailable: true })
+    expect(startJob).toHaveBeenCalledOnce()
+    expect(getJob).not.toHaveBeenCalled()
+  })
+
   it('uses the status after the batch to report newly created scope review items', async () => {
     const getStatus = vi.fn()
       .mockResolvedValueOnce({ run_id: 'run-1', counts: { ...counts, not_run: 0, not_started: 1 }, skipped: 0 })

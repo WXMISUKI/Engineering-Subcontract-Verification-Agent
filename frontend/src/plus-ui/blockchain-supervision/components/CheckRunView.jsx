@@ -94,6 +94,9 @@ export default function CheckRunView({
   const completedCount = flow.progress.completedSteps
   const completedFromTask = taskState === 'done'
   const coverageUnavailable = progress?.ai_coverage?.state === 'unavailable'
+  const aiJob = progress?.ai_job || autoCheck?.job || null
+  const scopeGapReview = progress?.phase === 'review_required' || aiJob?.state === 'review_required'
+    || (aiJob?.state === 'failed' && aiJob?.scope_gap_review_available === true)
   const aiIncomplete = coverageUnavailable || (autoCheck?.stage === 'ai' && ['running', 'waiting', 'failed'].includes(autoCheck?.phase)) || progress?.phase === 'ai_checking'
   const serverFailed = progress?.phase === 'failed'
   const aiWorking = !coverageUnavailable && !serverFailed && autoCheck?.phase !== 'failed' && ((autoCheck?.stage === 'ai' && ['running', 'waiting'].includes(autoCheck?.phase)) || progress?.phase === 'ai_checking')
@@ -152,20 +155,24 @@ export default function CheckRunView({
   const failed = serverFailed || autoCheck?.phase === 'failed'
   const progressPercent = aiIncomplete || serverFailed ? null : Number.isFinite(progress?.percent) ? progress.percent : completed ? 100 : null
   const progressMode = aiIncomplete || serverFailed ? 'indeterminate' : progress?.mode || (progressPercent == null ? 'indeterminate' : 'determinate')
-  const progressLabel = coverageUnavailable ? '无法核实' : failed ? '已中断' : progressPercent == null ? '处理中' : needsCompletionReceipt ? `规则 ${progressPercent}%` : `${progressPercent}%`
+  const receiptPending = needsCompletionReceipt && receiptState !== 'clear'
+  const progressLabel = coverageUnavailable ? '状态待核实' : scopeGapReview ? '待人工复核' : failed ? '已中断' : receiptPending ? '待核实' : progressPercent == null ? '处理中' : completed ? '已完成' : `${progressPercent}%`
+  const progressBarWidth = coverageUnavailable
+    ? '0%'
+    : progressPercent == null ? '100%' : `${progressPercent}%`
+  const executionProgressLabel = progressPercent == null ? '执行进度处理中' : `执行进度 ${progressPercent}%`
   const running = ['running', 'resetting', 'waiting'].includes(autoCheck?.phase)
-  const progressMoving = !coverageUnavailable && !failed && (running || (progressMode === 'indeterminate'
+  const progressMoving = !coverageUnavailable && !scopeGapReview && !failed && (running || (progressMode === 'indeterminate'
     && !completed
     && !['done', 'failed'].includes(autoCheck?.phase)))
-  const aiJob = progress?.ai_job || autoCheck?.job || null
   const partialReviewAvailable = !coverageUnavailable && !publicationPending && !mutationBusy &&
-    aiJob?.state === 'failed' && aiJob?.scope_gap_review_available === true && !running
+    scopeGapReview && !running
   const staleCandidate = progress?.activity_health?.stale_candidate === true || aiJob?.stale_candidate === true
-  const showStaleNotice = staleCandidate && !coverageUnavailable && !completed && !failed
+  const showStaleNotice = staleCandidate && !coverageUnavailable && !completed && !failed && !scopeGapReview
   // 只有后端标记 running 的步骤才显示具体步骤，不根据完成数猜测当前步骤。
   const runningStep = selectedSteps.find((step) => step.state === 'running')
   const currentNo = runningStep ? selectedSteps.indexOf(runningStep) + 1 : null
-  const runTitle = coverageUnavailable ? '核查状态待核实' : serverFailed ? '部分核查未完成' : aiWorking ? '正在生成 AI 辅助建议' : aiIncomplete ? 'AI 辅助核查未完成' : preparing
+  const runTitle = coverageUnavailable ? '核查状态待核实' : scopeGapReview ? '核查待人工复核' : serverFailed ? '部分核查未完成' : aiWorking ? '正在生成 AI 辅助建议' : aiIncomplete ? 'AI 辅助核查未完成' : receiptPending ? '核查结果待核实' : preparing
     ? '正在准备材料'
     : completed
       ? (needsCompletionReceipt ? '五步规则核查已结束' : '五步核查已全部完成')
@@ -191,7 +198,7 @@ export default function CheckRunView({
   ]
   const currentAiGroup = aiJob?.current_group || autoCheck?.groupId || null
   const groupSteps = selectedSteps.filter((step) => step.expectedGroups.includes(currentAiGroup)).map((step) => step.title).filter(Boolean)
-  const currentTask = coverageUnavailable ? 'AI 覆盖结果待核实' : failed ? '核查已中断，请根据提示处理' : aiWorking ? (groupSteps.length ? `${autoCheck?.activity === 'status' ? '正在确认核查状态' : '正在核查'}：${groupSteps.join('、')}` : progress?.current_task?.label || '正在处理已关联依据和材料') : receiptState === 'loading' ? '正在确认 AI 辅助核查状态' : receiptState === 'warning' || receiptState === 'unknown' ? '规则核查已结束，AI 辅助结果待核实' : progress?.current_task?.label || localCurrentTask
+  const currentTask = coverageUnavailable ? 'AI 覆盖结果待核实' : scopeGapReview ? 'AI 核查组已执行完成，材料读取范围不完整，需进入人工复核' : failed ? '核查已中断，请根据提示处理' : aiWorking ? (groupSteps.length ? `${autoCheck?.activity === 'status' ? '正在确认核查状态' : '正在核查'}：${groupSteps.join('、')}` : progress?.current_task?.label || '正在处理已关联依据和材料') : receiptState === 'loading' ? '正在确认 AI 辅助核查状态' : receiptState === 'warning' || receiptState === 'unknown' ? '规则核查已结束，AI 辅助结果待核实' : progress?.current_task?.label || localCurrentTask
   const progressStages = Array.isArray(progress?.stages) && progress.stages.length > 0
     ? progress.stages.map((stage) => ({
       key: stage.key,
@@ -206,35 +213,35 @@ export default function CheckRunView({
   return (
     <section data-testid="check-run-view" className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
       <div>
-        <h1 className="text-2xl font-bold tracking-[.01em] text-[#1A1A1A]">{coverageUnavailable ? '核查状态待核实' : failed ? '核查已中断' : preparing ? '正在解析材料' : completed ? (needsCompletionReceipt ? '核查流程已结束' : '核查完成') : '正在核查'}</h1>
+        <h1 className="text-2xl font-bold tracking-[.01em] text-[#1A1A1A]">五步智能核查</h1>
         <p className="mt-1 text-[15px] leading-relaxed text-[#6B7280]">系统按五步顺序比对材料与规则，只输出需要人工查看的问题。</p>
       </div>
 
       {supplementPlan?.fallback_message && <p role="status" className="rounded-lg border border-[#F0DCB8] bg-[#FFFDF8] px-4 py-3 text-sm text-[#92400E]">{supplementPlan.fallback_message}</p>}
-      {autoCheck?.warning && <p role="status" className="rounded-lg border border-[#F0DCB8] bg-[#FFFDF8] px-4 py-3 text-sm text-[#92400E]">{autoCheck.warning}</p>}
-      {receiptState === 'warning' && <p role="status" className="rounded-lg border border-[#F0DCB8] bg-[#FFFDF8] px-4 py-3 text-sm text-[#92400E]">部分 AI 辅助核查未完成或结果需要人工核实，请查看时间线并进入人工复核。</p>}
-      {receiptState === 'unknown' && <p role="status" className="rounded-lg border border-[#F0DCB8] bg-[#FFFDF8] px-4 py-3 text-sm text-[#92400E]">AI 辅助核查结果状态无法核实，请查看时间线或联系人工复核。</p>}
+      {!scopeGapReview && autoCheck?.warning && <p role="status" className="rounded-lg border border-[#F0DCB8] bg-[#FFFDF8] px-4 py-3 text-sm text-[#92400E]">{autoCheck.warning}</p>}
+      {!scopeGapReview && receiptState === 'warning' && <p role="status" className="rounded-lg border border-[#F0DCB8] bg-[#FFFDF8] px-4 py-3 text-sm text-[#92400E]">部分 AI 辅助核查未完成或结果需要人工核实，请查看时间线并进入人工复核。</p>}
+      {!scopeGapReview && receiptState === 'unknown' && <p role="status" className="rounded-lg border border-[#F0DCB8] bg-[#FFFDF8] px-4 py-3 text-sm text-[#92400E]">AI 辅助核查结果状态无法核实，请查看时间线或联系人工复核。</p>}
 
       <div className="rounded-[10px] border border-[#E9E3D9] bg-white p-5">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <strong data-testid="check-run-title" className="text-[16px] text-[#1A1A1A]">{runTitle}</strong>
             <p data-testid="check-run-note" className="mt-0.5 text-[15px] text-[#6B7280]">
-              {coverageUnavailable ? '已有结果保留，需核实当前运行状态。' : failed ? '核查已中断，处理后可继续。' : preparing ? `已读取 ${preparation.done} / ${preparationTotalLabel} 份材料` : completed ? `共发现 ${flow.issueCount} 项需人工复核的问题。` : '整册解析完成，按五步比对规则中…'}
+              {coverageUnavailable ? '已有结果保留，需核实当前运行状态。' : scopeGapReview ? 'AI 核查组已执行完成，但存在未读材料页，相关规则未形成覆盖结论。请进入人工复核；材料未变化前无需重试。' : failed ? '核查已中断，处理后可继续。' : receiptPending ? '规则步骤已完成，但 AI 辅助结果状态暂时无法确认。' : preparing ? `已读取 ${preparation.done} / ${preparationTotalLabel} 份材料` : completed ? `共发现 ${flow.issueCount} 项需人工复核的问题。` : '整册解析完成，按五步比对规则中…'}
             </p>
           </div>
-            <span data-testid="check-run-percent" className="shrink-0 text-[26px] font-bold leading-tight tabular-nums text-[#8B7355]">
-            <span data-testid="progress-percent">{progressLabel}</span>
-          </span>
+            {!scopeGapReview && <span data-testid="check-run-percent" className="shrink-0 text-[26px] font-bold leading-tight tabular-nums text-[#8B7355]">
+              <span data-testid="progress-percent">{progressLabel}</span>
+            </span>}
         </div>
 
-        <div className="my-3.5 h-1.5 overflow-hidden rounded-[3px] bg-[#EDE8DF]" aria-label={coverageUnavailable ? '核查状态无法核实' : failed ? '核查已中断' : progressPercent == null ? '当前阶段处理中' : `核查步骤进度 ${progressPercent}%`}>
-          <div className={`relative h-full rounded-[3px] bg-[#8B7355] transition-[width] duration-300 ${progressMoving ? 'bs-progress-stripes' : ''}`} style={progressPercent == null ? { width: '100%' } : { width: `${progressPercent}%` }}>
+        <div className="my-3.5 h-1.5 overflow-hidden rounded-[3px] bg-[#EDE8DF]" aria-label={coverageUnavailable ? '核查状态无法核实' : scopeGapReview ? '待人工复核' : failed ? '核查已中断' : receiptPending ? `执行进度 ${progressPercent ?? 0}%，AI 状态待核实` : progressPercent == null ? '当前阶段处理中' : `核查步骤进度 ${progressPercent}%`}>
+          <div data-testid="check-run-progress-bar" className={`relative h-full rounded-[3px] bg-[#8B7355] transition-[width] duration-300 ${progressMoving ? 'bs-progress-stripes' : ''}`} style={{ width: progressBarWidth }}>
             {progressMoving && <span data-testid="progress-motion" className="absolute inset-0" />}
           </div>
         </div>
         <div data-testid="check-run-current-task" className="rounded-[8px] border border-[#DCE5EE] bg-[#F7F9FB] px-3.5 py-2.5">
-          <div className="flex items-center justify-between gap-3 text-[12px] text-[#8291A1]"><span>当前任务</span><span>{progressLabel}</span></div>
+          <div className="flex items-center justify-between gap-3 text-[12px] text-[#8291A1]"><span>当前任务</span>{!scopeGapReview && <span>{receiptPending ? executionProgressLabel : progressLabel}</span>}</div>
           <strong className="mt-0.5 block text-[14px] text-[#17283D]">{currentTask}</strong>
           {preparing && Number.isInteger(progress?.current_task?.current_page) && progress.current_task.current_page > 0 && (
             <p data-testid="check-run-page-progress" className="mt-1 text-[13px] text-[#587089]">
@@ -279,7 +286,7 @@ export default function CheckRunView({
         {failed && <div data-testid="check-run-error" role="alert" className="rounded-[8px] border border-[#F3C9C9] bg-[#FDF3F3] px-3 py-2 text-[13px] text-[#C62828]">自动核查未完成：{autoCheck?.error || (aiJob?.failure_categories || []).map((code) => FAILURE_LABELS[code]).filter(Boolean).join('、') || (serverFailed ? '请查看事件时间线并人工核实' : '服务暂不可用')}。{autoCheck?.recheckRequired ? '请点击“重新核查”；系统会保留已上传材料并留存当前结果，重新核查可能产生模型用量。' : '请根据需要重试或联系人工复核。'}</div>}
         {/* 完成态不再播报「当前活动」：事件流最后一条可能是与核查无关的事件标签
             （如「报告导出记录」），当进度播报会误导；原型完成态这里本来也是空的。 */}
-        {!completed && !coverageUnavailable && (
+        {!completed && !coverageUnavailable && !scopeGapReview && (
           <p data-testid="check-run-activity" role="status" className="text-[14px] text-[#6B7280]">
             <span data-testid="current-activity">{failed ? (autoCheck?.recheckRequired ? '核查中断，请重新核查' : '核查未完成，请查看事件时间线') : activity || '正在准备核查结果…'}</span>
           </p>
@@ -291,8 +298,11 @@ export default function CheckRunView({
           <p className="mt-1 text-[12px] text-[#587089]">{preparation.failed ? `有 ${preparation.failed} 份材料读取失败，相关核查项会保留为不可判定。` : preparation.current ? `正在读取：${preparation.current.file_name || '材料'}` : '后台准备任务已受理，等待读取结果。'}</p>
         </div>}
 
-        <div data-testid="check-run-timeline" className="mt-3 rounded-[8px] border border-[#DCE5EE] bg-white px-3.5 py-3">
-          <div className="mb-2 flex items-center justify-between"><strong className="text-[14px] text-[#17283D]">事件时间线</strong><span className="text-[12px] text-[#8291A1]">{visibleTimeline.length ? `共 ${visibleTimeline.length} 条` : '等待事件'}</span></div>
+        <details data-testid="check-run-timeline" open={failed || coverageUnavailable} className="mt-3 rounded-[8px] border border-[#DCE5EE] bg-white px-3.5 py-3">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-[14px] text-[#17283D] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#174C7E]">
+            <strong>事件时间线</strong><span className="text-[12px] text-[#8291A1]">{visibleTimeline.length ? `共 ${visibleTimeline.length} 条` : '等待事件'}</span>
+          </summary>
+          <div className="mt-2">
           {visibleTimeline.some((event) => event.event_type === 'check.ai_batch_progress') && <p className="mb-2 text-[12px] text-[#6B7280]">批次并发执行，回执按发生时间显示，批次编号可能不按顺序出现。</p>}
           {!visibleTimeline.length && (aiJob || progress?.activity_health?.last_event_at) && <div className="mb-2 break-words text-[12px] text-[#587089]">
             <p>最后回执：{aiJob?.last_progress_at || progress?.activity_health?.last_event_at ? formatEventTime(aiJob?.last_progress_at || progress.activity_health.last_event_at) : '无法核实'}{aiJob?.diagnostic_state ? ` · ${aiJob.diagnostic_state}` : ''}</p>
@@ -300,7 +310,8 @@ export default function CheckRunView({
             {aiJob?.job_id && <span>Job {aiJob.job_id} </span>}{aiJob?.request_id && <span>Request {aiJob.request_id}（不一定是失败请求）</span>}
           </div>}
           {visibleTimeline.length ? <ol className="max-h-[170px] space-y-1.5 overflow-y-auto text-[12px] text-[#587089]">{visibleTimeline.map((event) => <li key={event.sequence || `${event.created_at}-${eventText(event)}`} className="flex gap-2"><span className="shrink-0 tabular-nums text-[#8291A1]">{formatEventTime(event.created_at)}</span><span><b className="text-[#385A77]">{eventText(event)}</b>{event.message ? ` · ${event.message}` : ''}{(event.diagnostics?.failure_categories || []).map((code) => FAILURE_LABELS[code]).filter(Boolean).map((label) => <span key={label}> · {label}</span>)}{event.diagnostics && (event.diagnostics.job_id || event.diagnostics.request_id || event.diagnostics.batch_index != null) && <small className="ml-1 block break-words font-mono text-[10px] text-[#8291A1]">{event.diagnostics.job_id ? `job ${event.diagnostics.job_id}` : ''}{event.diagnostics.request_id ? ` · request ${event.diagnostics.request_id}` : ''}{event.diagnostics.batch_index != null ? ` · 批次 ${event.diagnostics.batch_index}/${event.diagnostics.batch_total ?? '?'}` : ''}</small>}</span></li>)}</ol> : <p className="text-[12px] text-[#8291A1]">后台事件到达后将在这里显示材料读取、核查和收口进度。</p>}
-        </div>
+          </div>
+        </details>
 
         <ol data-testid="check-run-steps" className="mt-4 flex list-none flex-col gap-2 p-0">
           {fiveStep.steps.length === 0 && completedFromTask ? (
@@ -333,9 +344,9 @@ export default function CheckRunView({
 
         <div className="mt-4 flex min-h-9 items-center justify-end gap-3">
           {partialReviewAvailable && onEnterReview && <button type="button" onClick={onEnterReview}
-            className="min-h-9 rounded-[6px] border border-[#8B7355] px-3 text-[14px] text-[#8B7355]">查看已有核查结果</button>}
-          {(autoCheck?.phase === 'failed' || (serverFailed && aiJob?.state === 'failed')) && <button type="button" disabled={mutationBusy || (autoCheck?.recheckRequired ? !onRecheck : !onRetry)} onClick={autoCheck?.recheckRequired ? onRecheck : onRetry} className="min-h-9 rounded-[6px] border border-[#C62828] px-3 text-[14px] text-[#C62828] disabled:cursor-not-allowed disabled:opacity-50">{autoCheck?.recheckRequired ? '重新核查' : '重试核查'}</button>}
-          {showStaleNotice && <button type="button" disabled={mutationBusy || !onRetry} onClick={onRetry} className="min-h-9 rounded-[6px] border border-[#8A5E1C] px-3 text-[14px] text-[#8A5E1C] disabled:cursor-not-allowed disabled:opacity-50">重试核查</button>}
+            className="min-h-9 rounded-[6px] border border-[#8B7355] px-3 text-[14px] text-[#8B7355]">进入人工复核</button>}
+          {!scopeGapReview && (autoCheck?.phase === 'failed' || (serverFailed && aiJob?.state === 'failed')) && <button type="button" disabled={mutationBusy || (autoCheck?.recheckRequired ? !onRecheck : !onRetry)} onClick={autoCheck?.recheckRequired ? onRecheck : onRetry} className="min-h-9 rounded-[6px] border border-[#C62828] px-3 text-[14px] text-[#C62828] disabled:cursor-not-allowed disabled:opacity-50">{autoCheck?.recheckRequired ? '重新核查' : '重试核查'}</button>}
+          {showStaleNotice && !scopeGapReview && <button type="button" disabled={mutationBusy || !onRetry} onClick={onRetry} className="min-h-9 rounded-[6px] border border-[#8A5E1C] px-3 text-[14px] text-[#8A5E1C] disabled:cursor-not-allowed disabled:opacity-50">重试核查</button>}
           {completed && autoCheck?.phase !== 'failed' && onRecheck && (
             <button type="button" disabled={mutationBusy} onClick={onRecheck} className="min-h-9 rounded-[6px] border border-[#8B7355] px-3 text-[14px] text-[#8B7355] disabled:cursor-not-allowed disabled:opacity-50">重新核查</button>
           )}
