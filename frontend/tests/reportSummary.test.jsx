@@ -4,6 +4,11 @@ import ReportView from '../src/plus-ui/blockchain-supervision/components/ReportV
 
 afterEach(() => cleanup())
 
+const readiness = { schema_version: 'bs.report-readiness.v1', draft_readable: true,
+  confirmed_output_ready: true, task_close_ready: true, execution: { state: 'completed' },
+  reading_quality: { state: 'complete', pages: [] }, finding_review: { blocking: [] },
+  blocking_reasons: [], next_actions: [] }
+
 function report() {
   return {
     meta: { title: '摘要测试任务', baseline_date: '2026-11-08', state: 'running' },
@@ -60,14 +65,14 @@ it('shows only Word and PDF exports for the confirmed report and keeps its gate'
   expect(screen.getByTestId('prototype-report-export-word').disabled).toBe(true)
   expect(screen.getByTestId('prototype-report-export-pdf').disabled).toBe(true)
   expect(onExport).not.toHaveBeenCalled()
-  view.rerender(<ReportView report={report()} prototypeMode onExport={onExport} />)
+  view.rerender(<ReportView report={report()} reportReadiness={readiness} prototypeMode onExport={onExport} />)
   fireEvent.click(screen.getByTestId('prototype-report-export-pdf'))
   expect(onExport).toHaveBeenCalledWith('confirmed', 'pdf')
 })
 
 it('offers regeneration while retaining the current formal opinion during a refresh', () => {
   const onGenerateOpinion = vi.fn()
-  render(<ReportView report={report()} prototypeMode opinion={{ opinion_digest: 'current' }} onGenerateOpinion={onGenerateOpinion} />)
+  render(<ReportView report={report()} reportReadiness={readiness} prototypeMode opinion={{ opinion_digest: 'current' }} onGenerateOpinion={onGenerateOpinion} />)
   fireEvent.click(screen.getByTestId('regenerate-formal-opinion'))
   expect(onGenerateOpinion).toHaveBeenCalledOnce()
   expect(screen.getByTestId('opinion-export-word')).toBeTruthy()

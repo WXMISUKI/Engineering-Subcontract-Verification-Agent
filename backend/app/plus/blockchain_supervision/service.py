@@ -6038,6 +6038,130 @@ def report_output_readiness(db: Session, task: BsTask, *, require_reading_comple
     return result
 
 
+REPORT_READINESS_SCHEMA_VERSION = "bs.report-readiness.v1"
+
+
+def _finding_review_projection(db: Session, task: BsTask, *, user=None) -> dict:
+    user = user or SimpleNamespace(id=task.created_by, user_type=task.created_by_type)
+    findings = db.query(BsFinding).filter(BsFinding.task_id == task.id).all()
+    findings = ai_advisory_snapshots.filter_current_candidate_findings(db, task, user, findings)
+    blocking = [{"finding_id": f.id, "item_id": f.item_id, "material_id": f.material_id,
+                 "page": f.page, "code": "pending_undecidable_review"}
+                for f in findings if reporting.report_gate_blocking(f)
+                and reporting.canonical_review_decision((f.review_json or {}).get("decision"))
+                not in ("accepted", "ignored")]
+    return {"blocking": blocking}
+
+
+def ai_output_readiness(db: Session, task: BsTask) -> dict:
+    """只读执行门禁：人工处置不抵消必需执行失败/未完成，无信号不作未命中。"""
+    blocked = {"ok": False, "code": "ai_execution_incomplete", "missing_groups": [],
+               "pending_groups": [], "detail": "部分 AI 辅助核查未完成，请返回核查页等待或重试"}
+    if current_ai_advisory_pending(db, task):
+        return {**blocked, "code": "ai_execution_pending", "detail": "AI 辅助核查正在进行，请等待完成"}
+    snapshot = reference_snapshots.get_reference_snapshot(db, task)
+    if snapshot and snapshot.get("ai_auto_enabled") is True:
+        coverage = ai_advisory_snapshots.collect_current_coverage(
+            db, task, snapshot, reporting.report_review_blocking)
+        groups = (coverage or {}).get("groups") or []
+        if (not coverage or coverage.get("state") != "available"
+                or {g.get("group_id") for g in groups} != set(snapshot.get("ai_auto_groups") or [])
+                or any(g.get("state") != "available"
+                       or any((g.get("counts") or {}).get(key, 0)
+                              for key in ("not_started", "pending", "failed", "partial"))
+                       or ai_advisory_snapshots.blocking_not_run_count(g) != 0 for g in groups)):
+            return blocked
+    return {"ok": True}
+
+
+def _formal_output_readiness(db: Session, task: BsTask, output: dict, *, user=None) -> dict:
+    """正式输出/收口共享技术与人工判据；发布候选的差异由调用边界处理。"""
+    if not output.get("ok"):
+        return output
+    reading = output.get("reading_coverage") or task_reading_coverage(db, task)
+    if reading.get("complete") is False:
+        return {**output, "ok": False, "code": "reading_incomplete",
+                "reading_coverage": reading, "detail": "材料存在未读或质量待核页面，请核对读取后再正式输出或收口"}
+    for readiness in (review_output_readiness(db, task), ai_output_readiness(db, task)):
+        if not readiness.get("ok"):
+            return {**output, **readiness}
+    finding_review = _finding_review_projection(db, task, user=user)
+    if finding_review["blocking"]:
+        return {**output, "ok": False, "code": "pending_undecidable_review",
+                "finding_review": finding_review,
+                "detail": "还有 %d 项无法核实尚未处理，请逐项核对后再正式输出或收口" % len(finding_review["blocking"])}
+    return {**output, "finding_review": finding_review}
+
+
+def confirmed_output_readiness(db: Session, task: BsTask, *, user=None) -> dict:
+    output = report_output_readiness(db, task)
+    if supplement_publication(task).get("state") == "candidate":
+        return {**output, "ok": False, "code": "supplement_candidate_unpublished",
+                "detail": "补件候选结果尚未发布，请完成复核后再正式输出"}
+    return _formal_output_readiness(db, task, output, user=user)
+
+
+def task_close_readiness(db: Session, task: BsTask, *, user=None) -> dict:
+    """收口可发布当前候选；只读计算，不恢复运行、写历史版本或提交事务。"""
+    if task.state == "done":
+        return {"ok": True}
+    if task.state not in {"running", "review"}:
+        return {"ok": False, "code": "task_not_ready", "detail": "请先完成两段式启动并完成核查，再收口任务"}
+    return _formal_output_readiness(db, task, report_output_readiness(db, task), user=user)
+
+
+def build_report_readiness(db: Session, task: BsTask, *, user=None) -> dict:
+    """任务详情的只读投影；同请求复用输出判据，不保存可漂移的长期缓存。"""
+    output = report_output_readiness(db, task)
+    formal = _formal_output_readiness(db, task, output, user=user)
+    reading = output.get("reading_coverage") or task_reading_coverage(db, task)
+    quality_pages = []
+    for material in reading.get("incomplete_materials") or []:
+        pages = sorted(set(material.get("unread_pages") or []) | set(material.get("suspect_pages") or []))
+        quality_pages.extend({"material_id": material["material_id"], "file_name": material.get("file_name"),
+                              "page": page, "reason": "reading_quality_pending"} for page in pages)
+        if not pages:
+            quality_pages.append({"material_id": material["material_id"], "file_name": material.get("file_name"),
+                                  "page": None, "reason": "reading_quality_unknown"})
+    quality_state = ("complete" if reading.get("complete") is True else
+                     "pending" if reading.get("complete") is False else "unknown")
+    execution = review_output_readiness(db, task)
+    ai_execution = ai_output_readiness(db, task)
+    # 读取缺口不代表执行失败；输入/代次失效则不能标成执行完成。
+    if not output.get("ok") and output.get("code") in {"review_inputs_changed", "review_incomplete", "review_not_started"}:
+        execution = output
+    execution_code = execution.get("code") if not execution.get("ok") else ai_execution.get("code")
+    execution_state = ("stale" if execution_code == "review_inputs_changed" else
+                       "not_started" if execution_code == "review_not_started" else
+                       "running" if execution_code == "ai_execution_pending" else
+                       "unknown" if execution_code == "reading_incomplete" else
+                       "incomplete" if (not execution.get("ok") and execution_code != "reading_incomplete")
+                       or not ai_execution.get("ok") else "completed")
+    finding_review = formal.get("finding_review") or _finding_review_projection(db, task, user=user)
+    confirmed = formal.get("ok") is True and supplement_publication(task).get("state") != "candidate"
+    close = task.state == "done" or (task.state in {"running", "review"} and formal.get("ok") is True)
+    reasons = []
+    if not formal.get("ok"):
+        reasons.append({"code": formal.get("code", "report_not_ready"), "scope": "task",
+                        "message": formal.get("detail", "当前任务尚未满足正式输出条件"), "evidence_refs": quality_pages})
+    if formal.get("ok") and not confirmed:
+        reasons.append({"code": "supplement_candidate_unpublished", "scope": "task", "message": "补件候选结果尚未发布"})
+    if not close and not reasons:
+        reasons.append({"code": "task_not_ready", "scope": "task_close", "message": "请先启动核查"})
+    actions = []
+    if quality_state == "pending":
+        actions.append({"code": "review_reading_quality", "message_key": "review_reading_quality"})
+    if execution_state != "completed":
+        actions.append({"code": "rerun_execution", "message_key": "rerun_execution"})
+    if finding_review["blocking"]:
+        actions.append({"code": "review_findings", "message_key": "review_findings"})
+    return {"schema_version": REPORT_READINESS_SCHEMA_VERSION,
+            "draft_readable": output.get("ok") is True and supplement_publication(task).get("state") != "candidate",
+            "confirmed_output_ready": confirmed, "task_close_ready": close,
+            "execution": {"state": execution_state}, "reading_quality": {"state": quality_state, "pages": quality_pages},
+            "finding_review": finding_review, "blocking_reasons": reasons, "next_actions": actions}
+
+
 def complete_review(db: Session, task: BsTask) -> dict:
     """收口任务：范围分组有结论且所有无法核实问题均已处理后才允许置 done。
 
@@ -6055,46 +6179,9 @@ def complete_review(db: Session, task: BsTask) -> dict:
     if recover_reference_runs(db, task):
         db.commit()
         db.refresh(task, with_for_update=True)
-    readiness = review_output_readiness(db, task)
+    readiness = task_close_readiness(db, task)
     if not readiness["ok"]:
         return readiness
-    if current_ai_advisory_pending(db, task):
-        return {"ok": False, "detail": "AI 辅助核查正在进行，请等待完成后再收口任务"}
-    reference_snapshot = reference_snapshots.get_reference_snapshot(db, task)
-    if reference_snapshot and reference_snapshot.get("ai_auto_enabled") is True:
-        from . import background_ai_review, reading_gap_scope
-        coverage = ai_advisory_snapshots.collect_current_coverage(db, task, reference_snapshot, reporting.report_review_blocking)
-        groups = (coverage or {}).get("groups") or []
-        if (not coverage or coverage.get("state") != "available"
-                or {group.get("group_id") for group in groups} != set(reference_snapshot.get("ai_auto_groups") or [])
-                or any(group.get("state") != "available" for group in groups)):
-            return {"ok": False, "detail": "AI 辅助核查状态暂不可确认，请返回核查页刷新或重试"}
-        if coverage and any(group.get("counts", {}).get("not_started", 0)
-                            for group in coverage.get("groups") or [] if group.get("state") == "available"):
-            return {"ok": False, "detail": "仍有 AI 辅助核查尚未开始，请返回核查页等待或重试"}
-        job = background_ai_review.job_status(db, task, reference_snapshot.get("review_run_id"))
-        scope_rows = (reading_gap_scope.collect(db, task, reference_snapshot, coverage)
-                      if job.get("scope_gap_review_available") is True else None)
-        if any((group.get("counts") or {}).get("pending", 0)
-               or (group.get("counts") or {}).get("failed", 0) > group.get("reviewable_failed", 0)
-               or (group.get("counts") or {}).get("partial", 0) > group.get("reviewable_partial", 0)
-               or (ai_advisory_snapshots.blocking_not_run_count(group) != 0 and not scope_rows)
-               for group in coverage.get("groups") or []):
-            return {"ok": False, "detail": "部分 AI 辅助核查未完成，请返回核查页重试"}
-    pending_undecidable = (db.query(BsFinding)
-                           .filter(BsFinding.task_id == task.id,
-                                   BsFinding.status == "undecidable")
-                           .all())
-    pending_undecidable = ai_advisory_snapshots.filter_current_candidate_findings(
-        db, task, SimpleNamespace(id=task.created_by, user_type=task.created_by_type), pending_undecidable)
-    pending_count = sum(
-        1 for finding in pending_undecidable
-        if reporting.report_gate_blocking(finding) and reporting.canonical_review_decision(
-            (finding.review_json or {}).get("decision")) not in ("accepted", "ignored")
-    )
-    if pending_count:
-        return {"ok": False,
-                "detail": "还有 %d 项无法核实尚未处理，请在左侧选择“已采纳”或“已忽略”后再生成报告" % pending_count}
     # BS-P2-04（117-B §3.1）：规则版本已经在启动/重跑时冻结；收口只清除回执
     # 携带表并沿用冻结值。历史任务没有冻结值时继续为 NULL，不用当前规则补造。
     options = dict(task.options_snapshot_json or {})

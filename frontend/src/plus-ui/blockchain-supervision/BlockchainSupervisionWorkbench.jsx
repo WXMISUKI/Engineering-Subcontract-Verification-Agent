@@ -56,6 +56,7 @@ import { buildMaterialsById, buildSubjectsById, groupFindings, headerSupplementI
 import { statusLabelOf } from './lib/statusDisplay'
 import { isUnreviewedFinding, reviewBucket } from './lib/reviewDecision'
 import { blocksReportReview } from './lib/reviewQueueModel'
+import { normalizeReportReadiness } from './lib/reportReadinessModel'
 
 // 口径来源（不改写在这里）：业主 2026-10-14 部署文件 二、（一）五步审查 + FRS v2 §2（材料角色与启动闸）。
 // 总包合同**可选（0 或 1 份）**：五步审查不以它为资料前提；未上传时由报告「范围说明」声明哪两类情形未纳入，
@@ -1192,9 +1193,9 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
     allowStaleRunning,
   })
   // ── 报告两稿别（设计 100 §5）──
-  // stage=draft：AI 初稿；stage=confirmed：确认稿。两稿别各自缓存、各自记录技术前提
-  // 错误，人工未处置不作为报告资格；读取/导出都绑定当前组件、运行代及依据代。
-  const reportStage = 'confirmed'
+  // 应用内读取草稿披露缺口；正式文件/收口由任务详情门禁和服务端复查保护。
+  const reportStage = 'draft'
+  const reportReadiness = normalizeReportReadiness(mutationBusy ? null : detail?.report_readiness)
   const [reports, setReports] = useState({ draft: null, confirmed: null })
   const [opinion, setOpinion] = useState(null)
   const [opinionMarkdown, setOpinionMarkdown] = useState(null)
@@ -1382,6 +1383,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
   }, [taskId, onError, loadTodo])
 
   const reload = useCallback(async () => {
+    setDetail((previous) => previous ? { ...previous, report_readiness: null } : previous)
     try {
       const d = await getBsTask(taskId)
       setDetail(d)
@@ -1749,7 +1751,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
   // 缺组时后端 409 + detail，由 onError 呈现（文案已说明缺哪些分组）。
   // 刀B：收口成功后刷新规则集视图——此时后端才写 ruleset_version，更新提示应随之消失/更新。
   const completeTask = async () => {
-    if (completingRef.current) return
+    if (completingRef.current || !reportReadiness.task_close_ready) return
     completingRef.current = true
     try {
       setCompleting(true)
@@ -1921,7 +1923,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
     } finally { setConfirmingEmployer(false) }
   }
   const generateOpinion = async () => {
-    if (!taskId || opinionLoading) return
+    if (!taskId || opinionLoading || !reportReadiness.confirmed_output_ready) return
     const context = { ...reportContext.current }
     const request = ++opinionRequest.current
     const current = () => reportIsCurrent(context) && request === opinionRequest.current
@@ -1939,19 +1941,23 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
     } catch (e) {
       if (!current()) return
       setOpinionError(e.message || '正式意见书暂时无法读取')
+      await reload()
     } finally {
       if (current()) setOpinionLoading(false)
     }
   }
   const exportOpinion = async (fmt = 'docx') => {
-    if (!taskId || opinionExporting) return
+    if (!taskId || opinionExporting || !reportReadiness.confirmed_output_ready) return
     const context = { ...reportContext.current }
     try {
       setOpinionExporting(fmt)
       const blob = await downloadBsOpinion(taskId, fmt, 'confirmed', { expectedDigest: opinion?.opinion_digest })
       if (reportIsCurrent(context)) saveBlob(blob, `${detail?.title || '分包合规审查正式意见书'}-${detail?.baseline_date || '核查'}.${fmt === 'pdf' ? 'pdf' : 'docx'}`)
     } catch (e) {
-      if (reportIsCurrent(context)) onError(e.message || '正式意见书导出失败')
+      if (reportIsCurrent(context)) {
+        onError(e.message || '正式意见书导出失败')
+        await reload()
+      }
     } finally { if (reportIsCurrent(context)) setOpinionExporting(null) }
   }
   const exportReport = async (stageOrFmt = 'docx', requestedFmt) => {
@@ -1959,7 +1965,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
     const isStage = stageOrFmt === 'draft' || stageOrFmt === 'confirmed'
     const stage = requestedFmt ? stageOrFmt : (isStage ? stageOrFmt : reportStage)
     const fmt = requestedFmt || (isStage ? 'docx' : stageOrFmt)
-    if (reportGates[stage]) return
+    if (stage !== 'confirmed' || !reportReadiness.confirmed_output_ready) return
     try {
       setExporting(fmt)
       const name = detail?.title || '分包报审智能审查意见书'
@@ -1970,6 +1976,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
       const gate = normalizeReportGate(e)
       if (gate) setReportGates((prev) => ({ ...prev, [stage]: gate }))
       else onError(e.message)
+      await reload()
     } finally { if (reportIsCurrent(context)) setExporting(null) }
   }
   const downloadReference = async (reference, versionNo) => {
@@ -2479,6 +2486,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
             prototypeMode
             stageBusy={reportLoading[reportStage]}
             blockingByStage={reportGates}
+            reportReadiness={reportReadiness}
             onSelectBlocking={selectBlockingFinding}
             onBack={() => setActiveView('review')}
             onExport={exportReport}
@@ -2490,7 +2498,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
             onOpenSource={openSource}
             onComplete={!done ? completeTask : undefined}
             completing={completing}
-             completeDisabled={pendingProblems > 0 || mutationBusy}
+             completeDisabled={!reportReadiness.task_close_ready || mutationBusy}
             pendingProblems={pendingProblems}
             completed={done}
             started={started}

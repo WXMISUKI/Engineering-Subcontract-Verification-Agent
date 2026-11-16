@@ -755,6 +755,9 @@ def test_current_report_and_opinion_payloads_reuse_readiness_projection(monkeypa
     monkeypatch.setattr(router, "_require_current_output_ready", lambda *_args, **_kwargs: {
         "ok": True, "scope_coverage": coverage,
     })
+    monkeypatch.setattr(router.service, "build_report_readiness", lambda *_args, **_kwargs: {
+        "draft_readable": True, "confirmed_output_ready": True, "task_close_ready": True,
+    })
     monkeypatch.setattr(router.reference_visibility, "snapshot_restricted", lambda *_args: False)
     monkeypatch.setattr(router.reference_visibility, "run_restricted", lambda *_args: False)
     monkeypatch.setattr(reference_snapshots, "get_reference_snapshot", lambda *_args: None)

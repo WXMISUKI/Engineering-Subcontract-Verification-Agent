@@ -78,6 +78,7 @@ def test_complete_review_allows_unresolved_hit_but_blocks_unresolved_undecidable
         monkeypatch.setattr(service, "review_output_readiness",
                             lambda db, task: {"ok": True, "code": "ready",
                                               "detail": "", "missing_groups": [], "pending_groups": []})
+        monkeypatch.setattr(service, "report_output_readiness", lambda *_: {"ok": True})
         monkeypatch.setattr(service, "current_ai_advisory_pending", lambda db, task: False)
         monkeypatch.setattr(service.reference_snapshots, "get_reference_snapshot", lambda db, task: None)
         monkeypatch.setattr(service, "create_review_version",
@@ -111,6 +112,7 @@ def test_complete_review_distinguishes_no_signal_from_blocking_not_run(
             "not_assessed_no_signal": not_assessed, "blocking_not_run": blocking,
         }
         monkeypatch.setattr(service, "review_output_readiness", lambda *_: {"ok": True})
+        monkeypatch.setattr(service, "report_output_readiness", lambda *_: {"ok": True})
         monkeypatch.setattr(service, "current_ai_advisory_pending", lambda *_: False)
         monkeypatch.setattr(service.reference_snapshots, "get_reference_snapshot", lambda *_: snapshot)
         monkeypatch.setattr(service.ai_advisory_snapshots, "collect_current_coverage",
@@ -137,12 +139,12 @@ def test_unprocessed_hit_uses_ai_qualitative_label():
 
 
 @pytest.mark.parametrize('available,rows,reviewed,expected', [
-    (True, [{'material_id': 7, 'pages': [63], 'rule_ids': ['NL-B-01']}], True, True),
+    (True, [{'material_id': 7, 'pages': [63], 'rule_ids': ['NL-B-01']}], True, False),
     (True, None, True, False),
     (False, [{'material_id': 7, 'pages': [63], 'rule_ids': ['NL-B-01']}], True, False),
     (True, [{'material_id': 7, 'pages': [63], 'rule_ids': ['NL-B-01']}], False, False),
 ])
-def test_scope_limited_completion_still_requires_projection_and_human_review(
+def test_scope_disclosure_and_human_review_cannot_clear_required_execution_gap(
     tmp_path, monkeypatch, available, rows, reviewed, expected,
 ):
     from app.plus.blockchain_supervision import background_ai_review, reading_gap_scope
@@ -157,6 +159,7 @@ def test_scope_limited_completion_still_requires_projection_and_human_review(
                'failed': 0, 'partial': 0, 'not_run': 1}, 'reviewable_failed': 0,
                'reviewable_partial': 0, 'reviewable_not_run': 0}
         monkeypatch.setattr(service, 'review_output_readiness', lambda *_: {'ok': True})
+        monkeypatch.setattr(service, 'report_output_readiness', lambda *_: {'ok': True})
         monkeypatch.setattr(service, 'current_ai_advisory_pending', lambda *_: False)
         monkeypatch.setattr(service.reference_snapshots, 'get_reference_snapshot', lambda *_: snapshot)
         monkeypatch.setattr(service.ai_advisory_snapshots, 'collect_current_coverage',

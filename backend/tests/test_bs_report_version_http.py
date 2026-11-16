@@ -143,7 +143,7 @@ def test_corrupted_frozen_policy_returns_explainable_conflict_for_report_outputs
         db.commit()
     base = f"/api/plus/blockchain-supervision/tasks/{task_id}"
     for suffix in ("/report", "/opinion", "/report/export?fmt=pdf", "/report/evidence-bundle"):
-        response = client.get(base + suffix)
+        response = client.get(base + suffix, params={"stage": "confirmed"})
         assert response.status_code == 409, (suffix, response.text)
         assert "报告规则快照" in response.json()["detail"]
 

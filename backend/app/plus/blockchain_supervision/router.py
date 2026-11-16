@@ -630,6 +630,7 @@ def get_task(task_id: int, db: Session = Depends(get_db), user=Depends(get_curre
         "zip_preparation": zip_preparation,
         # P8-00：人工复核页直接消费任务级读取覆盖投影，避免只在 finding 文案里间接提示未读页。
         "reading_coverage": reading_coverage,
+        "report_readiness": service.build_report_readiness(db, task, user=user),
         "progress": service.task_progress(
             db, task, materials=materials, snapshot=reference_snapshot,
             zip_summary=zip_preparation,
@@ -2033,7 +2034,7 @@ def _attach_generation_identity(payload: dict, *, task: BsTask,
 def _require_current_output_ready(db: Session, task: BsTask, stage: str,
                                   *, require_reading_complete: bool = False,
                                   allow_candidate_preview: bool = False, user=None) -> dict:
-    """当前初稿/确认稿共用报告可读性前提；不把收口闸门带入报告读取。"""
+    """草稿保留只读路径；正式输出与收口共享技术/人工判据。"""
     if stage not in _REVIEW_STAGES:
         raise HTTPException(status_code=400, detail="stage 仅支持 draft / confirmed")
     publication = service.supplement_publication(task)
@@ -2044,17 +2045,53 @@ def _require_current_output_ready(db: Session, task: BsTask, stage: str,
             "candidate_generation_id": publication.get("candidate_generation_id"),
             "baseline_version_no": publication.get("baseline_version_no"),
         })
-    readiness = service.report_output_readiness(
-        db, task, require_reading_complete=require_reading_complete)
+    readiness = (service.confirmed_output_readiness(db, task, user=user) if stage == "confirmed"
+                 else service.report_output_readiness(db, task, require_reading_complete=require_reading_complete))
     if not readiness["ok"]:
         raise HTTPException(status_code=409, detail={
             "code": readiness["code"], "message": readiness["detail"],
-            "missing_groups": readiness["missing_groups"],
-            "pending_groups": readiness["pending_groups"],
+            "missing_groups": readiness.get("missing_groups", []),
+            "pending_groups": readiness.get("pending_groups", []),
             "scope_coverage": readiness.get("scope_coverage"),
         })
-    _require_no_pending_hits(db, task.id, stage, user=user)
     return readiness
+
+
+def _require_file_output_stage(stage: str, version_no: int | None = None) -> None:
+    if stage not in _REVIEW_STAGES:
+        raise HTTPException(status_code=400, detail="stage 仅支持 draft / confirmed")
+    if version_no is None and stage == "draft":
+        raise HTTPException(status_code=409, detail={
+            "code": "draft_file_output_blocked",
+            "message": "草稿仅供应用内核对；文件预览和导出请在正式输出就绪后使用确认稿。"})
+
+
+def _attach_current_readiness(payload: dict, readiness: dict, stage: str) -> dict:
+    """仅改变当前代展示投影，保留机器结论明细和计数。"""
+    payload["report_readiness"] = readiness
+    if stage != "draft" or readiness["confirmed_output_ready"]:
+        return payload
+    notice = "草稿仅供核对；读取、执行或人工复核尚有缺口，当前不形成正式结论。"
+    pending = {"code": "pending", "text": notice}
+    payload["draft_notice"] = notice
+    payload["readiness_disclosure"] = {**readiness, "draft_only": True,
+        "formal_output_ready": False, "formal_conclusion_allowed": False}
+    payload["advisory_conclusion"] = pending
+    if isinstance(payload.get("summary"), dict):
+        payload["summary"]["headline"] = notice
+    meta = payload.setdefault("meta", {})
+    meta["advisory_conclusion"] = pending
+    if "opinion_conclusion" in meta:
+        meta["opinion_conclusion"] = "pending"
+    if isinstance(payload.get("conclusion"), dict):
+        payload["conclusion"].update(pending, advisory_conclusion=pending)
+    if isinstance(payload.get("signature"), dict):
+        payload["signature"]["suggested_option"] = None
+    document = payload.get("business_document") or {}
+    if isinstance(document.get("conclusion"), dict):
+        document["conclusion"].update(status="incomplete", text=notice)
+    payload.setdefault("limitations", []).append({"code": "draft_only_readiness", "message": notice})
+    return payload
 
 
 def _output_payload(db: Session, task: BsTask, kind: str, stage: str,
@@ -2082,7 +2119,8 @@ def _output_payload(db: Session, task: BsTask, kind: str, stage: str,
         if "reference_snapshot" in output:
             output["reference_snapshot"] = reference_visibility.visible_snapshot(db, task, output["reference_snapshot"], user)
         return _attach_generation_identity(
-            _mark_stage(output, stage), task=task, version_no=None, db=db)
+            _attach_current_readiness(_mark_stage(output, stage), service.build_report_readiness(db, task, user=user), stage),
+            task=task, version_no=None, db=db)
     if stage not in _REVIEW_STAGES:
         raise HTTPException(status_code=400, detail="stage 仅支持 draft / confirmed")
     version = service.get_review_version(db, task, version_no)
@@ -2139,6 +2177,7 @@ def export_report(task_id: int, fmt: str = "docx", stage: str = "draft", version
                   db: Session = Depends(get_db), user=Depends(get_current_any_user)):
     """报告导出（W3-3）：Word/PDF，只渲染 build_report 聚合结果，不重算。"""
     task = _get_task(db, task_id, user)
+    _require_file_output_stage(stage, version_no)
     report = _output_payload(
         db, task, "report", stage, version_no, user=user,
         require_reading_complete=(stage == "confirmed" and version_no is None))
@@ -2164,6 +2203,7 @@ def download_evidence_bundle(task_id: int, stage: str = "draft",
                              user=Depends(get_current_any_user)):
     """简化存证（W3-3）：报告 JSON（哈希+时间戳存证块）+ 材料原件副本 zip。"""
     task = _get_task(db, task_id, user)
+    _require_file_output_stage(stage)
     readiness = _require_current_output_ready(
         db, task, stage, require_reading_complete=(stage == "confirmed"), user=user)
     if (reference_visibility.snapshot_restricted(db, task, reference_snapshots.get_reference_snapshot(db, task), user)
@@ -2200,6 +2240,7 @@ def preview_opinion(task_id: int, stage: str = "draft", version_no: int | None =
                     db: Session = Depends(get_db), user=Depends(get_current_any_user)):
     """只读预览同一意见书渲染内容，不记录导出事件。"""
     task = _get_task(db, task_id, user)
+    _require_file_output_stage(stage, version_no)
     opinion = _output_payload(db, task, "opinion", stage, version_no, user=user,
                               require_reading_complete=(stage == "confirmed" and version_no is None),
                               allow_candidate_preview=True)
@@ -2217,7 +2258,8 @@ def preview_opinion_markdown(task_id: int, stage: str = "draft", version_no: int
                               require_reading_complete=(stage == "confirmed" and version_no is None),
                               allow_candidate_preview=True)
     digest = export.report_digest(opinion)
-    return {"markdown": export.opinion_markdown(opinion, digest), "opinion_digest": digest}
+    return {"markdown": export.opinion_markdown(opinion, digest), "opinion_digest": digest,
+            **{key: opinion[key] for key in ("report_readiness", "draft_notice", "readiness_disclosure") if key in opinion}}
 
 
 @router.get("/tasks/{task_id}/opinion/export")
@@ -2225,6 +2267,7 @@ def export_opinion(task_id: int, fmt: str = "docx", stage: str = "draft", versio
                    user=Depends(get_current_any_user)):
     """审查意见书导出（Word/PDF）：只渲染 build_opinion 聚合结果，不重算。"""
     task = _get_task(db, task_id, user)
+    _require_file_output_stage(stage, version_no)
     opinion = _output_payload(
         db, task, "opinion", stage, version_no, user=user,
         require_reading_complete=(stage == "confirmed" and version_no is None))
