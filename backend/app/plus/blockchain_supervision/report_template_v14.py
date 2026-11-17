@@ -441,7 +441,38 @@ _CONTRACT_CLAUSE_LABELS = (
     ("quality", "质量"),
     ("safety", "安全"),
     ("wages", "农民工工资"),
+    ("plan", "专项施工方案审批"),
+    ("change", "合同变更"),
+    ("warranty", "缺陷责任期/保修"),
+    ("environment", "环保与水保"),
 )
+
+
+_CONTRACT_ITEM_KEYS = {
+    "计价口径清晰": "pricing",
+    "背靠背支付条款": "payment",
+    "计量流程完整": "measurement",
+    "最终结算以审计为准": "settlement",
+    "质量目标不降低": "quality",
+    "质量连带责任": "quality",
+    "缺陷责任期对齐": "warranty",
+    "安全生产费单列": "safety",
+    "环保与水保条款": "environment",
+    "违约金合理封顶": "breach",
+    "合同解除情形": "termination",
+    "实名制与专用账户": "wages",
+    "工资代付机制": "wages",
+}
+
+
+def _contract_hint(item, contract_facts):
+    key = _CONTRACT_ITEM_KEYS.get(str(item or "").strip())
+    clause = ((contract_facts or {}).get("clauses") or {}).get(key) if key else None
+    page = clause.get("page") if isinstance(clause, dict) else None
+    if not isinstance(page, int) or isinstance(page, bool) or page <= 0:
+        return None
+    label = dict(_CONTRACT_CLAUSE_LABELS).get(key, "合同")
+    return page, label
 
 
 def _contract_page_range(facts):
@@ -478,6 +509,24 @@ def _contract_summary_conclusion(facts):
     if facts and facts.get("pages"):
         return "合同主要条款已在文本中定位；条款是否低于总承包合同、是否公平可执行，仍需人工核对。"
     return "未取得完整合同条款，计价、支付、违约等条款需人工核对。"
+
+
+def _personnel_summary_lines(facts):
+    rows = []
+    seen = set()
+    for fact in facts or []:
+        if not isinstance(fact, dict):
+            continue
+        name = str(fact.get("name") or "").strip()
+        post = str(fact.get("post") or "").strip()
+        if not name or not post or name in seen:
+            continue
+        seen.add(name)
+        rows.append("%s（%s）" % (name, post))
+    if not rows:
+        return ["未取得主要管理人员名单的实填姓名和岗位，需补充或人工核对。"]
+    return ["已提取主要管理人员：" + "、".join(rows[:8]) + "。",
+            "人员与社保、劳动合同、证书的对应关系仍需核对。"]
 
 
 def _section_summary_conclusion(code, items, fallback):
@@ -548,7 +597,7 @@ def _section_status(items):
     return "未核查"
 
 
-def _sections(base, raw, contract_facts=None):
+def _sections(base, raw, contract_facts=None, personnel_facts=None):
     dims = _dims(base)
     rows = []
     for code, title, kinds, dimension_code, empty_text, include, exclude in _SECTIONS:
@@ -567,6 +616,10 @@ def _sections(base, raw, contract_facts=None):
             summary_conclusion = _contract_summary_conclusion(contract_facts)
             conclusion_text = summary_conclusion
             bullets = []
+        if code == "personnel" and personnel_facts:
+            summary_lines = _personnel_summary_lines(personnel_facts)
+            if status == "未核查":
+                status = "待核实"
         rows.append({
             "code": code,
             "title": title,
@@ -669,7 +722,7 @@ def _responsibility(sheet_code, item):
     return "承包人"
 
 
-def _attachments(base, raw):
+def _attachments(base, raw, contract_facts=None):
     dims = _dims(base)
     sheets = []
     for sheet in _SHEETS:
@@ -678,6 +731,18 @@ def _attachments(base, raw):
         for item, point, dimension_code, keywords, covered in sheet["rows"]:
             responsibility = _responsibility(sheet["code"], item)
             if not covered:
+                hint = _contract_hint(item, contract_facts)
+                if hint:
+                    page, label = hint
+                    auto_rows.append([
+                        item,
+                        "待核实",
+                        "合同第%d页已定位%s条款；需核对原文并判断是否满足要求。\n审查要点：%s"
+                        % (page, label, point),
+                        "人工核对合同条款",
+                        responsibility,
+                    ])
+                    continue
                 manual_rows.append([
                     item,
                     "本版本未建立该审查项的自动核查规则",
@@ -758,7 +823,7 @@ def _attachments(base, raw):
     return sheets
 
 
-def _appendix(base, raw):
+def _appendix(base, raw, contract_facts=None):
     """正式意见附件：只保留确定结论、需人工核查汇总、未覆盖范围。
 
     8 张检查表仍保留在 `attachments` 作为系统工作底稿，不进入正式意见正文。
@@ -770,18 +835,32 @@ def _appendix(base, raw):
     uncovered_sheets = []
     for sheet in _SHEETS:
         covered_flags = [row[4] for row in sheet["rows"]]
+        uncovered_rows = [row for row in sheet["rows"] if not row[4]]
+        hinted_rows = [(row, _contract_hint(row[0], contract_facts)) for row in uncovered_rows]
+        unhinted_rows = [row for row, hint in hinted_rows if hint is None]
         if not any(covered_flags):
-            uncovered_sheets.append(sheet["title"])
-        elif not all(covered_flags):
-            uncovered_items.extend(row[0] for row in sheet["rows"] if not row[4])
+            if unhinted_rows:
+                uncovered_sheets.append(sheet["title"])
+        elif uncovered_rows:
+            uncovered_items.extend(row[0] for row in unhinted_rows)
         for item, point, dimension_code, keywords, covered in sheet["rows"]:
             responsibility = _responsibility(sheet["code"], item)
             if not covered:
-                group = manual.setdefault(sheet["title"], {
-                    "items": [], "status": "未覆盖",
-                    "reason": "本版本未建立自动核查规则", "responsibilities": [],
-                })
-                group["items"].append(item)
+                hint = _contract_hint(item, contract_facts)
+                if hint:
+                    page, _label = hint
+                    group = manual.setdefault(sheet["title"] + "·合同条款已定位", {
+                        "items": [], "status": "待核实",
+                        "reason": "合同已定位相关条款，需人工核对是否满足要求",
+                        "responsibilities": [],
+                    })
+                    group["items"].append("%s（合同第%d页）" % (item, page))
+                else:
+                    group = manual.setdefault(sheet["title"], {
+                        "items": [], "status": "未覆盖",
+                        "reason": "本版本未建立自动核查规则", "responsibilities": [],
+                    })
+                    group["items"].append(item)
                 if responsibility not in group["responsibilities"]:
                     group["responsibilities"].append(responsibility)
                 continue
@@ -1257,6 +1336,7 @@ def build_document(report: dict, base: dict | None = None) -> dict:
     conclusion = _conclusion(base, raw)
     facts = deepcopy(report.get("certificate_facts") or {})
     contract_facts = deepcopy(report.get("contract_clauses") or {})
+    personnel_facts = deepcopy(report.get("personnel_roster") or [])
     document = {
         "schema_version": SCHEMA_VERSION,
         "template_id": TEMPLATE_ID,
@@ -1268,14 +1348,15 @@ def build_document(report: dict, base: dict | None = None) -> dict:
         "basic_information": deepcopy(base["basic_information"]),
         "conclusion": conclusion,
         "signing_conclusion": _signing_conclusion(raw, facts),
-        "sections": _sections(base, raw, contract_facts),
+        "sections": _sections(base, raw, contract_facts, personnel_facts),
         "issues": _issue_rows(raw),
         "pending": _pending_rows(raw),
         "pending_total": sum(1 for item in raw if _verdict(item) == "待核实"),
-        "attachments": _attachments(base, raw),
-        "appendix": _appendix(base, raw),
+        "attachments": _attachments(base, raw, contract_facts),
+        "appendix": _appendix(base, raw, contract_facts),
         "certificate_facts": facts,
         "contract_clauses": contract_facts,
+        "personnel_roster": personnel_facts,
         "basis": deepcopy(base["basis"]),
         "limitations": deepcopy(base["limitations"]),
         "issued_date": base.get("issued_date") or "",

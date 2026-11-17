@@ -185,6 +185,24 @@ def test_v14_contract_section_uses_extracted_clause_pages():
     text = "\n".join(block.get("text", "") for block in document["blocks"])
     assert "本次未涉及：合同与支付条款" not in text
     assert "合同主要条款已在文本中定位" in text
+    price_sheet = next(sheet for sheet in document["attachments"] if sheet["code"] == "price")
+    assert any(row[0] == "计价口径清晰" and "合同第48页" in row[2] for row in price_sheet["auto_rows"])
+    assert any("合同条款已定位" in row[0] for row in document["appendix"]["manual_rows"])
+
+
+def test_v14_personnel_section_lists_extracted_roster():
+    report = sample_report()
+    report["personnel_roster"] = [
+        {"name": "吴道记", "post": "项目负责人"},
+        {"name": "于文祥", "post": "安全员"},
+        {"name": "吴昊", "post": "劳务员"},
+    ]
+    document = v14.build_document(report)
+    personnel = next(section for section in document["sections"] if section["code"] == "personnel")
+    text = "\n".join(personnel["summary_lines"])
+    assert "吴道记（项目负责人）" in text
+    assert "于文祥（安全员）" in text
+    assert "吴昊（劳务员）" in text
 
 
 def test_v14_negative_list_coverage_is_not_reported_as_checked():
