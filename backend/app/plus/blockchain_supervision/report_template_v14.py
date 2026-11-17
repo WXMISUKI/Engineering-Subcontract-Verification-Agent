@@ -16,6 +16,22 @@ SCHEMA_VERSION = "bs.review-opinion-v14.v1"
 TEMPLATE_VERSION = "V1.4"
 MAPPING_VERSION = "2026-11-17.1"
 UNKNOWN = "材料未载明"
+_PLAIN_LABELS = {
+    "法定签字链": "监理及发包人签署",
+    "集团报审签字链": "集团报审流程签署",
+}
+_PLAIN_SOURCES = {
+    "A3-02-legal": "《上海市公路工程施工分包管理实施细则》（沪交行规〔2026〕8号）附件3/附件4 签字栏",
+    "A3-02-group": "集团分包报审表签字栏（项目经理/专业监理/总监/指挥部/直属单位）",
+}
+
+
+def _plain_label(label):
+    return _PLAIN_LABELS.get(str(label or "").strip(), label)
+
+
+def _plain_source(item_id, source):
+    return _PLAIN_SOURCES.get(str(item_id or "").strip(), source)
 
 # 8 表附件：审查项 / 审查要点 / 归属维度 / 命中关键词 / 是否有自动内核
 _SHEETS = (
@@ -165,9 +181,9 @@ def _raw_items(report):
                 "status": item.get("status"),
                 "material_missing": item.get("material_missing") is True,
                 "material_only": item.get("material_only") is True,
-                "label": _text(item.get("label") or item.get("item_id"), "核查事项"),
+                "label": _plain_label(_text(item.get("label") or item.get("item_id"), "核查事项")),
                 "message": _text(item.get("message"), "未载明事实"),
-                "source": _text(item.get("source"), ""),
+                "source": _plain_source(item.get("item_id"), _text(item.get("source"), "")),
                 "recommendation": _text(item.get("recommendation"), ""),
             })
     return rows

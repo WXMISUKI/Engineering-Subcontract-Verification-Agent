@@ -141,6 +141,21 @@ def test_v14_worksheet_docx_is_readable_and_separate_from_opinion():
     assert "不构成正式审查意见" in text
 
 
+def test_v14_replaces_internal_signature_terms_and_sources():
+    report = sample_report()
+    report["sections"].append({"kind": "signature_chain", "items": [{
+        "finding_id": "sig", "item_id": "A3-02-legal", "status": "undecidable",
+        "label": "法定签字链", "message": "报审表中识别到总监理工程师意见及指挥部意见栏目",
+        "source": "《实施细则》附件3/4签字栏",
+    }]})
+    document = v14.build_document(report)
+    text = "\n".join(block.get("text", "") for block in document["blocks"])
+    assert "法定签字链" not in text
+    assert "监理及发包人签署" in text
+    item = next(row for row in v14._raw_items(report) if row["item_id"] == "A3-02-legal")
+    assert "沪交行规〔2026〕8号" in item["source"]
+
+
 def test_v14_contract_section_uses_extracted_clause_pages():
     from app.plus.blockchain_supervision.contract_clause_facts import extract_contract_clauses
 
