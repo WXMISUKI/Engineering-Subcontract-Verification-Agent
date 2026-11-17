@@ -17,7 +17,7 @@ def ensure_bs_schema(engine: Engine) -> dict[str, list[str]]:
     }
     targets = (
         (BsSubject.__table__, ("origin", "retired")),
-        (BsFinding.__table__, ("evidence_json", "missing_json", "subject_id")),
+        (BsFinding.__table__, ("evidence_json", "missing_json", "subject_id", "finding_semantics")),
     )
     with engine.begin() as connection:
         quote = connection.dialect.identifier_preparer.quote

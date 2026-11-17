@@ -21,7 +21,7 @@ from . import (access, admission, ai_advisory_snapshots, checklist, contract_par
 from . import source_manifest, finding_text, background_ai_review
 from . import reference_visibility
 from . import material_versions, supplement_generation, section_projection, material_confirmation, report_basic_facts
-from . import parsing, report_policy
+from . import parsing, report_policy, report_template_render, report_template_v13, report_template_v14
 from .rules import load_report_checklist
 from .basis_subject_projection import subject_basis_view
 from .reference_access import read_reference_original
@@ -44,6 +44,26 @@ def _is_material_revision_schema_error(exc: OperationalError) -> bool:
         and "bs_material" in text
         and ("revision_no" in text or "replacement_target_id" in text)
     )
+
+
+def _is_finding_semantics_schema_error(exc: OperationalError) -> bool:
+    text = str(exc).lower()
+    return "bs_finding" in text and "finding_semantics" in text and (
+        "no such column" in text or "unknown column" in text)
+
+
+def _schema_not_ready(exc: OperationalError) -> HTTPException | None:
+    if _is_material_revision_schema_error(exc):
+        return HTTPException(status_code=503, detail={
+            "code": "bs_material_schema_not_ready",
+            "message": "当前数据库尚未完成工程分包材料版本结构，暂不能进入工作台；请先完成 D9 结构迁移。",
+        })
+    if _is_finding_semantics_schema_error(exc):
+        return HTTPException(status_code=503, detail={
+            "code": "bs_finding_schema_not_ready",
+            "message": "当前数据库尚未完成核查结论语义结构，暂不能读取结论；请先完成 finding_semantics 结构迁移。",
+        })
+    return None
 
 
 def _utc_iso(value: datetime | None) -> str | None:
@@ -545,6 +565,14 @@ def _material_dto(m: BsMaterial, container_names: dict = None,
 @router.get("/tasks/{task_id}")
 def get_task(task_id: int, db: Session = Depends(get_db), user=Depends(get_current_any_user)):
     task = _get_task(db, task_id, user)
+    # ORM 查询会把新增列带入 SELECT；先做窄探针，旧库返回可操作的迁移诊断。
+    try:
+        db.query(BsFinding.finding_semantics).filter(BsFinding.task_id == task_id).limit(1).all()
+    except OperationalError as exc:
+        detail = _schema_not_ready(exc)
+        if detail is not None:
+            raise detail from exc
+        raise
     try:
         materials = db.query(BsMaterial).filter(BsMaterial.task_id == task_id).all()
     except OperationalError as exc:
@@ -582,16 +610,18 @@ def get_task(task_id: int, db: Session = Depends(get_db), user=Depends(get_curre
     supplement_labels = service.supplement_material_labels(db, task.id)
     supplement_associations = service.supplement_issue_associations(db, task.id)
     active_input_materials = material_versions.active_input_materials(materials)
+    basic_facts = report_basic_facts.extract_report_basic_facts(active_input_materials)
+    current_contract_materials = report_basic_facts.current_contract_materials(
+        active_input_materials, basic_facts.get("project_name"))
     # 抬头事实是只读投影：工作台在报告尚不可读时也能展示合同金额/签订日期，
     # 但仍只消费合同字段抽取结果，不自行从文件名猜值。
     contract_facts = reporting.contract_facts_for_materials(
-        active_input_materials,
+        current_contract_materials,
         baseline_date=task.baseline_date,
     )
     contract_party_evidence = contract_party_evidence_module.resolve_contract_party_evidence(
-        active_input_materials
+        current_contract_materials
     )
-    basic_facts = report_basic_facts.extract_report_basic_facts(active_input_materials)
     contract_party_evidence = report_basic_facts.merge_party_facts(contract_party_evidence, basic_facts)
     contract_party_evidence["employer"] = report_basic_facts.apply_employer_confirmation(
         contract_party_evidence.get("employer"), report_basic_facts.latest_employer_confirmation(db, task.id))
@@ -1637,7 +1667,14 @@ def list_findings(task_id: int, kind: str = None,
     if kind:
         q = q.filter(BsFinding.kind.in_(("negative_list", "negative_candidate"))
                      if kind == "negative_list" else BsFinding.kind == kind)
-    findings = ai_advisory_snapshots.filter_current_candidate_findings(db, task, user, q.order_by(BsFinding.id).all())
+    try:
+        findings = ai_advisory_snapshots.filter_current_candidate_findings(
+            db, task, user, q.order_by(BsFinding.id).all())
+    except OperationalError as exc:
+        detail = _schema_not_ready(exc)
+        if detail is not None:
+            raise detail from exc
+        raise
     negative_coverage = (ai_advisory_snapshots.collect_current_negative_list_coverage(db, task, user)
                          if any(f.item_id == "W16-02" for f in findings) else None)
     snapshot = reference_snapshots.get_reference_snapshot(db, task)
@@ -1782,7 +1819,9 @@ def _finding_dto(f: BsFinding, basis_map: dict = None, subjects_by_id: dict = No
         "subject": ({"subject_id": subject.id, "stable_code": subject.stable_code,
                      "name": subject.name, "subject_type": subject.subject_type}
                     if subject is not None else None),
-        "status": f.status, "status_label": STATUS_LABELS.get(f.status, f.status),
+        "status": f.status,
+        "status_label": reporting.finding_status_label(f, open_term),
+        "finding_semantics": f.finding_semantics,
         "material_only": checklist.is_material_only_finding(f),
         "report_review_blocking": reporting.report_review_blocking(f),
         # open_term 是只读展示标记；保留原始三态 status，不在接口层新增判定状态。
@@ -1986,7 +2025,8 @@ def _require_no_pending_frozen_findings(snapshot: dict, stage: str) -> None:
         if row.get("status") != "undecidable":
             continue
         finding = BsFinding(item_id=row.get("item_id"), status=row.get("status"),
-                            evidence_json=row.get("evidence") or [])
+                            evidence_json=row.get("evidence") or [],
+                            finding_semantics=row.get("finding_semantics"))
         review = row.get("review") if isinstance(row.get("review"), dict) else {}
         if (row.get("material_only") is not True and reporting.report_gate_blocking(finding)
                 and reporting.canonical_review_decision(review.get("decision")) not in ("accepted", "ignored")):
@@ -2096,7 +2136,7 @@ def _attach_current_readiness(payload: dict, readiness: dict, stage: str) -> dic
 
 def _output_payload(db: Session, task: BsTask, kind: str, stage: str,
                     version_no: int | None, *, user, require_reading_complete: bool = False,
-                    allow_candidate_preview: bool = False) -> dict:
+                    allow_candidate_preview: bool = False, template_id: str = "legacy") -> dict:
     """当前报告走既有守门；历史只读冻结内容与回执，绝不借当前结果补齐。
 
     历史版本返回前做**展示归一化**（`reporting.normalize_output_payload`）：
@@ -2113,11 +2153,13 @@ def _output_payload(db: Session, task: BsTask, kind: str, stage: str,
             raise HTTPException(status_code=409, detail="参考依据授权已变化，请联系管理员核对后再查看或导出报告")
         builder = reporting.build_report if kind == "report" else reporting.build_opinion
         try:
-            output = builder(db, task, scope_coverage=readiness.get("scope_coverage"))
+            output = builder(db, task, scope_coverage=readiness.get("scope_coverage"),
+                             **({"include_templates": True} if template_id != "legacy" else {}))
         except report_policy.InvalidReportPolicy as exc:
             raise HTTPException(status_code=409, detail="报告规则快照不可用，请联系管理员核对") from exc
         if "reference_snapshot" in output:
             output["reference_snapshot"] = reference_visibility.visible_snapshot(db, task, output["reference_snapshot"], user)
+        output = _select_output_template(output, template_id)
         return _attach_generation_identity(
             _attach_current_readiness(_mark_stage(output, stage), service.build_report_readiness(db, task, user=user), stage),
             task=task, version_no=None, db=db)
@@ -2147,13 +2189,25 @@ def _output_payload(db: Session, task: BsTask, kind: str, stage: str,
                                   else {"state": "legacy_unknown"})
     # 归一化只作用于返回值；report_digest 由调用方在归一化之后计算。
     payload = reporting.normalize_output_payload(payload, kind)
+    payload = _select_output_template(payload, template_id)
     return _attach_generation_identity(
         _mark_stage(payload, stage), task=task, version_no=version_no,
         snapshot=snapshot, db=db)
 
 
+def _select_output_template(payload: dict, template_id: str) -> dict:
+    try:
+        if template_id == report_template_v14.TEMPLATE_ID:
+            return report_template_v14.select_template(payload, template_id)
+        return report_template_v13.select_template(payload, template_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @router.get("/tasks/{task_id}/report")
-def get_report(task_id: int, stage: str = "draft", version_no: int | None = None, db: Session = Depends(get_db),
+def get_report(task_id: int, stage: str = "draft", version_no: int | None = None, template_id: str = "legacy", db: Session = Depends(get_db),
                user=Depends(get_current_any_user)):
     """核查报告 v0：纯聚合已落库结论（不重算），面向非技术读者。
 
@@ -2161,7 +2215,7 @@ def get_report(task_id: int, stage: str = "draft", version_no: int | None = None
     在哈希计算之后注入，不参与哈希体本身；完整值与复算口径见证据包。
     """
     task = _get_task(db, task_id, user)
-    report = _output_payload(db, task, "report", stage, version_no, user=user)
+    report = _output_payload(db, task, "report", stage, version_no, user=user, template_id=template_id)
     report["report_digest"] = export.report_digest(report)
     return report
 
@@ -2174,12 +2228,13 @@ def _attachment_response(data: bytes, media_type: str, file_name: str) -> Respon
 
 @router.get("/tasks/{task_id}/report/export")
 def export_report(task_id: int, fmt: str = "docx", stage: str = "draft", version_no: int | None = None,
-                  db: Session = Depends(get_db), user=Depends(get_current_any_user)):
+                  template_id: str = "legacy", db: Session = Depends(get_db), user=Depends(get_current_any_user)):
     """报告导出（W3-3）：Word/PDF，只渲染 build_report 聚合结果，不重算。"""
     task = _get_task(db, task_id, user)
     _require_file_output_stage(stage, version_no)
     report = _output_payload(
         db, task, "report", stage, version_no, user=user,
+        template_id=template_id,
         require_reading_complete=(stage == "confirmed" and version_no is None))
     digest = export.report_digest(report)
     exported_at = datetime.now().isoformat(timespec="seconds")
@@ -2195,6 +2250,28 @@ def export_report(task_id: int, fmt: str = "docx", stage: str = "draft", version
         raise HTTPException(status_code=400, detail="fmt 仅支持 docx / pdf")
     export.record_export(db, task, fmt, digest, exported_at)
     return _attachment_response(data, mime, "%s-核查报告.%s" % (safe_title, ext))
+
+
+@router.get("/tasks/{task_id}/report/worksheet")
+def export_report_worksheet(task_id: int, stage: str = "draft", version_no: int | None = None,
+                            db: Session = Depends(get_db), user=Depends(get_current_any_user)):
+    """导出 V1.4 八张检查表工作底稿；不并入正式审查意见。"""
+    task = _get_task(db, task_id, user)
+    _require_file_output_stage(stage, version_no)
+    report = _output_payload(
+        db, task, "report", stage, version_no, user=user, template_id="v1.4",
+        require_reading_complete=(stage == "confirmed" and version_no is None))
+    document = report.get("template_document") or {}
+    if document.get("template_id") != report_template_v14.TEMPLATE_ID:
+        raise HTTPException(status_code=400, detail="8表工作底稿仅支持 V1.4 正式审查意见")
+    digest = export.report_digest(report)
+    exported_at = datetime.now().isoformat(timespec="seconds")
+    data = report_template_render.word_bytes_worksheet_v14(report, digest, exported_at)
+    safe_title = export.safe_filename(task.title)
+    return _attachment_response(
+        data,
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "%s-8表工作底稿.docx" % safe_title)
 
 
 @router.get("/tasks/{task_id}/report/evidence-bundle")
@@ -2221,7 +2298,7 @@ def download_evidence_bundle(task_id: int, stage: str = "draft",
 
 
 @router.get("/tasks/{task_id}/opinion")
-def get_opinion(task_id: int, stage: str = "draft", version_no: int | None = None, db: Session = Depends(get_db),
+def get_opinion(task_id: int, stage: str = "draft", version_no: int | None = None, template_id: str = "legacy", db: Session = Depends(get_db),
                 user=Depends(get_current_any_user)):
     """审查意见书（对齐 118 号文附件1）：纯聚合已落库结论，不重算。
 
@@ -2230,18 +2307,19 @@ def get_opinion(task_id: int, stage: str = "draft", version_no: int | None = Non
     `opinion_digest` 为内容指纹，口径与报告校验码一致。
     """
     task = _get_task(db, task_id, user)
-    opinion = _output_payload(db, task, "opinion", stage, version_no, user=user)
+    opinion = _output_payload(db, task, "opinion", stage, version_no, user=user, template_id=template_id)
     opinion["opinion_digest"] = export.report_digest(opinion)
     return opinion
 
 
 @router.get("/tasks/{task_id}/opinion/preview")
 def preview_opinion(task_id: int, stage: str = "draft", version_no: int | None = None,
-                    db: Session = Depends(get_db), user=Depends(get_current_any_user)):
+                    template_id: str = "legacy", db: Session = Depends(get_db), user=Depends(get_current_any_user)):
     """只读预览同一意见书渲染内容，不记录导出事件。"""
     task = _get_task(db, task_id, user)
     _require_file_output_stage(stage, version_no)
     opinion = _output_payload(db, task, "opinion", stage, version_no, user=user,
+                              template_id=template_id,
                               require_reading_complete=(stage == "confirmed" and version_no is None),
                               allow_candidate_preview=True)
     digest = export.report_digest(opinion)
@@ -2252,9 +2330,10 @@ def preview_opinion(task_id: int, stage: str = "draft", version_no: int | None =
 
 @router.get("/tasks/{task_id}/opinion/preview-markdown")
 def preview_opinion_markdown(task_id: int, stage: str = "draft", version_no: int | None = None,
-                             db: Session = Depends(get_db), user=Depends(get_current_any_user)):
+                             template_id: str = "legacy", db: Session = Depends(get_db), user=Depends(get_current_any_user)):
     task = _get_task(db, task_id, user)
     opinion = _output_payload(db, task, "opinion", stage, version_no, user=user,
+                              template_id=template_id,
                               require_reading_complete=(stage == "confirmed" and version_no is None),
                               allow_candidate_preview=True)
     digest = export.report_digest(opinion)
@@ -2263,13 +2342,14 @@ def preview_opinion_markdown(task_id: int, stage: str = "draft", version_no: int
 
 
 @router.get("/tasks/{task_id}/opinion/export")
-def export_opinion(task_id: int, fmt: str = "docx", stage: str = "draft", version_no: int | None = None, expected_digest: str | None = None, db: Session = Depends(get_db),
+def export_opinion(task_id: int, fmt: str = "docx", stage: str = "draft", version_no: int | None = None, expected_digest: str | None = None, template_id: str = "legacy", db: Session = Depends(get_db),
                    user=Depends(get_current_any_user)):
     """审查意见书导出（Word/PDF）：只渲染 build_opinion 聚合结果，不重算。"""
     task = _get_task(db, task_id, user)
     _require_file_output_stage(stage, version_no)
     opinion = _output_payload(
         db, task, "opinion", stage, version_no, user=user,
+        template_id=template_id,
         require_reading_complete=(stage == "confirmed" and version_no is None))
     digest = export.report_digest(opinion)
     if expected_digest is not None and expected_digest != digest:

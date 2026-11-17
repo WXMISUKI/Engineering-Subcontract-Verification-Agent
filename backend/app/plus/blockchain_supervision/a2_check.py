@@ -661,6 +661,43 @@ SOURCE_P = ("依据：《沪城公路〔2025〕118号》附件1第3项（现场�
             "细则第十五条（四）（未建立劳动工资和社会养老保险关系属转包情形）")
 ITEM_UNIT = "A2-01"
 
+
+def _person_evidence_refs(facts: list[dict], materials_by_id: dict) -> list[dict]:
+    """把人员事实投影为可逐人回查的引用，不把姓名提升为身份结论。"""
+    posts_by_person = {}
+    for fact in facts:
+        name = str(fact.get("name") or "").strip()
+        post = str(fact.get("post") or "").strip() or None
+        material = materials_by_id.get(fact.get("material_id"))
+        subject_id = getattr(material, "subject_id", None) if material is not None else None
+        key = (subject_id, re.sub(r"\s+", "", name))
+        if name and post:
+            posts_by_person.setdefault(key, set()).add(post)
+
+    side_by_kind = {
+        "management_roster": "management_roster",
+        "social_record": "social_record",
+        "labor_contract": "labor_contract",
+    }
+    refs = []
+    for fact in facts:
+        name = str(fact.get("name") or "").strip()
+        material = materials_by_id.get(fact.get("material_id"))
+        subject_id = getattr(material, "subject_id", None) if material is not None else None
+        person_key = re.sub(r"\s+", "", name) or None
+        key = (subject_id, person_key)
+        posts = posts_by_person.get(key, set())
+        post = str(fact.get("post") or "").strip() or (next(iter(posts)) if len(posts) == 1 else None)
+        refs.append({
+            **dict(fact),
+            "person_key": person_key,
+            "post": post,
+            "subject_id": subject_id,
+            "evidence_side": side_by_kind.get(fact.get("evidence_kind"), fact.get("evidence_kind")),
+            "location_mode": "page",
+        })
+    return refs
+
 def norm_company(name: str) -> str:
     """公司名归一：先整段剥括号备注，再去空白与残留括号。
 
@@ -692,7 +729,7 @@ def run_person_consistency_check(task, materials: list, *, expected_company=None
     labor = [fact for fact in relations if fact["evidence_kind"] == "labor_contract"]
     candidates = social_evidence_materials(materials)
     facts = roster + relations
-    refs = [dict(fact, location_mode="page") for fact in facts]
+    refs = _person_evidence_refs(facts, by_id)
     gaps = []
     names = list(dict.fromkeys(fact["name"] for fact in roster))
     if not names:
@@ -781,6 +818,10 @@ ITEM_QUAL = "A2-04"
 _QUAL_BOUNDARY_NOTICE = "仅为所附证照文字的初步类别比对，未核定正式资质等级、工程规模或真实性"
 _SCOPE_WINDOW = 400
 _WSQ_RE = re.compile(r"\s+")
+_LABOR_CERT_TITLES = ("施工劳务备案证书", "施工劳务资质证书")
+_LABOR_CERT_NO_RE = re.compile(r"证书编号\s*[:：]\s*([A-Za-z0-9]+)")
+_LABOR_CERT_VALID_RE = re.compile(
+    r"有效期至\s*[:：]\s*(\d{4}\s*[-/年]\s*\d{1,2}\s*[-/月]\s*\d{1,2}\s*日?)")
 
 
 def _material_full_text(material) -> str:
@@ -807,11 +848,46 @@ def _quote_and_page(material, alias: str):
     return None, None
 
 
+def _labor_certificate_finding(task, materials: list):
+    """劳务分包：施工劳务备案/资质证书不适用专业承包类别词表。"""
+    for material in materials:
+        for page in material.pages_json or []:
+            text = page.get("text") or ""
+            title = next((name for name in _LABOR_CERT_TITLES if name in text), None)
+            if title is None:
+                continue
+            # 报审表附件清单也会提到证书名称，必须同时有证书编号或有效期才按实际证照处理。
+            cert_no = _LABOR_CERT_NO_RE.search(text)
+            valid = _LABOR_CERT_VALID_RE.search(text)
+            if cert_no is None and valid is None:
+                continue
+            details = []
+            if cert_no:
+                details.append("证书编号" + cert_no.group(1))
+            if valid:
+                details.append("有效期至" + valid.group(1).replace(" ", ""))
+            return BsFinding(
+                task_id=task.id, material_id=material.id, item_id=ITEM_QUAL,
+                kind="qualification_match", status=STATUS_MISS,
+                message="劳务分包，已提供%s%s；施工劳务备案/资质不适用专业承包类别匹配；%s"
+                        % (title, "（%s）" % "，".join(details) if details else "",
+                           _QUAL_BOUNDARY_NOTICE),
+                quote=text[:240], page=page.get("page"), source=SOURCE_Q)
+    return None
+
+
 def run_qualification_match_check(task, materials: list) -> list:
     """A2-04 资质匹配（词表保守口径），返回落库前 BsFinding 列表（不 commit）。"""
     matchers = load_qualification_matchers()
     done = [m for m in materials if m.parse_state == "done"]
     sub = [m for m in done if m.role in ("sub", "labor")]
+
+    # 劳务分包先看施工劳务备案/资质证书；命中即视为满足劳务资格要求，
+    # 不再用专业承包工程类别词表去要求“资质类别/等级覆盖分包范围”。
+    if any(m.role == "labor" for m in done):
+        labor_certificate = _labor_certificate_finding(task, done)
+        if labor_certificate is not None:
+            return [labor_certificate]
 
     scope_win = scope_mat = None
     for m in sub:

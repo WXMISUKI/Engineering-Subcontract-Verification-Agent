@@ -1,7 +1,11 @@
 """报审表和工程量清单中的报告字段线索，不改变核查规则。"""
 
 import re
+import unicodedata
+from datetime import date
 from decimal import Decimal, InvalidOperation
+from html.parser import HTMLParser
+from types import SimpleNamespace
 
 from .parsing import material_page_readable
 
@@ -12,7 +16,7 @@ _PARTY_LABELS = {
     "subcontractor": re.compile(r"(?:分包单位名称|分包单位)[ \t]*[:：][ \t]*([^\n|；;]{2,100})"),
 }
 _COMPANY_END = re.compile(r"^(.+?(?:有限责任公司|股份有限公司|有限公司|集团公司))")
-_REPORT_FORM = re.compile(r"(?:劳务|专业|工程)?分包报审表")
+_REPORT_FORM = re.compile(r"(?:劳务|专业|工程)?分包报审表|分包单位认可表")
 _REPORT_RECIPIENT = re.compile(r"^致\s*[:：]\s*(.+)$")
 _TITLE = re.compile(r"^(.{2,120}?(?:专业|劳务)分包)工程量清单\s*$")
 _PROJECT = re.compile(r"^.{2,120}(?:工程|公路|项目).{0,30}(?:标|标段)\s*$")
@@ -20,6 +24,106 @@ _SECTION = re.compile(r"(主线施工\s*[0-9一二三四五六七八九十]+\s*�
 _AMOUNT = re.compile(r"(?:拟分包金额|分包金额)[ \t]*[:：][ \t]*([0-9]+(?:\.[0-9]+)?)[ \t]*(万元|元)")
 _AMOUNT_VALUE = re.compile(r"^([0-9]+(?:\.[0-9]+)?)[ \t]*(万元|元)$")
 _ROAD_RANGE = re.compile(r"[（(]([GS]\d+公路\s*[-－—至]\s*[GS]\d+公路)[）)]", re.I)
+
+
+def _plain_text(text):
+    return re.sub(r"\$?\\text\s*\{\s*([^{}]+?)\s*\}\$?", r"\1", str(text or ""))
+
+
+def _canonical(text):
+    text = unicodedata.normalize("NFKC", str(text or ""))
+    return re.sub(r"\s+", "", text).translate(str.maketrans({"—": "-", "–": "-", "－": "-", "〜": "~", "～": "~"}))
+
+
+class _HTMLTables(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.tables, self.rows, self.row, self.cell = [], None, None, None
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "table": self.rows = []
+        elif tag == "tr" and self.rows is not None: self.row = []
+        elif tag in {"td", "th"} and self.row is not None: self.cell = []
+
+    def handle_data(self, data):
+        if self.cell is not None: self.cell.append(data)
+
+    def handle_endtag(self, tag):
+        if tag in {"td", "th"} and self.cell is not None:
+            self.row.append("".join(self.cell).strip())
+            self.cell = None
+        elif tag == "tr" and self.row is not None:
+            self.rows.append(self.row)
+            self.row = None
+        elif tag == "table" and self.rows is not None:
+            self.tables.append(self.rows)
+            self.rows = None
+
+
+def _tables(text):
+    parser = _HTMLTables()
+    parser.feed(text)
+    tables, rows = parser.tables, []
+    for line in text.splitlines() + [""]:
+        if "|" in line:
+            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+            if not all(re.fullmatch(r"[:\- ]*", cell) for cell in cells): rows.append(cells)
+        elif rows:
+            tables.append(rows)
+            rows = []
+    return tables
+
+
+def _table_facts(text, base, found):
+    for rows in _tables(text):
+        if not rows: continue
+        headers = [_canonical(cell) for cell in rows[0]]
+        for cells in rows[1:]:
+            if len(cells) != len(headers): continue
+            quote = " | ".join(cells)
+            for header, cell in zip(headers, cells):
+                if not cell: continue
+                if header in {"拟分包工程内容", "分包事项", "拟分包内容"}:
+                    found["subcontract_item_name"].append({**base, "value": cell, "quote": quote})
+                if header in {"拟分包范围", "分包范围"}:
+                    found["subcontract_scope"].append({**base, "value": cell, "quote": quote})
+                amount_header = re.fullmatch(r"(?:拟分包金额|分包金额)(?:\((万元|元)\))?", header)
+                total_header = re.fullmatch(r"(?:合价|合计金额)\((万元|元)\)", header)
+                if total_header and not any("合计" in value for value in cells): continue
+                match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)\s*(万元|元)?", cell.replace(",", ""))
+                unit = (match.group(2) or (amount_header or total_header).group(1)) if match and (amount_header or total_header) else None
+                if unit:
+                    found["subcontract_amount"].append({**base, "value": match.group(1), "unit": unit, "quote": quote})
+
+
+def current_contract_materials(materials, project_fact):
+    """Scope report party evidence to contracts carrying the current project name.
+
+    Packet PDFs may include historical performance contracts. These page views are
+    transient objects; ORM materials and original page text are never modified.
+    """
+    project = _canonical((project_fact or {}).get("value"))
+    if not project or (project_fact or {}).get("status") != "matched":
+        return materials
+    output = []
+    for material in materials:
+        pages = getattr(material, "pages_json", None) or []
+        starts = [index for index, page in enumerate(pages)
+                  if re.search(r"(?:劳务|专业|工程|施工)分包合同", _plain_text(page.get("text"))[:250])
+                  and "工程名称" in _plain_text(page.get("text"))]
+        if not starts:
+            output.append(material)
+            continue
+        selected = []
+        for index, start in enumerate(starts):
+            end = starts[index + 1] if index + 1 < len(starts) else len(pages)
+            text = _canonical(_plain_text(pages[start].get("text")))
+            if project in text:
+                selected.extend(pages[start:end])
+        output.append(SimpleNamespace(id=material.id, file_name=material.file_name, role=material.role,
+                                     generation_id=getattr(material, "generation_id", None), pages_json=selected,
+                                     material_category=getattr(material, "material_category", None)))
+    return output
 
 
 def _amount_from_layout(page):
@@ -48,10 +152,39 @@ def _amount_from_layout(page):
 
 
 def _resolve(rows):
-    unique = {re.sub(r"\s+", "", row["value"]) for row in rows}
+    unique = {_canonical(row["value"]) for row in rows}
     if len(unique) == 1:
         return {"status": "matched", "value": rows[0]["value"], "evidence": rows}
     return {"status": "conflict" if unique else "unresolved", "value": None, "evidence": rows}
+
+
+def _resolve_submitted_dates(rows):
+    parsed = []
+    for row in rows:
+        value = str(row.get("value") or "").strip()
+        try:
+            parsed_date = date.fromisoformat(value[:10])
+            parsed.append((parsed_date.year, parsed_date.month, parsed_date.day, row))
+            continue
+        except ValueError:
+            pass
+        match = re.fullmatch(r"(\d{1,2})月(\d{1,2})日", value)
+        if not match:
+            return _resolve(rows)
+        month, day = map(int, match.groups())
+        try:
+            date(2000, month, day)
+        except ValueError:
+            return _resolve(rows)
+        parsed.append((None, month, day, row))
+
+    month_days = {(month, day) for _, month, day, _ in parsed}
+    years = {year for year, _, _, _ in parsed if year is not None}
+    if len(month_days) != 1 or len(years) > 1:
+        return {"status": "conflict" if rows else "unresolved", "value": None, "evidence": rows}
+    year, month, day, _ = next((item for item in parsed if item[0] is not None), parsed[0])
+    value = date(year, month, day).isoformat() if year is not None else "%s月%s日" % (month, day)
+    return {"status": "matched", "value": value, "evidence": rows}
 
 
 def project_task_fact(task_value, material_fact, *, project_name=False):
@@ -60,14 +193,14 @@ def project_task_fact(task_value, material_fact, *, project_name=False):
     candidates = material_fact.get("evidence") or []
     if not task_value:
         return {**material_fact, "source": "packet" if material_fact.get("value") else None}
-    normalized = re.sub(r"\s+", "", task_value)
+    normalized = _canonical(task_value)
     def equivalent(value):
-        value = re.sub(r"\s+", "", str(value or ""))
+        value = _canonical(value)
         if value == normalized:
             return True
         if not project_name or _ROAD_RANGE.sub("", value) != _ROAD_RANGE.sub("", normalized):
             return False
-        ranges = {match.group(1).upper() for text in (value, normalized) for match in _ROAD_RANGE.finditer(text)}
+        ranges = {_canonical(match.group(1)).upper() for text in (value, normalized) for match in _ROAD_RANGE.finditer(text)}
         return len(ranges) <= 1
     matching = [row for row in candidates if equivalent(row.get("value"))]
     different = any(not equivalent(row.get("value")) for row in candidates)
@@ -104,8 +237,10 @@ def merge_amount_facts(packet_amount, contract_amount):
 def extract_report_basic_facts(materials):
     """只从可读的明确标签和清单标题生成可回指候选。"""
     found = {"general_contractor": [], "employer": [], "subcontractor": [], "subcontract_scope": [],
-             "project_name": [], "contract_section": [], "subcontract_amount": []}
+             "project_name": [], "contract_section": [], "subcontract_amount": [],
+             "subcontract_item_name": [], "submitted_date": []}
     recipient_candidates = []
+    scope_titles = []
     for material in materials or []:
         if getattr(material, "parse_state", None) != "done":
             continue
@@ -115,9 +250,12 @@ def extract_report_basic_facts(materials):
             number = page.get("page")
             if type(number) is not int or number < 1 or not material_page_readable(material, number):
                 continue
-            lines = [line.strip() for line in str(page.get("text") or "").splitlines() if line.strip()]
+            text = _plain_text(page.get("text"))
+            lines = [line.strip() for line in text.splitlines() if line.strip()]
             base = {"material_id": getattr(material, "id", None),
                     "file_name": getattr(material, "file_name", None), "page": number}
+            if getattr(material, "role", None) in {"packet", "sub", "labor"}:
+                _table_facts(text, base, found)
             if any(_REPORT_FORM.search(line) for line in lines):
                 for line in lines:
                     match = _REPORT_RECIPIENT.match(line)
@@ -131,6 +269,27 @@ def extract_report_basic_facts(materials):
                     found["subcontract_amount"].append({**base, "value": match.group(1),
                                                          "unit": match.group(2), "quote": quote})
             for index, line in enumerate(lines):
+                submitted = re.search(r"报送日期\s*[:：]\s*(\d{4})[年/-](\d{1,2})[月/-](\d{1,2})日?", line)
+                if submitted:
+                    try:
+                        value = date(*map(int, submitted.groups())).isoformat()
+                    except ValueError:
+                        value = None
+                    if value: found["submitted_date"].append({**base, "value": value, "quote": line})
+                elif getattr(material, "role", None) == "packet":
+                    contextual = re.search(
+                        r"(?:你部|贵部)?[【\[]\s*(?:(\d{4})[年/-])?(\d{1,2})月(\d{1,2})日\s*[】\]]\s*报送的",
+                        line,
+                    )
+                    if contextual:
+                        year, month, day = contextual.groups()
+                        try:
+                            parsed = date(int(year) if year else 2000, int(month), int(day))
+                        except ValueError:
+                            parsed = None
+                        if parsed:
+                            value = parsed.isoformat() if year else "%s月%s日" % (parsed.month, parsed.day)
+                            found["submitted_date"].append({**base, "value": value, "quote": line})
                 amount = _AMOUNT.search(line) if getattr(material, "role", None) in {"packet", "sub", "labor"} else None
                 if amount:
                     found["subcontract_amount"].append({**base, "value": amount.group(1),
@@ -152,15 +311,18 @@ def extract_report_basic_facts(materials):
                 if match:
                     prefix = lines[index - 1] if index and _PROJECT.fullmatch(lines[index - 1]) else ""
                     value = re.sub(r"\s+", "", prefix + match.group(1))
-                    found["subcontract_scope"].append({**base, "value": value,
-                                                       "quote": "\n".join(filter(None, [prefix, line]))})
-    result = {key: _resolve(rows) for key, rows in found.items()}
+                    scope_titles.append({**base, "value": value,
+                                         "quote": "\n".join(filter(None, [prefix, line]))})
+    if not found["subcontract_scope"]:
+        found["subcontract_scope"] = scope_titles
+    result = {key: (_resolve_submitted_dates(rows) if key == "submitted_date" else _resolve(rows))
+              for key, rows in found.items()}
     result["employer_recipient_candidates"] = recipient_candidates
     projects = found["project_name"]
     if projects:
-        normalized = {re.sub(r"\s+", "", _ROAD_RANGE.sub("", row["value"])) for row in projects}
-        ranges = {re.sub(r"\s+", "", match.group(1)).upper()
-                  for row in projects for match in _ROAD_RANGE.finditer(row["value"])}
+        normalized = {_ROAD_RANGE.sub("", _canonical(row["value"])) for row in projects}
+        ranges = {_canonical(match.group(1)).upper()
+                  for row in projects for match in _ROAD_RANGE.finditer(_canonical(row["value"]))}
         if len(normalized) == 1 and len(ranges) <= 1:
             result["project_name"] = {"status": "matched", "value": max(projects, key=lambda row: len(row["value"]))["value"],
                                       "evidence": projects}

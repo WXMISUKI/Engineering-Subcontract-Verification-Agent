@@ -7,12 +7,13 @@ import re
 
 from .knowledge_runs import references_for_source
 from .ai_evidence import validate_ai_proposal
+from .finding_semantics import FINDING_SEMANTICS_MANUAL_PROMPT
 from .models import BsFinding, STATUS_UNDECIDABLE
 from .parsing import material_page_readable, material_reading_gap, reading_coverage
 from .rules import load_negative_matchers, negative_list_rules
 
 SCHEMA_VERSION = "bs-negative-candidate-v4"
-VALIDATION_VERSION = "bs-negative-candidate-evidence-v2"
+VALIDATION_VERSION = "bs-negative-candidate-evidence-v4-semantic-batch"
 _SCOPE_HEADING = re.compile(r"工程范围|承包范围|分包范围|工作内容|施工内容|施工范围")
 _SCOPE_BEFORE = 80
 _SCOPE_AFTER = 1600
@@ -121,13 +122,17 @@ def plan_negative_candidates(*, task_id: int, run: dict, subjects: list, materia
             references = [ref for ref in references if isinstance(ref.get("reference_id"), str)
                           and ref["reference_id"] and isinstance(ref.get("quote"), str) and ref["quote"].strip()]
             duplicate_reference_ids = len({ref["reference_id"] for ref in references}) != len(references)
+            recall_mode = ("deterministic" if rule_scope_pages else
+                           "semantic" if scope_pages and references else None)
             reason = ("contract_missing" if not contracts else "contract_unreadable" if not pages
                       else "contract_scope_unlocated" if not scope_pages
                       else "source_ambiguous" if len(matching) > 1 or duplicate_reference_ids
                       else "reference_missing" if not references
-                      else "rule_signal_not_found" if not rule_scope_pages
+                      else "rule_signal_not_found" if recall_mode is None
                       else None)
-            candidate_pages = rule_scope_pages if reason is None else []
+            candidate_pages = rule_scope_pages if recall_mode == "deterministic" else scope_pages if recall_mode == "semantic" else []
+            # 可读片段能定位工程范围，不足以证明其余不可读页属于本条规则。
+            scope_attribution = "attributed" if source_reading_complete and scope_pages else "unresolved"
             identity = {"schema": SCHEMA_VERSION, "task_id": task_id, "run_id": run["run_id"],
                         "review_run_id": run["review_run_id"], "material_fingerprint": run["material_fingerprint"],
                         "rule_fingerprint": run["rule_fingerprint"], "subject_id": subject.id,
@@ -136,6 +141,8 @@ def plan_negative_candidates(*, task_id: int, run: dict, subjects: list, materia
             payload = json.dumps(identity, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
             output.append({**identity, "candidate_id": "nc-" + hashlib.sha256(payload.encode("utf-8")).hexdigest(),
                            "state": "not_run", "unavailable_reason": reason,
+                           "recall_mode": recall_mode,
+                           "scope_attribution": scope_attribution,
                            "source_reading_complete": source_reading_complete,
                            "incomplete_material_scope": incomplete_scope or len(rule_scope_pages) != len(scope_pages),
                            "material_pages": candidate_pages})
@@ -189,6 +196,7 @@ def prepare_candidate_batch_inputs(*, task_id: int, run: dict, subjects: list, m
                       "item_id": candidate["item_id"], "item_label": rule_labels[candidate["item_id"]],
                       "kind": "negative_candidate",
                       "subject_id": candidate["subject_id"], "materials": pages, "references": references,
+                      "recall_mode": candidate.get("recall_mode") or "deterministic",
                       "incomplete_material_scope": candidate["incomplete_material_scope"], "limitations": limitations})
     return {"candidates": candidates, "items": items}
 
@@ -222,7 +230,7 @@ def reviewable_candidate_proposals(prepared: dict, result: dict) -> list[dict]:
                 subject_id=item["subject_id"], item_id=item["item_id"],
                 materials=item["materials"], references=item["references"],
                 incomplete_material_scope=item.get("incomplete_material_scope", False),
-                kind=item.get("kind"))
+                kind=item.get("kind"), recall_mode=item.get("recall_mode"))
             if validation.accepted:
                 output.append({"candidate_id": row["candidate_id"], "proposal": validation.proposal,
                                "limitations": list(dict.fromkeys(
@@ -324,6 +332,7 @@ def make_candidate_review_findings(*, task_id: int, reviewable: list[dict]) -> l
         limitation_text = "；" + "；".join(dict.fromkeys(text for text in limitations if text.strip())) if limitations else ""
         finding = BsFinding(task_id=task_id, subject_id=proposal["subject_id"], item_id=proposal["item_id"],
             kind="negative_candidate", status=STATUS_UNDECIDABLE,
+            finding_semantics=FINDING_SEMANTICS_MANUAL_PROMPT,
             message=("模型辅助核查线索，请人工核实：" + proposal["message"].strip() + limitation_text)[:500],
             material_id=first["material_id"], page=first["page"], quote=first["quote"],
             source="负面清单辅助核查", evidence_json=[dict(ref) for ref in material_refs])

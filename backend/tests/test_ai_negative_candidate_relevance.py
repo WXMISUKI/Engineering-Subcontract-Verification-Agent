@@ -2,11 +2,16 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
 
+from app.database import Base
 from app.plus.blockchain_supervision import ai_advisory_snapshots, negative_candidate_plan, router, service
 from app.plus.blockchain_supervision.ai_evidence import validate_ai_proposal
 from app.plus.blockchain_supervision import ai_review_batch
 from app.plus.blockchain_supervision.ai_review_batch import CHECKPOINT_SCHEMA_VERSION
+from app.plus.blockchain_supervision.models import BsFinding
+from app.plus.blockchain_supervision import reporting
 
 
 def _proposal(item_id, quote, *, message="请核对该工程事实和原件"):
@@ -91,6 +96,118 @@ def test_relevant_trigger_without_threshold_remains_undecidable_for_human_review
     assert result.proposal["status"] == "undecidable"
 
 
+def test_semantic_recall_accepts_readable_scope_quote_without_literal_trigger():
+    proposal = _proposal("NL-B-05", "工程范围包括预制梁安装及现场吊装作业，具体工法参数请结合原件核对。")
+    result = validate_ai_proposal(
+        proposal,
+        task_id=1,
+        subject_id=7,
+        item_id="NL-B-05",
+        kind="negative_candidate",
+        recall_mode="semantic",
+        incomplete_material_scope=False,
+        materials=[{"task_id": 1, "subject_id": 7, "material_id": 3, "page": 1,
+                    "text": proposal["material_evidence"][0]["quote"]}],
+        references=[{"reference_id": "ref-1", "text": "本条规则原文及工程条件"}],
+    )
+
+    assert result.accepted is True
+    assert result.proposal["advisory_only"] is True
+
+
+@pytest.mark.parametrize("proposal_status", ["hit", "undecidable"])
+def test_valid_negative_candidate_is_manual_prompt_and_does_not_become_machine_blocker(proposal_status):
+    candidate_id = "nc-" + "c" * 64
+    reviewable = [{
+        "candidate_id": candidate_id,
+        "proposal": {
+            "advisory_only": True,
+            "status": proposal_status,
+            "subject_id": 7,
+            "item_id": "NL-B-05",
+            "message": "请人工核对技术参数和原件。",
+            "material_evidence": [{"material_id": 3, "page": 1, "quote": "本工程采用悬臂施工现浇梁。"}],
+            "rule_evidence": [{"reference_id": "ref-1", "quote": "负面清单条款原文。"}],
+        },
+        "limitations": [],
+    }]
+
+    rows = negative_candidate_plan.make_candidate_review_findings(task_id=1, reviewable=reviewable)
+
+    assert len(rows) == 1
+    finding = rows[0][1]
+    assert finding.finding_semantics == "manual_prompt"
+    assert reporting.report_gate_blocking(finding) is False
+    assert finding.status == "undecidable"
+
+
+def test_unlocated_scope_candidate_remains_a_blocking_machine_gap():
+    candidate = {
+        "candidate_id": "nc-" + "d" * 64,
+        "task_id": 1,
+        "run_id": "run-1",
+        "review_run_id": "review-1",
+        "material_fingerprint": "materials-1",
+        "rule_fingerprint": "rules-1",
+        "subject_id": 7,
+        "item_id": "NL-B-05",
+        "contract_ids": [3],
+        "reference_ids": ["ref-1"],
+        "material_pages": [],
+        "unavailable_reason": "contract_scope_unlocated",
+        "incomplete_material_scope": True,
+    }
+    run = {
+        "task_id": 1,
+        "run_id": "run-1",
+        "review_run_id": "review-1",
+        "material_fingerprint": "materials-1",
+        "rule_fingerprint": "rules-1",
+        "references": [{"reference_id": "ref-1", "quote": "负面清单条款原文。"}],
+    }
+    returned = {**candidate, "execution_status": "not_run", "batches_total": 0,
+                "batches_completed": 0, "proposals": []}
+
+    rows = negative_candidate_plan.make_unlocated_scope_findings(
+        task_id=1, prepared={"candidates": [candidate]}, result={"candidates": [returned]}, run=run)
+
+    assert len(rows) == 1
+    finding = rows[0][1]
+    assert finding.finding_semantics is None
+    assert reporting.report_gate_blocking(finding) is True
+
+
+def test_candidate_sync_persists_semantics_and_rejects_semantic_drift():
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    reviewable = [{
+        "candidate_id": "nc-" + "e" * 64,
+        "proposal": {
+            "advisory_only": True,
+            "status": "undecidable",
+            "subject_id": 7,
+            "item_id": "NL-B-05",
+            "message": "请人工核对技术参数。",
+            "material_evidence": [{"material_id": 3, "page": 1, "quote": "本工程采用悬臂施工现浇梁。"}],
+            "rule_evidence": [{"reference_id": "ref-1", "quote": "负面清单条款原文。"}],
+        },
+        "limitations": [],
+    }]
+    with Session(engine) as db:
+        task = SimpleNamespace(id=1)
+        material = SimpleNamespace(id=3, task_id=1, subject_id=7,
+                                   pages_json=[{"page": 1, "text": "本工程采用悬臂施工现浇梁。"}])
+        records = service.sync_candidate_review_records(db, task, reviewable, [], [material])
+        db.commit()
+        finding = db.get(BsFinding, records[0]["finding_id"])
+        assert finding.finding_semantics == "manual_prompt"
+        finding.finding_semantics = "machine_conclusion"
+        db.flush()
+        with pytest.raises(service.AiContextChanged):
+            service.sync_candidate_review_records(db, task, reviewable, records, [material])
+    engine.dispose()
+
+
 @pytest.mark.parametrize(("item_id", "quote", "expected"), [
     ("NL-B-11", "本工程上跨既有铁路，现浇梁施工。", True),
     ("NL-B-11", "本工程上跨既有道路，现浇梁施工。", False),
@@ -104,7 +221,7 @@ def test_rule_context_must_be_present_in_the_cited_quote(item_id, quote, expecte
     assert _validate(item_id, quote).accepted is expected
 
 
-def test_planner_does_not_send_generic_scope_excerpt_to_unrelated_rule_candidates(monkeypatch):
+def test_planner_semantically_screens_generic_scope_excerpt_without_literal_signals(monkeypatch):
     subject, material, run = _planner_inputs(
         "分包工程范围：普通桥面施工。合同价款按工程量结算。"
     )
@@ -124,10 +241,55 @@ def test_planner_does_not_send_generic_scope_excerpt_to_unrelated_rule_candidate
         current_rule_fingerprint="rules-1",
     )
 
-    assert prepared["items"] == []
-    assert {row["unavailable_reason"] for row in prepared["candidates"]} == {"rule_signal_not_found"}
-    assert all(row["material_pages"] == [] for row in prepared["candidates"])
+    assert {item["item_id"] for item in prepared["items"]} == {"NL-B-05", "NL-B-06"}
+    assert all(item["recall_mode"] == "semantic" for item in prepared["items"])
+    assert all(row["unavailable_reason"] is None for row in prepared["candidates"])
+    assert all(row["recall_mode"] == "semantic" for row in prepared["candidates"])
+    assert all(row["material_pages"] for row in prepared["candidates"])
     assert all(row["source_reading_complete"] is True for row in prepared["candidates"])
+
+
+@pytest.mark.parametrize("invalid_citation", [None, "page", "material", "reference", "quote"])
+def test_semantic_candidate_survives_batch_boundary_with_exact_citations(monkeypatch, invalid_citation):
+    quote = "分包工程范围：预制构件安装及现场吊装作业。"
+    candidate_id = "nc-" + "e" * 64
+    item = {"candidate_id": candidate_id, "task_id": 1, "subject_id": 7,
+            "item_id": "NL-B-05", "kind": "negative_candidate", "recall_mode": "semantic",
+            "materials": [{"task_id": 1, "subject_id": 7, "material_id": 3, "page": 1, "text": quote}],
+            "references": [{"reference_id": "ref-1", "text": "本条规则原文及工程条件"}]}
+    plan = ai_review_batch.plan_review_batches([item])
+    assert not plan["limitations"]
+    assert len(plan["batches"]) == 1
+    batch = plan["batches"][0]
+    assert batch["items"][0]["recall_mode"] == "semantic"
+    proposal = {**_proposal("NL-B-05", quote), "candidate_id": candidate_id}
+    if invalid_citation == "page":
+        proposal["material_evidence"][0]["page"] = 2
+    elif invalid_citation == "material":
+        proposal["material_evidence"][0]["material_id"] = 9
+    elif invalid_citation == "reference":
+        proposal["rule_evidence"][0]["reference_id"] = "other-rule"
+    elif invalid_citation == "quote":
+        proposal["material_evidence"][0]["quote"] = "本工程采用悬臂施工现浇梁。"
+
+    async def request_review(_client, system, payload, **_kwargs):
+        assert "recall_mode=semantic" in system
+        assert payload["items"][0]["recall_mode"] == "semantic"
+        assert payload["items"][0]["allowed_reference_ids"] == ["ref-1"]
+        return {"proposals": [proposal]}
+
+    monkeypatch.setattr(ai_review_batch, "_request_review_json", request_review)
+    result = asyncio.run(ai_review_batch.execute_review_batch(client=object(), batch=batch))[0]
+    if invalid_citation:
+        assert result["execution_status"] == "partial"
+        assert result["proposals"] == []
+    else:
+        assert result["execution_status"] == "completed"
+        assert result["proposals"][0]["advisory_only"] is True
+        reviewable = negative_candidate_plan.reviewable_candidate_proposals(
+            {"items": [item]}, {"candidates": [result]})
+        assert len(reviewable) == 1
+        assert reviewable[0]["proposal"]["status"] == "undecidable"
 
 
 def test_no_signal_is_not_safe_to_skip_when_contract_reading_has_gaps(monkeypatch):
@@ -147,11 +309,14 @@ def test_no_signal_is_not_safe_to_skip_when_contract_reading_has_gaps(monkeypatc
         current_rule_fingerprint="rules-1",
     )
 
-    assert prepared["candidates"][0]["unavailable_reason"] == "rule_signal_not_found"
+    assert prepared["candidates"][0]["unavailable_reason"] is None
+    assert prepared["candidates"][0]["recall_mode"] == "semantic"
+    assert prepared["candidates"][0]["scope_attribution"] == "unresolved"
     assert prepared["candidates"][0]["source_reading_complete"] is False
+    assert prepared["items"][0]["incomplete_material_scope"] is True
 
 
-def test_planner_sends_only_the_rule_with_a_matching_scope_signal(monkeypatch):
+def test_planner_prefers_deterministic_signal_and_semantically_screens_other_rules(monkeypatch):
     subject, material, run = _planner_inputs(
         "分包工程范围：现浇梁采用移动模架施工，跨径资料待核。"
     )
@@ -171,9 +336,11 @@ def test_planner_sends_only_the_rule_with_a_matching_scope_signal(monkeypatch):
         current_rule_fingerprint="rules-1",
     )
 
-    assert [item["item_id"] for item in prepared["items"]] == ["NL-B-06"]
+    assert [item["item_id"] for item in prepared["items"]] == ["NL-B-05", "NL-B-06"]
+    modes = {item["item_id"]: item["recall_mode"] for item in prepared["items"]}
+    assert modes == {"NL-B-05": "semantic", "NL-B-06": "deterministic"}
     candidates = {row["item_id"]: row for row in prepared["candidates"]}
-    assert candidates["NL-B-05"]["unavailable_reason"] == "rule_signal_not_found"
+    assert candidates["NL-B-05"]["unavailable_reason"] is None
     assert candidates["NL-B-06"]["unavailable_reason"] is None
 
 
@@ -309,7 +476,7 @@ def test_reading_gap_report_projection_requires_current_attributable_sources():
            "material_fingerprint": "m1", "rule_fingerprint": "r1"}
     row = {**run, "candidate_id": "nc-1", "item_id": "NL-B-01", "subject_id": 2,
            "execution_status": "not_run", "unavailable_reason": "rule_signal_not_found",
-           "source_reading_complete": False, "contract_ids": [7]}
+           "source_reading_complete": False, "scope_attribution": "attributed", "contract_ids": [7]}
     material = SimpleNamespace(id=7, subject_id=2, task_id=1, file_name="material.pdf", superseded_by_id=None)
     coverage = {7: {"reading_complete": False, "unread_pages": [63, 64], "total_pages": 67}}
     result = reading_gap_scope.project([row], run, [material], coverage)
@@ -319,12 +486,29 @@ def test_reading_gap_report_projection_requires_current_attributable_sources():
     assert reading_gap_scope.project([{**row, "subject_id": 3}], run, [material], coverage) is None
 
 
+def test_reading_gap_projection_does_not_assign_all_rules_when_scope_is_unattributed():
+    from app.plus.blockchain_supervision import reading_gap_scope
+    run = {"task_id": 1, "run_id": "run-1", "review_run_id": "review-1",
+           "material_fingerprint": "m1", "rule_fingerprint": "r1"}
+    row = {**run, "candidate_id": "nc-1", "item_id": "NL-B-01", "subject_id": 2,
+           "execution_status": "not_run", "unavailable_reason": "rule_signal_not_found",
+           "source_reading_complete": False, "scope_attribution": "unresolved", "contract_ids": [7]}
+    material = SimpleNamespace(id=7, subject_id=2, task_id=1, file_name="material.pdf", superseded_by_id=None)
+    coverage = {7: {"reading_complete": False, "unread_pages": [63, 64], "total_pages": 67}}
+
+    result = reading_gap_scope.project([row], run, [material], coverage)
+
+    assert result == [{"material_id": 7, "file_name": "material.pdf", "pages": [63, 64],
+                       "rule_ids": [], "unattributed": True}]
+    assert "具体规则归属待人工核对" in reading_gap_scope.statements(result)[0]
+
+
 def test_reading_gap_projection_separates_materials_and_subjects():
     from app.plus.blockchain_supervision import reading_gap_scope
     run = {"task_id": 1, "run_id": "run-1", "review_run_id": "review-1",
            "material_fingerprint": "m1", "rule_fingerprint": "r1"}
     base = {**run, "execution_status": "not_run", "unavailable_reason": "rule_signal_not_found",
-            "source_reading_complete": False}
+            "source_reading_complete": False, "scope_attribution": "attributed"}
     rows = [{**base, "candidate_id": "nc-1", "item_id": "NL-B-01", "subject_id": 2, "contract_ids": [7, 8]},
             {**base, "candidate_id": "nc-2", "item_id": "NL-T-01", "subject_id": 3, "contract_ids": [9]}]
     materials = [SimpleNamespace(id=i, subject_id=subject, task_id=1, file_name=f"{i}.pdf", superseded_by_id=None)
@@ -339,6 +523,22 @@ def test_reading_gap_projection_separates_materials_and_subjects():
     assert reading_gap_scope.project([{**rows[0], "contract_ids": [7, 9]}], run, materials, coverage) is None
     materials[0].superseded_by_id = 8
     assert reading_gap_scope.project(rows, run, materials, coverage) is None
+
+
+@pytest.mark.parametrize("reason", [None, "unknown_reason", "reference_missing"])
+def test_unrun_candidate_does_not_become_an_ocr_gap_without_reading_reason(reason):
+    from app.plus.blockchain_supervision import reading_gap_scope
+    candidate = {"execution_status": "not_run", "unavailable_reason": reason,
+                 "source_reading_complete": False}
+    assert reading_gap_scope.project([candidate], {}, [], {}) == []
+
+
+def test_reading_gap_disclosure_keeps_unattributed_gaps_when_other_rules_are_known():
+    from app.plus.blockchain_supervision import reading_gap_scope
+    rows = [{"file_name": "材料.pdf", "pages": [3], "rule_ids": ["NL-B-01"], "unattributed": True}]
+    text = "\n".join(reading_gap_scope.statements(rows))
+    assert "NL-B-01" in text
+    assert "尚未明确具体规则归属" in text
 
 
 def test_group_status_api_projects_no_signal_and_blocking_counts(monkeypatch):

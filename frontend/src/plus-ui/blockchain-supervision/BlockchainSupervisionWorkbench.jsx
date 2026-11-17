@@ -30,7 +30,7 @@ import './prototype/v3VisualTokens.css'
 import {
   BS_EVENT_TYPES, bsEventsUrl, completeBsTask,
   createBsTask,
-  deleteBsMaterial, downloadBsReport, downloadBsOpinion, previewBsOpinion,
+  deleteBsMaterial, downloadBsReport, downloadBsWorksheet, downloadBsOpinion, previewBsOpinion,
   activateBsSupplementPlan, confirmBsMaterial, confirmBsEmployer, createBsSupplementPlan, enterBsMaterialEdit, getBsReport, getBsOpinion, getBsTask, getBsTodo, getBsReviewVersion, getBsRuleset,
   listBsFindings, listBsTasks, pingBs, reviewBsFinding, rerunBsTask, saveBlob, downloadBsReferenceFile, getBsTaskUsage,
   assignBsMaterialSubject, associateBsGeneralSourceSet, removeBsGeneralSourceSetMember,
@@ -1197,6 +1197,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
   const reportStage = 'draft'
   const reportReadiness = normalizeReportReadiness(mutationBusy ? null : detail?.report_readiness)
   const [reports, setReports] = useState({ draft: null, confirmed: null })
+  const [reportTemplate, setReportTemplate] = useState('legacy')
   const [opinion, setOpinion] = useState(null)
   const [opinionMarkdown, setOpinionMarkdown] = useState(null)
   const opinionRequest = useRef(0)
@@ -1211,6 +1212,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
   const reportContext = useRef({ active: true, epoch: 0, runId: null })
   // 两稿别各自的请求代，切换稿别/重核查时互不干扰（旧响应不得覆盖新稿别）。
   const reportRequests = useRef({ draft: 0, confirmed: 0 })
+  reportContext.current.templateId = reportTemplate
   // 概览页的材料未读页/合同要素沿用 AI 初稿口径（确认稿不外溢到概览）。
   const report = reports.draft
   reportContext.current.runId = referenceSnapshot?.review_run_id ?? null
@@ -1219,7 +1221,27 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
     return () => { reportContext.current.active = false }
   }, [])
   const reportIsCurrent = useCallback((context) => reportContext.current.active
-    && context.epoch === reportContext.current.epoch && context.runId === reportContext.current.runId, [])
+    && context.epoch === reportContext.current.epoch && context.runId === reportContext.current.runId
+    && context.templateId === reportContext.current.templateId, [])
+  const changeReportTemplate = (templateId) => {
+    if (templateId === reportTemplate) return
+    reportContext.current.epoch += 1
+    reportContext.current.templateId = templateId
+    reportRequests.current = { draft: reportRequests.current.draft + 1, confirmed: reportRequests.current.confirmed + 1 }
+    opinionRequest.current += 1
+    setReportTemplate(templateId)
+    setReports({ draft: null, confirmed: null })
+    setReportGates({ draft: null, confirmed: null })
+    setReportStageErrors({ draft: '', confirmed: '' })
+    setReportLoading({ draft: false, confirmed: false })
+    setReportRefreshMessage('')
+    setOpinion(null)
+    setOpinionMarkdown(null)
+    setOpinionError('')
+    setOpinionLoading(false)
+    setOpinionExporting(null)
+    setExporting(null)
+  }
   const [versionDetail, setVersionDetail] = useState(null)
   const [versionLoading, setVersionLoading] = useState(false)
   // 刀B（BS-P2-04）：规则集版本视图。读取失败必须显式「暂不可用」，不得伪造无变化/0 条。
@@ -1701,9 +1723,6 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
   // 旧代 completed 把新一代永久挡住（2026-10-29 任务 77）。
   useEffect(() => {
     if (findingsLoading || !detail) return
-    // 已有编排在跑（含本次 rerunTask 主动发起的）时不再并发启动一轮：
-    // 否则主动调用会因 autoRunRef 互斥而空转返回，把「已提交」误判成失败。
-    if (runningKey !== null) return
     const serverAiClosed = detail.progress?.ai_coverage?.state === 'unavailable'
       || detail.progress?.phase === 'completed'
       || detail.progress?.phase === 'review_required'
@@ -1711,12 +1730,17 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
       || detail.progress?.ai_job?.state === 'failed'
       || detail.progress?.ai_job?.state === 'review_required'
       || ['check.ai_background_completed', 'check.ai_background_failed', 'check.ai_background_review_required'].includes(detail.progress?.activity_health?.last_event_type)
-    if (serverAiClosed) {
+    // 服务端已闭合、任务也已收口时，必须覆盖本地残留的 failed/running 编排状态；
+    // 否则页面会一直停在旧的“核查已中断”，而服务端其实已经完成。
+    if (serverAiClosed && (runningKey === null || detail.state === 'done')) {
       aiResumeSeenRef.current = reviewRunId
       clearAutoRunStatus(taskId, reviewRunId)
       if (autoCheck.phase !== 'idle') setAutoCheck({ phase: 'idle', index: 0, total: 0, error: '' })
       return
     }
+    // 已有编排在跑（含本次 rerunTask 主动发起的）时不再并发启动一轮：
+    // 否则主动调用会因 autoRunRef 互斥而空转返回，把「已提交」误判成失败。
+    if (runningKey !== null) return
     const plan = planAutoChecks({
       taskState: detail.state,
       steps: autoChecksForScope(),
@@ -1751,10 +1775,17 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
   // 缺组时后端 409 + detail，由 onError 呈现（文案已说明缺哪些分组）。
   // 刀B：收口成功后刷新规则集视图——此时后端才写 ruleset_version，更新提示应随之消失/更新。
   const completeTask = async () => {
-    if (completingRef.current || !reportReadiness.task_close_ready) return
+    if (completingRef.current) return
     completingRef.current = true
     try {
       setCompleting(true)
+      const current = await getBsTask(taskId)
+      setDetail(current)
+      const readiness = normalizeReportReadiness(current?.report_readiness)
+      if (!readiness.task_close_ready) {
+        onError(readiness.blocking_reasons.map((reason) => reason.message).join('；') || '当前任务尚未满足报告生成条件，请刷新后重试。')
+        return
+      }
       await completeBsTask(taskId)
       // 手动收口成功：本任务此前已产生消耗，刷新顶栏/积分页。
       window.dispatchEvent(new CustomEvent('billing:mutated'))
@@ -1874,7 +1905,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
     setReportLoading((prev) => ({ ...prev, [stage]: true }))
     setReportStageErrors((prev) => ({ ...prev, [stage]: '' }))
     try {
-      const result = await getBsReport(taskId, { stage })
+      const result = await getBsReport(taskId, { stage, templateId: reportTemplate })
       if (!current()) return
       if (context.runId && result.reference_snapshot?.review_run_id !== context.runId) {
         setReports((prev) => ({ ...prev, [stage]: null }))
@@ -1896,7 +1927,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
     } finally { if (current()) setReportLoading((prev) => ({ ...prev, [stage]: false })) }
     // 不把 onError 放进依赖：父级内联回调会每次渲染换引用，依赖它会让读取 effect 无限重跑。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [taskId, reportIsCurrent])
+  }, [taskId, reportIsCurrent, reportTemplate])
 
   useEffect(() => {
     if (!detail || ['setup', 'preparing'].includes(detail.state)) return
@@ -1907,6 +1938,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
 
   // 原型主路径提供 Word/PDF；旧 stage 参数继续兼容后端历史接口。
   const [exporting, setExporting] = useState(null)
+  const [worksheetExporting, setWorksheetExporting] = useState(false)
   const [versionExporting, setVersionExporting] = useState(null)
   const refreshReport = () => loadReport(reportStage, true)
   const confirmEmployer = async (candidate) => {
@@ -1932,7 +1964,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
     setOpinionError('')
     try {
       const [opinionData, preview] = await Promise.all([
-        getBsOpinion(taskId, { stage }), previewBsOpinion(taskId, stage),
+        getBsOpinion(taskId, { stage, templateId: reportTemplate }), previewBsOpinion(taskId, stage, { templateId: reportTemplate }),
       ])
       if (!current()) return
       if (!preview.digest || opinionData.opinion_digest !== preview.digest) throw new Error('意见书内容已变化，请重新生成预览')
@@ -1951,8 +1983,8 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
     const context = { ...reportContext.current }
     try {
       setOpinionExporting(fmt)
-      const blob = await downloadBsOpinion(taskId, fmt, 'confirmed', { expectedDigest: opinion?.opinion_digest })
-      if (reportIsCurrent(context)) saveBlob(blob, `${detail?.title || '分包合规审查正式意见书'}-${detail?.baseline_date || '核查'}.${fmt === 'pdf' ? 'pdf' : 'docx'}`)
+      const blob = await downloadBsOpinion(taskId, fmt, 'confirmed', { expectedDigest: opinion?.opinion_digest, templateId: reportTemplate })
+      if (reportIsCurrent(context)) saveBlob(blob, `${detail?.title || '分包合规审查正式意见书'}${reportTemplate === 'v1.3' ? '-V1.3' : reportTemplate === 'v1.4' ? '-V1.4' : ''}-${detail?.baseline_date || '核查'}.${fmt === 'pdf' ? 'pdf' : 'docx'}`)
     } catch (e) {
       if (reportIsCurrent(context)) {
         onError(e.message || '正式意见书导出失败')
@@ -1969,8 +2001,8 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
     try {
       setExporting(fmt)
       const name = detail?.title || '分包报审智能审查意见书'
-      const blob = await downloadBsReport(taskId, fmt, stage)
-      if (reportIsCurrent(context)) saveBlob(blob, `${name}-${detail?.baseline_date || '核查'}.${fmt === 'pdf' ? 'pdf' : 'docx'}`)
+      const blob = await downloadBsReport(taskId, fmt, stage, { templateId: reportTemplate })
+      if (reportIsCurrent(context)) saveBlob(blob, `${name}${reportTemplate === 'v1.3' ? '-V1.3' : reportTemplate === 'v1.4' ? '-V1.4' : ''}-${detail?.baseline_date || '核查'}.${fmt === 'pdf' ? 'pdf' : 'docx'}`)
     } catch (e) {
       if (!reportIsCurrent(context)) return
       const gate = normalizeReportGate(e)
@@ -1978,6 +2010,15 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
       else onError(e.message)
       await reload()
     } finally { if (reportIsCurrent(context)) setExporting(null) }
+  }
+  const exportWorksheet = async () => {
+    if (!taskId || !reportReadiness.confirmed_output_ready) return
+    try {
+      setWorksheetExporting(true)
+      const blob = await downloadBsWorksheet(taskId, 'confirmed')
+      const name = detail?.title || '分包报审智能审查意见书'
+      saveBlob(blob, `${name}-8表工作底稿.docx`)
+    } catch (e) { onError(e.message) } finally { setWorksheetExporting(false) }
   }
   const downloadReference = async (reference, versionNo) => {
     const blob = await downloadBsReferenceFile(taskId, reference.reference_id, { versionNo })
@@ -1999,7 +2040,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
   const handleReview = async (findingId, decision, note) => {
     try {
       await reviewBsFinding(findingId, decision, note)
-      await loadFindings()
+      await Promise.all([loadFindings(), reload()])
       return true
     } catch (e) { onError(e.message); return false }
   }
@@ -2481,6 +2522,8 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
       ) : activeView === 'report' ? (
         <div className="min-h-0 flex-1 pt-4">
           <ReportView
+            templateId={reportTemplate}
+            onTemplateChange={changeReportTemplate}
             report={reports[reportStage]}
             stage={reportStage}
             prototypeMode
@@ -2490,6 +2533,8 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
             onSelectBlocking={selectBlockingFinding}
             onBack={() => setActiveView('review')}
             onExport={exportReport}
+            onExportWorksheet={exportWorksheet}
+            worksheetExporting={worksheetExporting}
             exporting={exporting}
             onRefresh={refreshReport}
             refreshing={reportLoading[reportStage]}
@@ -2641,7 +2686,10 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
             onComplete={openReportFromReview}
             completing={completing}
             completeLabel="生成审查报告"
-            completeDisabled={blockingUndecidable > 0 || checking}
+            completeDisabled={!reportReadiness.task_close_ready || mutationBusy}
+            completeDisabledReason={!reportReadiness.task_close_ready
+              ? reportReadiness.blocking_reasons.map((reason) => reason.message).join('；')
+              : ''}
             previewMaterialId={previewRequest?.materialId ?? null}
             previewPage={previewRequest?.page ?? null}
             previewFindingId={previewRequest?.findingId ?? null}
@@ -2652,6 +2700,7 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
             onPreviewMaterialChange={(materialId) => setPreviewRequest((current) => ({ ...(current || {}), materialId: Number(materialId), page: null, closed: false }))}
             onClosePreview={() => setPreviewRequest((current) => current ? ({ ...current, closed: true }) : null)}
             reviewFilter={reviewFilter}
+            stepScoped={stepFilter != null}
             onFilterChange={(nextFilter) => {
               if (nextFilter !== reviewFilter) {
                 setPreviewRequest((current) => current ? ({ ...current, closed: true }) : current)

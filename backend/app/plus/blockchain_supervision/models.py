@@ -338,6 +338,8 @@ class BsFinding(Base):
     item_id = Column(String(40), nullable=False)       # 规则条目 id（report_checklist / negative list）
     kind = Column(String(40), nullable=False)           # completeness / negative_list / ...
     status = Column(String(20), nullable=False)         # hit / miss / undecidable
+    # 独立语义维度；旧行 NULL 沿用原门禁，不回填、不从文案推断。
+    finding_semantics = Column(String(30), nullable=True)
     message = Column(String(500), nullable=False)
     # 证据：命中/未命中时的原文引文与页码（不可判定时为空，reason 落 message）
     quote = Column(Text().with_variant(Text(), "mysql"), nullable=True)

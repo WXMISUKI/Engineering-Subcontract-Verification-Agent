@@ -1,11 +1,11 @@
-"""任务级门禁：人工回执、读取和执行分别保留，读取判据无业务副作用。"""
+"""任务级就绪：OCR 质量仅提示，人工回执和真实执行门禁独立保留。"""
 
 from copy import deepcopy
 
 import pytest
 
 from app.plus.blockchain_supervision import service
-from app.plus.blockchain_supervision.models import BsFinding, BsMaterial, BsReviewVersion, BsTask, BsTaskEvent
+from app.plus.blockchain_supervision.models import BsFinding, BsMaterial, BsReviewVersion, BsSubject, BsTask, BsTaskEvent
 
 
 def seed_task(db):
@@ -43,7 +43,7 @@ def test_readiness_is_read_only_and_separates_three_permissions(db_session):
 
 
 @pytest.mark.parametrize("parse_state", ["done", "failed", "parsing"])
-def test_accepted_findings_do_not_clear_reading_gaps(db_session, parse_state):
+def test_reading_gaps_are_disclosed_without_blocking_output(db_session, parse_state):
     db = db_session
     task, finding, material = seed_task(db)
     material.parse_state = parse_state
@@ -54,17 +54,24 @@ def test_accepted_findings_do_not_clear_reading_gaps(db_session, parse_state):
     db.commit()
     dto = service.build_report_readiness(db, task)
     assert dto["draft_readable"] is True
-    assert dto["confirmed_output_ready"] is dto["task_close_ready"] is False
+    assert dto["confirmed_output_ready"] is dto["task_close_ready"] is True
     assert dto["finding_review"]["blocking"] == []
     assert dto["reading_quality"]["pages"][0]["material_id"] == material.id
     assert dto["reading_quality"]["pages"][0]["page"] == 2
-    if parse_state == "failed":
-        assert dto["execution"]["state"] == "unknown"
-    assert any(row["code"] == "reading_incomplete" for row in dto["blocking_reasons"])
-    assert service.confirmed_output_readiness(db, task)["ok"] is False
-    assert service.complete_review(db, task)["ok"] is False
-    assert task.state == "running"
-    assert db.query(BsReviewVersion).count() == 0
+    assert dto["execution"]["state"] == "completed"
+    assert dto["reading_quality"]["state"] == "pending"
+    assert dto["reading_quality"]["blocking"] is False
+    assert dto["blocking_reasons"] == []
+    assert dto["warnings"][0]["code"] == "reading_quality_limited"
+    assert not any(row["code"] == "review_reading_quality" for row in dto["next_actions"])
+    assert service.confirmed_output_readiness(db, task)["ok"] is True
+    before = deepcopy(material.degradations_json)
+    assert service.complete_review(db, task)["ok"] is True
+    assert task.state == "done"
+    assert material.degradations_json == before
+    assert finding.status == "undecidable"
+    assert finding.review_json == {"decision": "accepted"}
+    assert db.query(BsReviewVersion).count() == 1
 
 
 def test_pending_review_blocks_formal_but_not_draft(db_session):
@@ -123,50 +130,45 @@ def current_client(tmp_path, *, unread=False):
             material.degradations_json = [{"kind": "parse_incomplete", "total_pages": 2,
                                            "read_pages": [1], "unread_pages": [2]}]
         db.add_all([material, BsFinding(task_id=task_id, item_id="A2-01", kind="person_consistency",
-                                       status="miss", message="合成结论")])
+                                       status="miss", message="合成结论"),
+                    BsSubject(task_id=task_id, stable_code="ocr-report-one", name="报告合成主体",
+                              subject_type="labor", type_confirmed=True)])
         db.flush()
         service.initialize_reference_review(db, task)
         db.commit()
     return client, engine, task_id
 
 
-def test_http_draft_discloses_gaps_while_all_formal_entries_block(tmp_path, db_session):
+@pytest.mark.parametrize("template_id", ["legacy", "v1.3"])
+def test_http_ocr_warning_allows_formal_entries_and_closeout(tmp_path, db_session, template_id):
     client, engine, task_id = current_client(tmp_path, unread=True)
     base = f"/api/plus/blockchain-supervision/tasks/{task_id}"
     detail = client.get(base)
     assert detail.status_code == 200, detail.text
     readiness = detail.json()["report_readiness"]
     assert readiness["draft_readable"] is True
-    assert readiness["confirmed_output_ready"] is readiness["task_close_ready"] is False
+    assert readiness["confirmed_output_ready"] is readiness["task_close_ready"] is True
+    assert readiness["warnings"][0]["code"] == "reading_quality_limited"
     for suffix in ("/report", "/opinion"):
         response = client.get(base + suffix, params={"stage": "draft"})
         assert response.status_code == 200, response.text
         payload = response.json()
-        assert payload["report_readiness"]["confirmed_output_ready"] is False
-        assert "草稿" in payload["draft_notice"]
+        assert payload["report_readiness"]["confirmed_output_ready"] is True
         assert payload["report_readiness"]["reading_quality"]["pages"][0]["page"] == 2
-        assert payload["business_document"]["conclusion"]["status"] == "incomplete"
-        if suffix == "/opinion":
-            assert payload["conclusion"]["code"] == "pending"
-            assert "counts" in payload["conclusion"]
-            assert payload["signature"]["suggested_option"] is None
-        else:
-            assert "不形成正式结论" in payload["summary"]["headline"]
-            assert "counts" in payload["summary"]
+        assert payload.get("reading_coverage") or payload.get("reading_limitations")
     for suffix in ("/report", "/opinion", "/report/export?fmt=docx&", "/report/export?fmt=pdf&",
                    "/opinion/export?fmt=docx&", "/opinion/export?fmt=pdf&", "/opinion/preview",
                    "/report/evidence-bundle"):
-        url = base + suffix + ("stage=confirmed" if suffix.endswith("&") else "?stage=confirmed")
+        url = base + suffix + ("stage=confirmed" if suffix.endswith("&") else "?stage=confirmed") + "&template_id=" + template_id
         response = client.get(url)
-        assert response.status_code == 409, (suffix, response.status_code, response.headers.get("content-type"))
-        assert response.json()["detail"]["code"] == "reading_incomplete"
+        assert response.status_code == 200, (suffix, response.status_code, response.headers.get("content-type"))
     response = client.post(base + "/complete")
-    assert response.status_code == 409, (response.status_code, response.headers.get("content-type"))
+    assert response.status_code == 200, (response.status_code, response.headers.get("content-type"))
     from sqlalchemy.orm import Session
     with Session(engine) as db:
-        assert db.get(BsTask, task_id).state == "running"
-        assert db.query(BsReviewVersion).count() == 0
-        assert not any("export" in row.event_type for row in db.query(BsTaskEvent).all())
+        assert db.get(BsTask, task_id).state == "done"
+        assert db.query(BsReviewVersion).count() == 1
+        assert db.query(BsMaterial).filter_by(task_id=task_id).one().degradations_json[0]["unread_pages"] == [2]
 
 
 @pytest.mark.parametrize("suffix", ["/report/export", "/opinion/export", "/opinion/preview", "/report/evidence-bundle"])
@@ -208,9 +210,41 @@ def test_required_ai_execution_is_independent_of_reviewable_results(db_session, 
     monkeypatch.setattr(service, "current_ai_advisory_pending", lambda *_: False)
     monkeypatch.setattr(service.ai_advisory_snapshots, "collect_current_coverage", lambda *_: {
         "state": state, "groups": [{"group_id": group, "state": "available", "counts": count,
-            "reviewable_failed": 99, "reviewable_partial": 99,
+            "reviewable_failed": 99, "reviewable_partial": 0,
             "not_assessed_no_signal": 1 if signal else 0,
             "blocking_not_run": 0 if signal else count.get("not_run", 0)} for group in groups]})
     dto = service.build_report_readiness(db_session, task)
     assert dto["draft_readable"] is True
     assert dto["confirmed_output_ready"] is dto["task_close_ready"] is expected
+
+
+@pytest.mark.parametrize("reviewed,failed,partial,reviewable,not_run,gap,attributable,expected", [
+    (True, 0, 1, 1, 2, 2, True, True),
+    (False, 0, 1, 1, 2, 2, True, False),
+    (True, 1, 1, 1, 2, 2, True, False),
+    (True, 0, 2, 1, 2, 2, True, False),
+    (True, 0, 1, 1, 3, 2, True, False),
+    (True, 0, 1, 1, 2, 2, False, False),
+    (True, 0, 1, 1, 0, 0, False, True),
+])
+def test_only_attributable_reading_gaps_and_reviewable_results_allow_output(
+    db_session, monkeypatch, reviewed, failed, partial, reviewable, not_run, gap, attributable, expected,
+):
+    from app.plus.blockchain_supervision import reading_gap_scope
+    task, finding, _ = seed_task(db_session)
+    if not reviewed:
+        finding.review_json = {}
+        db_session.commit()
+    snapshot = service.reference_snapshots.get_reference_snapshot(db_session, task)
+    snapshot.update(ai_auto_enabled=True, ai_auto_groups=["a1"])
+    monkeypatch.setattr(service.reference_snapshots, "get_reference_snapshot", lambda *_: snapshot)
+    monkeypatch.setattr(service, "current_ai_advisory_pending", lambda *_: False)
+    coverage = {"state": "available", "groups": [{"group_id": "a1", "state": "available",
+        "counts": {"not_started": 0, "pending": 0, "failed": failed, "partial": partial, "not_run": not_run},
+        "reviewable_partial": reviewable, "reading_gap_not_run": gap,
+        "failure_categories": ["incomplete_material_scope"] if gap else []}]}
+    monkeypatch.setattr(service.ai_advisory_snapshots, "collect_current_coverage", lambda *_: coverage)
+    monkeypatch.setattr(reading_gap_scope, "collect", lambda *_: [{"material_id": 1, "pages": [2]}] if attributable else None)
+    dto = service.build_report_readiness(db_session, task)
+    assert dto["task_close_ready"] is dto["confirmed_output_ready"] is expected
+    assert coverage["groups"][0]["counts"]["not_run"] == not_run

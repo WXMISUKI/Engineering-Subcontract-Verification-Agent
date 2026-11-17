@@ -65,6 +65,29 @@ def test_rerun_rejects_foreign_started_job_as_execution_uncertain(monkeypatch):
         assert result["reason"] == "execution_uncertain"
 
 
+def test_rerun_allows_completed_job_with_invalid_coverage(monkeypatch):
+    """规则指纹变化导致覆盖率不可核实，但后台 job 已到终态，重核查必须放行。"""
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        task = _task(db)
+        task.options_snapshot_json = {reference_snapshots.REVIEW_POINTER: "review-1"}
+        db.commit()
+        monkeypatch.setattr(jobs, "job_status", lambda *_: {
+            "state": "unavailable",
+            "last_recorded_state": "completed",
+            "job_id": "completed-job",
+            "review_run_id": "review-1",
+        })
+        monkeypatch.setattr(service, "current_ai_advisory_pending", lambda *_: False)
+        monkeypatch.setattr(service, "validate_task_materials", lambda *_: {"parsing_pending": True})
+
+        assert service.current_background_execution_state(db, task) == "completed"
+        result = service.rerun_task(db, task)
+        assert result["ok"] is False
+        assert result["reason"] == "parsing_pending"
+
+
 def test_rerun_continues_when_background_job_is_not_started(monkeypatch):
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)

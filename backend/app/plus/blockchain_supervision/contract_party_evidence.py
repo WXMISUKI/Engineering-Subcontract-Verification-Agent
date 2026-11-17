@@ -83,7 +83,7 @@ def extract_contract_party_evidence(material) -> list[dict]:
                         reason_code="explicit_party_role", label=label,
                         company=company, page=page, quote=quote))
             else:
-                if label in _SUBCONTRACTOR_LABELS:
+                if label in _SUBCONTRACTOR_LABELS or label == "承包人":
                     output.append(_evidence(
                         material, role=ROLE_SUBCONTRACTOR, status="matched",
                         reason_code="explicit_party_role", label=label,

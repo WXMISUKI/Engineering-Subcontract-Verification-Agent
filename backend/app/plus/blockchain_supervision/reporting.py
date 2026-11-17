@@ -15,8 +15,9 @@ from types import SimpleNamespace
 from sqlalchemy.orm import Session
 
 from . import a2_check, ai_advisory_snapshots, business_report, certificate_number_check, checklist, contract_party_evidence as contract_party_evidence_module, extract, finding_text, identity_observation, material_confirmation, material_versions, optional_source_scope, parsing, qualification_summary, reference_snapshots, report_basic_facts, report_document
+from .certificate_facts import extract_certificate_facts
 from .classify import ROLE_LABELS, ROLE_PACKET, ROLE_UNKNOWN, classify_material
-from . import report_contract_type
+from . import report_contract_type, report_template_v13, report_template_v14
 from .models import (STATUS_CODES, STATUS_LABELS, STATUS_UNDECIDABLE,
                      BsFinding, BsMaterial, BsSubject, BsTask, BsTaskEvent,
                      BsReviewVersion)
@@ -24,6 +25,7 @@ from .basis_subject_projection import SHARED_ATTACHMENT_IDS, subject_basis_view
 from .rules import (basis_lookup, configured_basis_lookup, load_config, load_report_checklist, load_signature_chains,
                     load_transfer_rules, negative_list_rules)
 from .severity import SEVERITY_LABELS
+from .finding_semantics import is_manual_prompt
 
 # 核查节（顺序即报告呈现顺序；标题面向非技术读者，按业主「五步审查」命名）。
 # 内部功能编号 A1/A2/A3 只作程序标识，不再出现在报告与界面文案里（FRS v2 §0.3、
@@ -280,6 +282,13 @@ def status_label(status: str, open_term: bool = False) -> str:
     return OPEN_TERM_STATUS_LABEL if open_term else STATUS_LABELS.get(status, status)
 
 
+def finding_status_label(finding, open_term: bool = False) -> str:
+    """结论展示词：只有显式人工提示语义才脱离旧三态文案。"""
+    if is_manual_prompt(finding):
+        return "人工提示"
+    return status_label(getattr(finding, "status", None), open_term)
+
+
 def _evidence(f: BsFinding, file_names: dict, version_facts: dict | None = None) -> dict | None:
     """保留可定位的页码线索；无坐标的计算类结论不产 evidence。"""
     page_only = (f.location_mode == "page" and f.material_id is not None
@@ -342,6 +351,8 @@ def reason_code_label(code) -> str | None:
 
 def report_review_blocking(finding) -> bool:
     """同名身份证识别差异只作可追溯参考，不强迫处置后才能查看报告。"""
+    if is_manual_prompt(finding):
+        return False
     if is_open_term(finding) or checklist.is_material_only_finding(finding):
         return False
     if (finding.item_id != identity_observation.ITEM_ID or finding.status != STATUS_UNDECIDABLE):
@@ -367,7 +378,7 @@ def decision_trace(f: BsFinding, basis: dict | None = None) -> dict:
     自由生成解释。该投影只消费已落库 finding、依据坐标和结构化缺件。
     """
     missing = finding_missing(f)
-    status = status_label(f.status, is_open_term(f))
+    status = finding_status_label(f, is_open_term(f))
     location = f.location_mode
     if location == "precise" and f.material_id and f.page:
         evidence_status = "precise"
@@ -448,7 +459,7 @@ def _countable(findings: list) -> list:
 
     剔除后 counts 三项与 total 同分母，避免「hit+miss+undecidable ≠ total」。
     """
-    return [f for f in findings if not is_open_term(f)]
+    return [f for f in findings if not is_open_term(f) and not is_manual_prompt(f)]
 
 
 # ==================== 结构化缺件（BS-P1-12 / 设计 77 §2） ====================
@@ -834,8 +845,8 @@ def _normalize_items(items) -> None:
         if not isinstance(item, dict):
             continue
         if "status" in item:
-            item["status_label"] = status_label(item.get("status"),
-                                                bool(item.get("open_term")))
+            item["status_label"] = ("人工提示" if is_manual_prompt(item)
+                                     else status_label(item.get("status"), bool(item.get("open_term"))))
         if isinstance(item.get("review"), dict):
             item["review"] = review_dto(item["review"])
         if "human_disposition" not in item:
@@ -1115,7 +1126,7 @@ def _ai_scope_limitations(advisories: list[dict]) -> list[str]:
     return []
 
 
-def build_report(db: Session, task: BsTask, *, scope_coverage: dict | None = None) -> dict:
+def build_report(db: Session, task: BsTask, *, scope_coverage: dict | None = None, include_templates: bool = False) -> dict:
     """聚合任务全部已落库结论为报告 dict（纯读，不写库）。"""
     reference_snapshot = reference_snapshots.get_reference_snapshot(db, task)
     ai_coverage = ai_advisory_snapshots.collect_current_coverage(db, task, reference_snapshot, report_review_blocking)
@@ -1212,7 +1223,7 @@ def build_report(db: Session, task: BsTask, *, scope_coverage: dict | None = Non
             display_trace = original_trace
             if display_finding is not f:
                 display_trace = {**original_trace, "status": display_finding.status,
-                    "status_label": status_label(display_finding.status, open_term), "missing": missing_info,
+                    "status_label": finding_status_label(display_finding, open_term), "missing": missing_info,
                     "summary": "原规则结果与当前材料确认分别保留；" + display_finding.message}
             items.append({
                 "finding_id": f.id,
@@ -1225,6 +1236,7 @@ def build_report(db: Session, task: BsTask, *, scope_coverage: dict | None = Non
                              "name": subject.name, "subject_type": subject.subject_type}
                             if subject is not None else None),
                 "status": display_finding.status,
+                "finding_semantics": getattr(f, "finding_semantics", None),
                 **({"machine_status": f.status, "machine_message": f.message,
                     "machine_decision_trace": original_trace} if display_finding is not f else {}),
                 "report_review_blocking": report_review_blocking(f),
@@ -1234,7 +1246,7 @@ def build_report(db: Session, task: BsTask, *, scope_coverage: dict | None = Non
                 "material_missing": is_explicit_material_missing(display_finding),
                 # 开放条款单独给「仅登记」标签：它与「缺材料」是两件事，混在一起会让人
                 # 去找一份并不存在的材料（BS-P1-11）。取词走 status_label 单点。
-                "status_label": status_label(display_finding.status, open_term),
+                "status_label": finding_status_label(display_finding, open_term),
                 "open_term": open_term,
                 # BS-P1-12：结构化缺件（key/标签/材料类）。面板与补件清单都读这里，
                 # 不再靠正则拆 message——文案改一次不会让面板坏一次。
@@ -1278,6 +1290,9 @@ def build_report(db: Session, task: BsTask, *, scope_coverage: dict | None = Non
     #   消费链：extract 生产者 → 报告 material_issues → 前端/Word/PDF 展示，纪律 5）。
     degradations = []
     contract_facts = []
+    packet_facts = report_basic_facts.extract_report_basic_facts(input_materials)
+    report_contract_inputs = report_basic_facts.current_contract_materials(input_materials, packet_facts.get("project_name"))
+    report_contract_by_id = {m.id: m for m in report_contract_inputs}
     for m in input_materials:
         for d in m.degradations_json or []:
             degradations.append({
@@ -1289,7 +1304,10 @@ def build_report(db: Session, task: BsTask, *, scope_coverage: dict | None = Non
             role = m.role
         if role not in _CONTRACT_ROLES:
             continue
-        res = extract.extract_contract_fields(m, baseline_date=task.baseline_date)
+        contract_input = report_contract_by_id[m.id]
+        if not contract_input.pages_json:
+            continue
+        res = extract.extract_contract_fields(contract_input, baseline_date=task.baseline_date)
         for d in res.get("degradations") or []:
             degradations.append({
                 "file_name": m.file_name,
@@ -1301,13 +1319,12 @@ def build_report(db: Session, task: BsTask, *, scope_coverage: dict | None = Non
             "file_name": m.file_name,
             "role": role,
             "role_label": ROLE_LABELS.get(role, role),
-            "project_name": extract.extract_project_name(m),
+            "project_name": extract.extract_project_name(contract_input),
             "fields": {k: fields.get(k) for k in _CONTRACT_FACT_ORDER},
         })
     # F1-2：合同主体角色证据独立于专业/劳务 BsSubject；缺失和冲突保持三态，
     # 不为了填充报告抬头而猜测施工总承包单位。
-    contract_party_evidence = contract_party_evidence_module.resolve_contract_party_evidence(input_materials)
-    packet_facts = report_basic_facts.extract_report_basic_facts(input_materials)
+    contract_party_evidence = contract_party_evidence_module.resolve_contract_party_evidence(report_contract_inputs)
     contract_party_evidence = report_basic_facts.merge_party_facts(
         contract_party_evidence, packet_facts)
     contract_party_evidence["employer"] = report_basic_facts.apply_employer_confirmation(
@@ -1375,7 +1392,9 @@ def build_report(db: Session, task: BsTask, *, scope_coverage: dict | None = Non
         "subcontract_type": _opinion_subject_type(checklist_summary.get("subjects") or [], contract_facts),
         # 旧合同范围是关键词窗口，可能混入表格邻列；未能定位可靠标题时保持待核实。
         "subcontract_scope": basic_scope,
+        "subcontract_item_name": packet_facts.get("subcontract_item_name") or {},
         "subcontract_amount": amount_result,
+        "submitted_date": packet_facts.get("submitted_date") or {},
         "baseline_date": task.baseline_date.isoformat() if task.baseline_date else None,
     }
     advisory_code, advisory_text = derive_advisory_conclusion(counts)
@@ -1414,6 +1433,9 @@ def build_report(db: Session, task: BsTask, *, scope_coverage: dict | None = Non
         "summary": {
             "counts": dict(counts),
             "total": len(countable),
+            "manual_prompt": {"count": sum(1 for finding in findings
+                                            if is_manual_prompt(finding)),
+                              "notice": "普通人工提示保留在待处理明细，不计入机器结论统计。"},
             # 仅登记、不参与结论的兜底条款条数（纸面必须让读者看得见，不能静默少几条）
             "open_term": {"count": open_term_count,
                           "notice": OPEN_TERM_NOTICE % open_term_count if open_term_count else None},
@@ -1442,6 +1464,12 @@ def build_report(db: Session, task: BsTask, *, scope_coverage: dict | None = Non
         # 页面、报告、Word/PDF 和证据包共用的材料版本事实；旧材料仍保留在清单中，
         # 其历史 finding 可继续回链，但新规则输入只消费 active_input_materials。
         "materials": material_rows,
+        "certificate_facts": extract_certificate_facts(input_materials),
+        "submission_materials": [{"material_id": m.id, "file_name": m.file_name,
+                                  "subject_id": m.subject_id, "pages": m.pages,
+                                  "role": m.role, "material_category": m.material_category,
+                                  "revision_no": m.revision_no}
+                                 for m in input_materials if m.parse_state != "stored"],
         "material_version_warnings": material_warnings,
         # BS-P1-09（设计 98 §8）：未读页范围 + 受影响结论数（只列有缺口的材料）。
         # 这是结论层披露：缺读页**不改判定**，报告/意见书/前端共用同一 summary_text。
@@ -1466,6 +1494,12 @@ def build_report(db: Session, task: BsTask, *, scope_coverage: dict | None = Non
     report = _attach_qualification_summary(report)
     report["business_report"] = business_report.build_business_report(report)
     report["business_document"] = report_document.build_report_document(report)
+    if include_templates:
+        base_template = report_template_v13.build_document(report)
+        report["template_documents"] = {
+            report_template_v13.TEMPLATE_ID: base_template,
+            report_template_v14.TEMPLATE_ID: report_template_v14.build_document(report, base=base_template),
+        }
     return report
 
 
@@ -1558,7 +1592,7 @@ def _opinion_subject_type(subjects: list[dict], contract_facts: list[dict]) -> s
     return label
 
 
-def build_opinion(db: Session, task: BsTask, *, scope_coverage: dict | None = None) -> dict:
+def build_opinion(db: Session, task: BsTask, *, scope_coverage: dict | None = None, include_templates: bool = False) -> dict:
     """已落库结论 → 审查意见书内容（纯读：不重算、不写库）。
 
     与 `build_report` 的分工：报告回答「要改什么」（只铺命中/不可判定项），
@@ -1566,6 +1600,12 @@ def build_opinion(db: Session, task: BsTask, *, scope_coverage: dict | None = No
     """
     report = (build_report(db, task, scope_coverage=scope_coverage)
               if isinstance(scope_coverage, dict) else build_report(db, task))
+    if include_templates:
+        base_template = report_template_v13.build_document(report)
+        report["template_documents"] = {
+            report_template_v13.TEMPLATE_ID: base_template,
+            report_template_v14.TEMPLATE_ID: report_template_v14.build_document(report, base=base_template),
+        }
     scope_coverage = report.get("scope_coverage") or scope_coverage
     scope_limitations = list(report.get("scope_limitations") or [])
     scope_limited = bool(scope_limitations)
@@ -1616,7 +1656,8 @@ def build_opinion(db: Session, task: BsTask, *, scope_coverage: dict | None = No
             items.append(projected)
     # 结论只由「构成结论」的条目推导：开放条款仅登记，不参与（BS-P1-11 / 设计 77 §1）。
     # 否则材料再齐全也恒为 pending——产品永远给不出「同意」。
-    countable = [i for i in items if not i.get("open_term")]
+    countable = [i for i in items if not i.get("open_term")
+                 and i.get("finding_semantics") != "manual_prompt"]
     counts = status_counts(countable)
     # 明确缺件与不可判定必须在数据结构上分开：前者进入补件清单，
     # 后者（包括完整性步骤）只进入人工核实项。该列表同时供结论文案、意见书和导出使用，避免
@@ -1630,7 +1671,8 @@ def build_opinion(db: Session, task: BsTask, *, scope_coverage: dict | None = No
                       "message": i["message"],
                       "human_disposition": i.get("human_disposition")}
                      for i in items
-                     if (i["status"] == "undecidable" and not i.get("open_term") and not i.get("material_only"))]
+                     if (i["status"] == "undecidable" and not i.get("open_term")
+                         and not i.get("material_only") and i.get("finding_semantics") != "manual_prompt")]
     advisory_code, advisory_text = derive_advisory_conclusion(counts)
     if scope_limited and advisory_code == "pass":
         advisory_code = "scope_limited"
@@ -1753,6 +1795,7 @@ def build_opinion(db: Session, task: BsTask, *, scope_coverage: dict | None = No
                      advisory_conclusion={"code": advisory_code, "text": advisory_text},
                      machine_notice=OPINION_MACHINE_NOTICE),
         "business_document": deepcopy(report.get("business_document")),
+        **({"template_documents": deepcopy(report["template_documents"])} if include_templates else {}),
         "subject": subject,
         "conclusion": {
             "code": code,

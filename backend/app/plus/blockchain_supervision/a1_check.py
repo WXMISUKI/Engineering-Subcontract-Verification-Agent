@@ -153,7 +153,8 @@ def _verdict_of_ratio(ratio: float) -> str:
 
 
 def _undecidable_finding(task, item_id: str, kind: str, message: str,
-                         source: str, material_id=None, missing: list | None = None) -> BsFinding:
+                         source: str, material_id=None, missing: list | None = None,
+                         evidence_json: list | None = None) -> BsFinding:
     """不可判定结论。`missing` 是结构化缺件 **key** 列表（BS-P1-12），落 `missing_json`。
 
     只落 key、不落中文标签：文案改过一次（P1-02），把中文存进库等于让历史结论跟着
@@ -166,7 +167,8 @@ def _undecidable_finding(task, item_id: str, kind: str, message: str,
     return BsFinding(task_id=task.id, material_id=material_id, item_id=item_id,
                      kind=kind, status=STATUS_UNDECIDABLE, message=message,
                      quote=None, page=None, source=source,
-                     missing_json=list(missing) if missing else None)
+                     missing_json=list(missing) if missing else None,
+                     evidence_json=list(evidence_json) if evidence_json else None)
 
 
 def _fmt_wan(v: float) -> str:
@@ -2353,7 +2355,7 @@ def _run_w16_01(task, pool: list, qe, rule: dict) -> BsFinding:
     - 命中=分包关系在场 +（明示分包给个人/包工头，或同句明示分包主体不具备资质/
       未取得许可的否定性表述）；双重否定（「不存在不具备资质情形」类）机器不裁：
       资格证据不齐时落不可判定；
-    - 未命中=分包关系在场 + 三侧资格证据（证照/资质/安全生产许可证）全合格 +
+    - 未命中=分包关系在场 + 三侧资格证据（证照/资质/安全生产许可证）均已提供 +
       无否定性明示；
     - 不可判定=资格证据缺字段（逐字列缺哪个）或无资格证据且无否定明示。
     """
@@ -2444,7 +2446,7 @@ def _run_w16_01(task, pool: list, qe, rule: dict) -> BsFinding:
     mat, page, quote, _w = relation
     return _miss_finding(
         task, rule["id"], mat, page, quote,
-        "未命中：分包关系在场，%s三侧资格证据均合格，且未见分包给个人或"
+        "未命中：分包关系在场，%s三侧资格证据均已提供，且未见分包给个人或"
         "不具备相应条件的否定性明示" % "、".join(labels.values()), source)
 
 
@@ -2884,6 +2886,20 @@ def _run_w16_06(task, pool: list, rule: dict) -> BsFinding:
         source, anchor[0].id if anchor is not None else None, missing=missing)
 
 
+def _heading_only_match(clause: str, match: re.Match) -> bool:
+    """栏目标题只提供页级线索，不作为风险或合规证据。"""
+    if clause[:match.start()].strip():
+        return False
+    trailing = clause[match.end():].strip()
+    if trailing:
+        return re.fullmatch(r"[:：、，,\-—\s]+", trailing) is not None
+    # 没有冒号时只拦截明确的栏目标签；完整的「未经…」句本身仍是证据。
+    return clause.strip() in {
+        "总监理工程师签章", "总监理工程师意见", "监理审查意见",
+        "发包人书面同意", "发包人意见", "指挥部意见",
+    }
+
+
 def _side_polarity_scan(evidence: list, risk_patterns: list, ok_patterns: list,
                         guard: dict = None):
     """侧内极性扫描（V16-01 两侧共用）：分句内风险优先——「未经发包人书面同意」
@@ -2907,6 +2923,10 @@ def _side_polarity_scan(evidence: list, risk_patterns: list, ok_patterns: list,
                     continue
                 r = next((mm for mm in (p.search(clause) for p in risk_c) if mm), None)
                 o = next((mm for mm in (p.search(clause) for p in ok_c) if mm), None)
+                if r is not None and _heading_only_match(clause, r):
+                    r = None
+                if o is not None and _heading_only_match(clause, o):
+                    o = None
                 if r is not None:
                     if _guard_hit(clause, r.group(0), guard_c, cats=_RISK_GUARD_CATS) is not None:
                         continue           # 被否定/条件/制度前缀支配 → 不作风险证据
@@ -2987,6 +3007,29 @@ def _side_word(anchor: tuple):
     return ""
 
 
+def _v16_01_evidence_refs(supervision_anchor: tuple, consent_anchor: tuple) -> list:
+    """V16-01 双侧证据投影：保留每一侧的材料、页、引文和来源。"""
+    refs = []
+    for side, anchor in (
+            ("supervision_review", supervision_anchor),
+            ("employer_written_consent", consent_anchor)):
+        if anchor[0] not in ("a3", "text", "conflict"):
+            continue
+        material_id, page, quote = _side_anchor(anchor)
+        if material_id is None or page is None or not quote:
+            continue
+        refs.append({
+            "material_id": material_id,
+            "page": page,
+            "quote": quote,
+            "side": side,
+            "evidence_kind": "a3_rc09" if anchor[0] == "a3" else "material_text",
+            "evidence_source": "A3-01 RC-09" if anchor[0] == "a3" else "材料文本",
+            "location_mode": "page",
+        })
+    return refs
+
+
 def _run_v16_01(task, evidence: list, a3_findings, rule: dict) -> BsFinding:
     """V16-01（新口径）：未经监理审查或未报发包人书面同意——两侧独立、缺任一侧
     不可判定（比旧 _check_v16_01「或逻辑从严」保守；旧入口保持旧行为不动）。
@@ -3023,7 +3066,8 @@ def _run_v16_01(task, evidence: list, a3_findings, rule: dict) -> BsFinding:
             task, rule["id"], _ILLEGAL_KIND,
             "不可判定：%s，无法证明同一审查对象（同一材料/同一项目标识），"
             "不能据此判命中或未命中（缺：两证据侧属同一审查对象的证明）"
-            % obj_mismatch_txt, source, mid)
+            % obj_mismatch_txt, source, mid,
+            evidence_json=_v16_01_evidence_refs(sup_anchor, con_anchor))
 
     if sup == "risk" and con == "risk":
         mid, page, quote = _side_anchor(sup_anchor)
@@ -3033,7 +3077,8 @@ def _run_v16_01(task, evidence: list, a3_findings, rule: dict) -> BsFinding:
         return BsFinding(
             task_id=task.id, material_id=mid, item_id=rule["id"],
             kind=_ILLEGAL_KIND, status=STATUS_HIT, message=message,
-            quote=quote, page=page, source=source)
+            quote=quote, page=page, source=source,
+            evidence_json=_v16_01_evidence_refs(sup_anchor, con_anchor))
     if sup == "legal" and con == "legal":
         mid, page, quote = _side_anchor(sup_anchor)
         message = ("未命中：监理审查与发包人书面同意两侧均显示合规（监理侧「%s」；"
@@ -3041,7 +3086,8 @@ def _run_v16_01(task, evidence: list, a3_findings, rule: dict) -> BsFinding:
         return BsFinding(
             task_id=task.id, material_id=mid, item_id=rule["id"],
             kind=_ILLEGAL_KIND, status=STATUS_MISS, message=message,
-            quote=quote, page=page, source=source)
+            quote=quote, page=page, source=source,
+            evidence_json=_v16_01_evidence_refs(sup_anchor, con_anchor))
 
     # 混合态（一侧风险、一侧合规）：明确状态 + 可理解说明，命中语义待人工裁决。
     if sup in ("risk", "legal") and con in ("risk", "legal"):
@@ -3054,7 +3100,8 @@ def _run_v16_01(task, evidence: list, a3_findings, rule: dict) -> BsFinding:
             "不可判定：混合态（%s风险、%s合规），两侧均已有明确表述；"
             "命中语义待人工裁决（R05 发布前关闭），不能据此判命中或未命中——"
             "本条不属「缺证据」"
-            % (risk_side, legal_side), source, mid)
+            % (risk_side, legal_side), source, mid,
+            evidence_json=_v16_01_evidence_refs(sup_anchor, con_anchor))
 
     missing = []
     detail = []
@@ -3077,7 +3124,8 @@ def _run_v16_01(task, evidence: list, a3_findings, rule: dict) -> BsFinding:
         "不可判定：监理审查与发包人书面同意为两个独立证据侧，任一侧证据不足即"
         "不可判定（缺：%s）——%s" % ("、".join(_EVIDENCE_LABELS[k] for k in missing),
                                     "；".join(detail)),
-        source, mid, missing=missing)
+        source, mid, missing=missing,
+        evidence_json=_v16_01_evidence_refs(sup_anchor, con_anchor))
 
 
 def _run_v16_02(task, general: list, subs_labor: list, pool: list,
