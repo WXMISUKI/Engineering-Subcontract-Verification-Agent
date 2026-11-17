@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from . import a2_check, ai_advisory_snapshots, business_report, certificate_number_check, checklist, contract_party_evidence as contract_party_evidence_module, extract, finding_text, identity_observation, material_confirmation, material_versions, optional_source_scope, parsing, qualification_summary, reference_snapshots, report_basic_facts, report_document
 from .certificate_facts import extract_certificate_facts
 from .contract_clause_facts import extract_contract_clauses
+from .equipment_facts import extract_equipment_facts
 from .personnel_evidence import extract_management_roster
 from .classify import ROLE_LABELS, ROLE_PACKET, ROLE_UNKNOWN, classify_material
 from . import report_contract_type, report_template_v13, report_template_v14
@@ -1469,6 +1470,7 @@ def build_report(db: Session, task: BsTask, *, scope_coverage: dict | None = Non
         "certificate_facts": extract_certificate_facts(input_materials),
         "contract_clauses": extract_contract_clauses(input_materials),
         "personnel_roster": extract_management_roster(input_materials),
+        "equipment_facts": extract_equipment_facts(input_materials),
         "submission_materials": [{"material_id": m.id, "file_name": m.file_name,
                                   "subject_id": m.subject_id, "pages": m.pages,
                                   "role": m.role, "material_category": m.material_category,

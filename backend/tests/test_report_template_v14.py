@@ -190,6 +190,13 @@ def test_v14_contract_section_uses_extracted_clause_pages():
     assert any("合同条款已定位" in row[0] for row in document["appendix"]["manual_rows"])
 
 
+def test_v14_adds_equipment_fact_when_list_is_present():
+    lines = v14._section_fact_lines(
+        {"equipment_facts": {"pages": [12, 13], "rows": [{"page": 12, "quote": "机械设备清单"}]}},
+        {"分包类型": "专业分包", "拟分包范围": "测试施工"}, False)
+    assert any("报审资料含设备清单或机械配置（第12–13页）" in line for line in lines)
+
+
 def test_v14_personnel_section_lists_extracted_roster():
     report = sample_report()
     report["personnel_roster"] = [

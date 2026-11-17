@@ -1216,6 +1216,13 @@ def _section_fact_lines(document, info, is_labor):
         if details:
             line += "（" + "，".join(details) + "）"
         lines.append(line + "。")
+    equipment = document.get("equipment_facts") or {}
+    equipment_pages = sorted({page for page in equipment.get("pages") or []
+                              if isinstance(page, int) and not isinstance(page, bool) and page > 0})
+    if equipment_pages:
+        pages = ("第%d页" % equipment_pages[0]) if len(equipment_pages) == 1 \
+            else "第%d–%d页" % (equipment_pages[0], equipment_pages[-1])
+        lines.append("报审资料含设备清单或机械配置（%s）；设备权属、租赁及检定证明需核对。" % pages)
     content = info.get("分包事项") or info.get("拟分包范围")
     amount = info.get("拟分包金额")
     if content:
@@ -1337,6 +1344,7 @@ def build_document(report: dict, base: dict | None = None) -> dict:
     facts = deepcopy(report.get("certificate_facts") or {})
     contract_facts = deepcopy(report.get("contract_clauses") or {})
     personnel_facts = deepcopy(report.get("personnel_roster") or [])
+    equipment_facts = deepcopy(report.get("equipment_facts") or {})
     document = {
         "schema_version": SCHEMA_VERSION,
         "template_id": TEMPLATE_ID,
@@ -1357,6 +1365,7 @@ def build_document(report: dict, base: dict | None = None) -> dict:
         "certificate_facts": facts,
         "contract_clauses": contract_facts,
         "personnel_roster": personnel_facts,
+        "equipment_facts": equipment_facts,
         "basis": deepcopy(base["basis"]),
         "limitations": deepcopy(base["limitations"]),
         "issued_date": base.get("issued_date") or "",
