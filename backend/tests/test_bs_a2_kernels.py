@@ -211,6 +211,30 @@ def test_long_term_validity_produces_undecidable_not_hit():
     assert "有效期" in findings[0].message and "人工核对" in findings[0].message
 
 
+def test_traffic_safety_cert_split_line_period_is_valid():
+    """交安证「有效期」与两行日期分离时仍能读出有效期，不误报未见有效期。"""
+    text = ("公路水运工程施工企业主要负责人和安全生产管理人员安全生产考核合格证书\n"
+            "姓名:于文祥\n企业名称:武汉龙辰建设有限公司2025-06-10\n"
+            "证书编号：鄂交安C25G01400\n考核部门:\n有效期:\n2028-06-10\n至\n2025-06-10")
+    findings = a2_check.run_cert_validity_check(
+        _task(), [_mat(30, "交安证.pdf", text)], baseline=BASE)
+    assert not any("未见可识别有效期" in finding.message for finding in findings)
+    assert any(finding.status == STATUS_MISS and "均在有效期内" in finding.message
+               for finding in findings)
+
+
+def test_traffic_safety_cert_label_after_dates_is_valid():
+    """OCR 把「有效期：」排在日期之后时，仍按同页两个日期识别有效期。"""
+    text = ("公路水运工程施工企业主要负责人和安全生产管理人员安全生产考核合格证书\n"
+            "姓名:于文祥\n性别:男\n2028-06-10\n至\n企业名称:武汉龙辰建设有限公司\n"
+            "2025-06-10\n证书编号：鄂交安C25G01400\n考核部门:\n有效期:")
+    findings = a2_check.run_cert_validity_check(
+        _task(), [_mat(31, "交安证.pdf", text)], baseline=BASE)
+    assert not any("未见可识别有效期" in finding.message for finding in findings)
+    assert any(finding.status == STATUS_MISS and "均在有效期内" in finding.message
+               for finding in findings)
+
+
 def test_scanned_material_undecidable_message_mentions_manual_review():
     """扫描件（无文本层）→ 不可判定，绝不断言「未上传/缺失」。"""
     mat = _mat(5, "社保缴费证明.pdf", "")  # pages 为空
@@ -437,6 +461,15 @@ def test_registered_to_consistent_is_miss():
                                                      _reg_mats(CERT_IN_HOUSE))
     assert len(findings) == 1 and findings[0].status == STATUS_MISS
     assert "均为" in findings[0].message
+
+
+def test_registered_to_accepts_enterprise_name_label():
+    """交安证以「企业名称」标注持证企业时也应纳入一致性比对。"""
+    cert = ("公路水运工程施工企业主要负责人和安全生产管理人员安全生产考核合格证书 "
+            "姓名:于文祥 企业名称:上海隧道工程有限公司 证书编号：鄂交安C25G01400 "
+            "考核部门:湖北省交通运输厅 有效期至2030年1月1日")
+    findings = a2_check.run_cert_registered_to_check(_task(), _reg_mats(cert))
+    assert len(findings) == 1 and findings[0].status == STATUS_MISS
 
 
 def test_registered_to_missing_baseline_is_undecidable():

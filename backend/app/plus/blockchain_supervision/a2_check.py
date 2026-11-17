@@ -247,6 +247,61 @@ def soon_days() -> int:
     return int(cfg.get("soon_days", 30))
 
 
+_CERT_FULL_DATE_RE = re.compile(r"20\d{2}\s*[-./年]\s*\d{1,2}\s*[-./月]\s*\d{1,2}\s*日?")
+
+
+def _certificate_period_fallback(page_no: int, text: str, baseline: date | None):
+    """证照页「有效期」与两行日期分离时的有效期兜底。
+
+    电子证书常把「有效期：」和起止日拆到不同行（甚至终止日在起日之前、标签
+    落在日期之后），共享有效期引擎的标签窗口读不到。本兜底只处理**日期分行**的
+    版式；单行区间（含倒序、暂定、多终日等）仍交给原引擎判不可判定，不能借兜底洗白。
+    """
+    if "有效期" not in text:
+        return None
+    label_at = text.find("有效期")
+
+    def candidates(segment: str):
+        found = []
+        for match in _CERT_FULL_DATE_RE.finditer(segment):
+            parsed = parse_date_text(match.group())
+            if parsed is not None and all(parsed != value for _, value in found):
+                found.append((match, parsed))
+        return found
+
+    tail = text[label_at:]
+    valid = candidates(tail)
+    if len(valid) == 2:
+        (first_match, first_date), (second_match, second_date) = valid
+        if "\n" not in tail[:first_match.start()]:
+            return None
+        if "\n" not in tail[first_match.end():second_match.start()]:
+            return None
+    else:
+        # OCR 也可能把「有效期：」排在日期之后；此时只在标签之前恰好两个日期时兜底。
+        head = text[:label_at]
+        valid = candidates(head)
+        if len(valid) != 2:
+            return None
+        (first_match, first_date), (second_match, second_date) = valid
+        if "\n" not in head[first_match.end():second_match.start()]:
+            return None
+    dates = sorted((first_date, second_date))
+    synthetic = "有效期：%s 至 %s" % (dates[0].isoformat(), dates[1].isoformat())
+    records = extract_validity_records({page_no: synthetic}, baseline=baseline)
+    if not records:
+        return None
+    record = records[0]
+    # 原页可能把终止日排在起始日之前；证据引用统一用规范起止顺序，避免下游误判倒序。
+    record["snippet"] = synthetic
+    record["source_format"] = "certificate_text"
+    if "安全生产考核合格证" in text or re.search(r"[ABC]\d?证", text):
+        record["kind"] = "安全生产考核合格证"
+    elif "特种作业" in text or "操作证" in text:
+        record["kind"] = "特种作业操作证"
+    return record
+
+
 def run_cert_validity_check(task, materials: list, baseline: date | None = None) -> list:
     """逐份已解析材料抽取有效期记录并判定，返回落库前 BsFinding 列表（不 commit）。"""
     parsed = [m for m in materials if m.parse_state == "done"]
@@ -336,6 +391,20 @@ def run_cert_validity_check(task, materials: list, baseline: date | None = None)
                       for p in readable_pages}
         records = extract_validity_records(page_texts, file_name=m.file_name,
                                            baseline=baseline)
+        # 证照页「有效期」标签与起止日分行时补一条记录；已有明确结论的页不重复。
+        for page_no, text in certificate_pages.items():
+            if not text:
+                continue
+            existing = [record for record in records if record.get("page") == page_no]
+            if any(record.get("verdict") in {"valid", "expired", "expiring_soon"}
+                   and record.get("expiry_date") for record in existing):
+                continue
+            fallback = _certificate_period_fallback(page_no, text, baseline)
+            if fallback is None:
+                continue
+            if existing:
+                records = [record for record in records if record.get("page") != page_no]
+            records.append(fallback)
         record_counts = {page: sum(record.get("page") == page for record in records)
                          for page in page_texts}
         recorded_pages = set()
@@ -509,7 +578,7 @@ ITEM_REG = "A2-03"
 
 # 「注册单位」标签：证书正文里标注注册/聘用单位的位置（去空白后匹配）
 _REGISTERED_TO_LABEL_RE = re.compile(
-    r"(?:注册单位|聘用单位|聘用企业|注册企业|工作单位|受聘单位|单位名称)[:：]?"
+    r"(?:注册单位|聘用单位|聘用企业|注册企业|工作单位|受聘单位|单位名称|企业名称)[:：]?"
     r"([^\s，。；、,;:：]{2,40}?(?:有限公司|有限责任公司|集团有限公司|工程公司|公司))")
 # 公司名归一化后仍要能识别「这就是个公司」：统一后缀锚定，防把「本单位」这类词当公司名
 _COMPANY_SUFFIX = ("有限公司", "有限责任公司", "集团有限公司", "工程公司", "公司")

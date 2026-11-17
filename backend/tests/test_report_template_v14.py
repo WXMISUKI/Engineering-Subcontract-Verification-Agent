@@ -267,6 +267,16 @@ def test_v14_merges_negative_conditions_preferring_coverage_ratio():
     assert "2/21" in negatives[0]
 
 
+def test_v14_procedure_summary_uses_actual_missing_certificate():
+    item = {"kind": "completeness", "item_id": "RC-L11", "status": "undecidable",
+            "material_missing": False, "material_only": False,
+            "label": "安全员（身份证、学历证、职称证、交安C证）",
+            "message": "名单第17页中的安全员于文祥，尚不能确认以下证件与其对应：职称证；请核对原件"}
+    lines = v14._section_summary_lines("procedure", [item])
+    assert any("安全员（职称证）" in line for line in lines)
+    assert all("交安C证" not in line for line in lines)
+
+
 def test_v14_risk_counts_follow_item_verdicts():
     report = sample_report()
     report["sections"][0]["items"].append({

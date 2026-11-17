@@ -385,6 +385,16 @@ def _unique_labels(items, verdict=None):
     return labels
 
 
+def _pending_label(item):
+    """待核实项优先写实际缺失证件，不用整条材料要求标签冒充缺失范围。"""
+    message = item.get("message") or ""
+    match = re.search(r"尚不能确认以下证件与其对应：(.+?)(?:；|。|$)", message)
+    if match:
+        head = str(item.get("label") or "").split("（", 1)[0]
+        return "%s（%s）" % (head, match.group(1).strip())
+    return item.get("label") or ""
+
+
 def _section_summary_lines(code, items):
     """每章的具体内容摘要；不写“需核实”前缀，也不逐条铺开。"""
     if code == "safety_permit":
@@ -426,7 +436,13 @@ def _section_summary_lines(code, items):
             lines.append("转包、违法分包类事项需结合总包合同和现场资料核对。")
         return lines
     if code == "procedure":
-        pending = _unique_labels(items, "待核实")
+        pending = []
+        for item in items:
+            if _verdict(item) != "待核实":
+                continue
+            label = _pending_label(item)
+            if label and label not in pending:
+                pending.append(label)
         if pending:
             return ["尚未确认：" + "、".join(pending[:6]) + "。"]
         return []
@@ -558,7 +574,7 @@ def _section_summary_conclusion(code, items, fallback):
             return "负面清单核查覆盖不足，未覆盖部分不能认定未命中；转包、违法分包需结合材料核对。"
         return "已核对部分分包范围，未发现负面清单明确命中；转包、违法分包需结合材料核对。"
     if code == "procedure":
-        return "已核对 %d 项材料，%d 项需核对原件。" % (counts["符合"], counts["待核实"])
+        return "已核对 %d 项材料；未确认事项见上，需核对原件。" % counts["符合"]
     return fallback
 
 
