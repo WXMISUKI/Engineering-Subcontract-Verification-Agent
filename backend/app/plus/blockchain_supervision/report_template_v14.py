@@ -222,7 +222,7 @@ def _suggested_conclusion(base, raw):
 
 
 def _conclusion(base, raw):
-    counts = (base.get("statistics") or {}).get("counts") or {}
+    verdicts = [_verdict(item) for item in raw]
     risks = _risks(base, raw)
     key_risks = []
     for item in risks[:5]:
@@ -231,10 +231,11 @@ def _conclusion(base, raw):
         key_risks.append("本次已核查范围内未发现不符合、缺项或待核实事项。")
     return {
         "suggested": _suggested_conclusion(base, raw),
+        # 与逐项判定、签署结论同源；不引用 V1.3 的分节去重统计，避免“命中却显示 0”。
         "risk_counts": {
-            "不符合": counts.get("不符合", 0),
-            "缺项": (base.get("statistics") or {}).get("missing", 0),
-            "待补正": counts.get("待核实", 0),
+            "不符合": verdicts.count("不符合"),
+            "缺项": verdicts.count("缺项"),
+            "待补正": verdicts.count("待核实"),
         },
         "key_risks": key_risks,
         "approval_opinion": "",
@@ -412,9 +413,10 @@ def _section_summary_lines(code, items):
         lines = []
         if negative:
             match = re.search(r"已评估\s*(\d+)\s*/\s*(\d+)\s*条", coverage["message"]) if coverage else None
-            incomplete = bool(coverage) and any(
-                word in coverage["message"] for word in ("覆盖不足", "不足以确认", "未完成或仍需核实", "未召回"))
-            if match:
+            ratio_incomplete = bool(match) and int(match.group(1)) < int(match.group(2))
+            incomplete = ratio_incomplete or (bool(coverage) and any(
+                word in coverage["message"] for word in ("覆盖不足", "不足以确认", "未完成或仍需核实", "未召回")))
+            if match and ratio_incomplete:
                 lines.append("负面清单仅完成 %s/%s 项核对，未覆盖部分不能认定未命中。" % match.groups())
             elif incomplete:
                 lines.append("负面清单核查覆盖不足，未覆盖部分不能认定未命中。")
@@ -546,9 +548,10 @@ def _section_summary_conclusion(code, items, fallback):
     if code == "legality":
         coverage = next((item for item in items if item["item_id"] == "W16-02"), None)
         match = re.search(r"已评估\s*(\d+)\s*/\s*(\d+)\s*条", coverage["message"]) if coverage else None
-        incomplete = bool(coverage) and any(
-            word in coverage["message"] for word in ("覆盖不足", "不足以确认", "未完成或仍需核实", "未召回"))
-        if match:
+        ratio_incomplete = bool(match) and int(match.group(1)) < int(match.group(2))
+        incomplete = ratio_incomplete or (bool(coverage) and any(
+            word in coverage["message"] for word in ("覆盖不足", "不足以确认", "未完成或仍需核实", "未召回")))
+        if match and ratio_incomplete:
             return ("负面清单仅完成 %s/%s 项核对，未覆盖部分不能认定未命中；"
                     "转包、违法分包需结合材料核对。" % match.groups())
         if incomplete:
@@ -1012,6 +1015,12 @@ def _condition_for_item(item, facts=None):
             else "请提交营业执照原件核对登记信息"
     if "施工劳务备案" in text:
         return "已提供施工劳务备案证书；请核对证书原件及有效期"
+    if "身份证" in text and any(word in text for word in ("超过有效期", "已过期", "已届满", "过期")):
+        role = re.search(r"「([^」]{1,20})」", text)
+        expiry = re.search(r"有效期至\s*([0-9]{4}-[0-9]{2}-[0-9]{2})", text)
+        who = role.group(1) if role else "相关人员"
+        when = "（现证有效期至%s）" % expiry.group(1) if expiry else ""
+        return "提交%s更新后的身份证，确保有效期覆盖核查基准日%s" % (who, when)
     if item.get("item_id") == "A2-01" or item.get("kind") == "person_consistency":
         if any(word in text for word in ("未能识别到社保", "未识别到社保", "社保信息里未提取到人员姓名")):
             return "补交主要人员社保缴费证明、劳动合同及证书"
@@ -1027,8 +1036,10 @@ def _condition_for_item(item, facts=None):
         return "补齐监理审查意见、发包人书面同意及签字日期"
     if any(word in text for word in ("负面清单", "关键性工作", "关键工序")):
         match = re.search(r"已评估\s*(\d+)\s*/\s*(\d+)\s*条", text)
-        incomplete = any(word in text for word in ("覆盖不足", "不足以确认", "未完成或仍需核实", "未召回"))
-        if match:
+        ratio_incomplete = bool(match) and int(match.group(1)) < int(match.group(2))
+        incomplete = ratio_incomplete or any(
+            word in text for word in ("覆盖不足", "不足以确认", "未完成或仍需核实", "未召回"))
+        if ratio_incomplete:
             return ("补充负面清单逐条对照说明及人工核查结论（当前仅完成 %s/%s 项）"
                     % match.groups())
         if incomplete:
@@ -1089,6 +1100,23 @@ def _merge_personnel_conditions(conditions):
     return merged
 
 
+def _merge_negative_conditions(conditions):
+    """负面清单多条候选只留一条；有覆盖比例时优先，避免退化成“出具书面说明”。"""
+    negatives = [text for text in conditions if "负面清单" in text]
+    if len(negatives) < 2:
+        return conditions
+    preferred = next((text for text in negatives if "仅完成" in text or "覆盖不足" in text),
+                     negatives[0])
+    merged, inserted = [], False
+    for text in conditions:
+        if "负面清单" not in text:
+            merged.append(text)
+        elif not inserted:
+            merged.append(preferred)
+            inserted = True
+    return merged
+
+
 def _signing_conditions(raw, facts=None):
     rows = []
     for item in raw:
@@ -1103,7 +1131,7 @@ def _signing_conditions(raw, facts=None):
     for *_order, text in sorted(rows):
         if text not in conditions:
             conditions.append(text)
-    return _merge_personnel_conditions(conditions)[:5]
+    return _merge_negative_conditions(_merge_personnel_conditions(conditions))[:5]
 
 
 def _signing_conclusion(raw, facts=None):

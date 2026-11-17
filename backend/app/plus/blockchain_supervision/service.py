@@ -6619,6 +6619,62 @@ def start_page_text_refresh(db: Session, task: BsTask, material_id: int, page_no
     return lease
 
 
+READING_QUALITY_EVENT = "material.reading_quality_reviewed"
+
+
+def record_reading_quality_review(db: Session, task: BsTask, material_id: int, pages: list[int], *,
+                                  reviewer: str, note: str = "", transcripts: dict | None = None) -> dict:
+    """记录页读取质量复核结果；只解除已核实页的疑点，不改写未请求页。
+
+    补读候选（``page-text-refresh``）默认标为待人工核验；本函数是复核落库入口：
+    复核人确认可读后写 ``reading_quality_review`` 记录，``reading_coverage`` 据此
+    把对应页从 unread/suspect 移入 read。可同时提交该页的核对转写，替换原 OCR 文本，
+    使后续规则读取到可核对的字段。
+    """
+    if (not isinstance(pages, list) or not pages or len(set(pages)) != len(pages)
+            or any(type(page) is not int or page < 1 for page in pages)):
+        raise ValueError("复核页码无效")
+    db.rollback()
+    db.refresh(task, with_for_update=True)
+    if task.state not in ("running", "review", "done"):
+        raise ValueError("任务状态不允许复核读取质量")
+    material = (db.query(BsMaterial)
+                .filter(BsMaterial.id == material_id, BsMaterial.task_id == task.id)
+                .with_for_update().first())
+    if (material is None or material.parse_state != "done"
+            or material.id not in {item.id for item in _rule_materials(db, task)}):
+        raise ValueError("材料不可复核或不属于当前有效材料")
+    gap = parsing.material_reading_gap(material)
+    if gap is None or any(page not in gap for page in pages):
+        raise ValueError("只能复核当前标记为未读或可疑的页")
+    cleaned = {}
+    for key, value in (transcripts or {}).items():
+        page_no = int(key)
+        if page_no not in pages or not isinstance(value, str) or not value.strip():
+            raise ValueError("复核转写内容无效")
+        cleaned[page_no] = value.strip()
+    reviewed_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    pages_json = deepcopy(material.pages_json or [])
+    for page in pages_json:
+        text = cleaned.get(page.get("page"))
+        if text is None:
+            continue
+        page["text"] = text
+        page["ocr_meta"] = {**(page.get("ocr_meta") or {}), "quality": "ocr_verified",
+                           "source": "vlm_review", "reviewed_at": reviewed_at}
+    material.pages_json = pages_json
+    material.degradations_json = [*(material.degradations_json or []), {
+        "kind": "reading_quality_review", "outcome": "readable", "pages": sorted(pages),
+        "reviewer": reviewer, "at": reviewed_at, "note": note,
+        "transcript_pages": sorted(cleaned)}]
+    add_event(db, task.id, READING_QUALITY_EVENT, stage="check", payload={
+        "material_id": material_id, "pages": sorted(pages), "reviewer": reviewer,
+        "at": reviewed_at, "transcript_pages": sorted(cleaned)}, commit=False)
+    db.commit()
+    return {"material_id": material_id, "pages": sorted(pages), "reviewed_at": reviewed_at,
+            "transcript_pages": sorted(cleaned)}
+
+
 def _page_text_candidate_signature(candidate: dict) -> str:
     data = {key: value for key, value in candidate.items() if key != "signature"}
     payload = json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
@@ -7480,6 +7536,7 @@ EVENT_LABELS = {
     "material.replacement_requested": "已登记材料替代意图",
     "material.role_corrected": "已更正材料归属",
     "material.parsed": "材料已读取",
+    "material.reading_quality_reviewed": "已复核读取质量",
     "evidence.anchor_recovered": "已补充原文定位坐标",
     "material.parse_failed": "材料无法读取",
     # BS-P2-01（设计 98 §6.1）：显式替换旧材料后旧行标记被替代；payload 只带

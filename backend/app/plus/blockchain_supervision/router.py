@@ -197,6 +197,12 @@ class PageTextRefreshIn(BaseModel):
     page_nos: list[StrictInt]
 
 
+class ReadingQualityReviewIn(BaseModel):
+    pages: list[StrictInt]
+    transcripts: Optional[dict[int, str]] = None
+    note: str = ""
+
+
 class SubjectIn(BaseModel):
     subject_type: Optional[str] = None
     name: Optional[str] = None
@@ -1585,6 +1591,21 @@ def page_text_refresh_status(task_id: int, response: Response, db: Session = Dep
         raise HTTPException(status_code=404, detail="功能暂不可用")
     response.headers["Cache-Control"] = "private, no-store"
     return {"refresh": service.get_page_text_refresh(db, task_id)}
+
+
+@router.post("/tasks/{task_id}/materials/{material_id}/reading-quality-review")
+@limiter.limit("10/minute")
+def review_reading_quality(task_id: int, material_id: int, body: ReadingQualityReviewIn, request: Request,
+                           db: Session = Depends(get_db), user=Depends(get_current_any_user)):
+    """人工/VLM 复核页读取质量；确认可读后解除该页的未读疑点。"""
+    task = _get_task(db, task_id, user)
+    try:
+        return service.record_reading_quality_review(
+            db, task, material_id, body.pages, reviewer=f"user:{user.id}",
+            note=body.note, transcripts=body.transcripts)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from None
 
 
 @router.post("/tasks/{task_id}/rerun")

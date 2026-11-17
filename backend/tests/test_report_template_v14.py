@@ -232,6 +232,50 @@ def test_v14_negative_list_coverage_is_not_reported_as_checked():
     assert "覆盖不足" in v14._condition_for_item(variant)
 
 
+def test_v14_negative_coverage_uses_ratio_when_wording_changes():
+    item = {"kind": "illegal_subcontract", "item_id": "W16-02", "status": "undecidable",
+            "material_missing": False, "material_only": False,
+            "label": "分包负面清单主体或关键性工作",
+            "message": "不可判定：负面清单核查存在不可判定条目（NL-B-09）；已评估2/21条（当前负面清单目录）"}
+    condition = v14._condition_for_item(item)
+    assert "2/21" in condition and "逐条对照" in condition
+    assert "书面说明" not in condition
+
+
+def test_v14_expired_id_condition_names_role_and_expiry():
+    item = {"kind": "cert_validity", "item_id": "A2-02", "status": "hit",
+            "material_missing": False, "material_only": False, "label": "证件有效期",
+            "message": "主体 1（武汉龙辰建设有限公司）：「安全员」身份证已超过有效期"
+                       "（有效期至 2026-07-25），请核对最新身份证；仅核对所附证照文字，真实性未核验"}
+    condition = v14._condition_for_item(item)
+    assert "安全员" in condition and "2026-07-25" in condition
+    assert "补充或核实相关材料" not in condition
+
+
+def test_v14_merges_negative_conditions_preferring_coverage_ratio():
+    raw = [
+        {"kind": "illegal_subcontract", "item_id": "NL-B-09", "status": "undecidable",
+         "material_missing": False, "material_only": False, "label": "负面清单条目",
+         "message": "不可判定：负面清单核查存在不可判定条目（缺：负面清单确定性结论）"},
+        {"kind": "illegal_subcontract", "item_id": "W16-02", "status": "undecidable",
+         "material_missing": False, "material_only": False, "label": "分包负面清单主体或关键性工作",
+         "message": "不可判定：负面清单核查存在不可判定条目；已评估2/21条"},
+    ]
+    conditions = v14._signing_conditions(raw)
+    negatives = [text for text in conditions if "负面清单" in text]
+    assert len(negatives) == 1
+    assert "2/21" in negatives[0]
+
+
+def test_v14_risk_counts_follow_item_verdicts():
+    report = sample_report()
+    report["sections"][0]["items"].append({
+        "finding_id": "expired-id", "item_id": "A2-02", "status": "hit", "source": "测试依据",
+        "label": "证件有效期", "message": "「安全员」身份证已超过有效期（有效期至 2026-07-25）"})
+    document = v14.build_document(report)
+    assert document["conclusion"]["risk_counts"]["不符合"] >= 1
+
+
 def test_v14_person_condition_does_not_ask_social_record_again_when_covered():
     item = {"kind": "person_consistency", "item_id": "A2-01", "status": "undecidable",
             "material_missing": False, "material_only": False, "label": "社保资料覆盖管理人员",
