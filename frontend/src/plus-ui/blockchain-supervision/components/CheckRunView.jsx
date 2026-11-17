@@ -265,7 +265,7 @@ export default function CheckRunView({
         {coverageUnavailable && (
           <div role="alert" className="mt-3 rounded-[8px] border border-[#F0D7A5] bg-[#FFF9EC] px-3.5 py-2.5 text-[13px] leading-relaxed text-[#8A5E1C]">
             {progress.ai_coverage.reason === 'rule_version_mismatch'
-              ? '当前规则或核查实现与本次运行不一致，AI 核查状态无法核实。请联系人工复核，已有结果已保留。'
+              ? '当前规则或核查实现与本次运行不一致，请点击「重新核查」按新规则重跑；已有结果已保留。'
               : 'AI 核查状态无法核实，请联系人工复核；已有结果已保留。'}
           </div>
         )}

@@ -1198,6 +1198,23 @@ def _materials_with(materials: list, words: list) -> list:
     return [m for m in materials if _material_has(m, words)]
 
 
+def _social_period_fact(materials: list):
+    """用人员证据的归一化结果补识社保期间。
+
+    社保表常被 OCR 拆成多行多列（缴费起止时间分成 ``202502`` / ``202507`` 两个单元格），
+    规则层单行正则看不出区间；人员证据已按表头位置归一期间，这里只复用其结果，不重复解析。
+    """
+    from . import personnel_evidence
+
+    for fact in personnel_evidence.extract_person_relation_evidence(materials):
+        if fact.get("evidence_kind") != "social_record" or not fact.get("period"):
+            continue
+        material = next((m for m in materials if m.id == fact.get("material_id")), None)
+        if material is not None:
+            return (material, fact.get("page"), fact.get("quote") or "", fact["period"])
+    return None
+
+
 def _run_t15_03(task, general: list, evidence: list, rule: dict) -> BsFinding:
     """T15-03：主要材料/构配件/设备/施工机械的采购租赁由其他单位或个人完成（跨材料聚合 1 条）。
 
@@ -1312,6 +1329,8 @@ def _run_t15_04(task, evidence: list, rule: dict) -> BsFinding:
     if social_proof is not None:
         social_materials = _materials_with(evidence, det["social_security_words"])
         period = _page_match_patterns(social_materials, [det["social_period_pattern"]])
+        if period is None:
+            period = _social_period_fact(social_materials)
         period_missing = period is None
     if period_missing:
         missing.append("social_security_period")

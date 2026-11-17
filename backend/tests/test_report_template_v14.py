@@ -241,6 +241,33 @@ def test_v14_person_condition_does_not_ask_social_record_again_when_covered():
     assert "补交主要人员社保缴费证明" not in condition
 
 
+def test_v14_merges_duplicate_personnel_conditions_into_one():
+    raw = [
+        {"kind": "person_consistency", "item_id": "A2-01", "status": "undecidable",
+         "material_missing": False, "material_only": False, "label": "社保资料覆盖管理人员",
+         "message": "劳动合同关系未证明（缺吴道记、于文祥、吴昊）"},
+        {"kind": "transfer_scope", "item_id": "T15-04", "status": "undecidable",
+         "material_missing": False, "material_only": False, "label": "现场劳动关系与社保期间",
+         "message": "社保材料在场但未识别到统计期间"},
+    ]
+    conditions = v14._signing_conditions(raw)
+    personnel = [text for text in conditions if "社保" in text or "劳动合同" in text]
+    assert len(personnel) == 1
+    assert "补交主要人员社保缴费证明" not in personnel[0]
+    assert "社保缴费记录已在册" in personnel[0]
+
+
+def test_display_message_keeps_negative_list_coverage_ratio():
+    from app.plus.blockchain_supervision.finding_text import display_finding_message
+
+    finding = SimpleNamespace(item_id="W16-02", status="undecidable",
+                              message="不可判定：负面清单核查覆盖不足，已评估1/21条（当前负面清单目录）")
+    text = display_finding_message(finding)
+    assert "已评估 1/21 条" in text
+    assert "其余 20 条未覆盖" in text
+    assert "不能认定未命中" in text
+
+
 def test_v14_skips_certificate_item_that_already_covers_baseline():
     covered = {"kind": "cert_validity", "item_id": "A2-02", "status": "undecidable",
                "material_missing": False, "material_only": False, "label": "证件有效期",

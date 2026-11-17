@@ -28,4 +28,13 @@ describe('taskMutationBusy', () => {
       allowStaleRunning: true,
     })).toBe(false)
   })
+
+  it('规则换代后残留的 ai_checking 不阻断重新核查', () => {
+    expect(taskMutationBusy({
+      taskState: 'running',
+      steps: [{ state: 'completed' }],
+      progressPhase: 'ai_checking',
+      allowStaleRunning: true,
+    })).toBe(false)
+  })
 })

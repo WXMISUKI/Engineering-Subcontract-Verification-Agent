@@ -1177,11 +1177,17 @@ function WorkbenchStage({ taskId, autoRunOnMount = false, initialView = null, re
   const aiResumeSeenRef = useRef(null)
   // 当前审查代（服务端唯一身份）：本地编排状态的读/写都以它为准。
   const reviewRunId = referenceSnapshot?.review_run_id ?? null
+  // 规则或实现换代后，旧代 AI 覆盖会投影为 unavailable，进度停在 ai_checking；
+  // 这不是可等待的活动工作，必须允许重新核查，否则用户没有出口（2026-11-17 任务 8）。
+  const aiCoverageUnavailable = detail?.progress?.ai_coverage?.state === 'unavailable'
+  const aiJobRunning = detail?.progress?.ai_job?.state === 'running'
   const allowStaleRunning = Boolean(
     detail?.state === 'running'
       && runningKey === null
       && !['resetting', 'running', 'waiting'].includes(autoCheck.phase)
-      && !['material_reading', 'intelligent_check', 'ai_checking'].includes(detail?.progress?.phase)
+      && !aiJobRunning
+      && (aiCoverageUnavailable
+          || !['material_reading', 'intelligent_check', 'ai_checking'].includes(detail?.progress?.phase))
       && !findingsLoading,
   )
   const mutationBusy = taskMutationBusy({

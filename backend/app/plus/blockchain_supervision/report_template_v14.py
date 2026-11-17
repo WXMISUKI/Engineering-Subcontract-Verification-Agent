@@ -1063,6 +1063,32 @@ def _condition_priority(text):
     return 7
 
 
+_PERSONNEL_CONDITION_MARKERS = ("社保", "劳动合同", "主要人员", "岗位证书")
+
+
+def _is_personnel_condition(text):
+    return any(word in text for word in _PERSONNEL_CONDITION_MARKERS)
+
+
+def _merge_personnel_conditions(conditions):
+    """同一组人员材料只留一条补正，避免“社保已提供”与“补交社保”同时出现。"""
+    personnel = [text for text in conditions if _is_personnel_condition(text)]
+    if len(personnel) < 2:
+        return conditions
+    social_ready = any("社保记录已提供" in text or "社保缴费记录已在册" in text
+                       for text in personnel)
+    canonical = ("补交主要人员劳动合同及所缺岗位证书；社保缴费记录已在册，请核对覆盖人员和缴费期间"
+                 if social_ready else personnel[0])
+    merged, inserted = [], False
+    for text in conditions:
+        if not _is_personnel_condition(text):
+            merged.append(text)
+        elif not inserted:
+            merged.append(canonical)
+            inserted = True
+    return merged
+
+
 def _signing_conditions(raw, facts=None):
     rows = []
     for item in raw:
@@ -1077,7 +1103,7 @@ def _signing_conditions(raw, facts=None):
     for *_order, text in sorted(rows):
         if text not in conditions:
             conditions.append(text)
-    return conditions[:5]
+    return _merge_personnel_conditions(conditions)[:5]
 
 
 def _signing_conclusion(raw, facts=None):
