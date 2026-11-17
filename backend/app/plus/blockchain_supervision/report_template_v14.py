@@ -392,9 +392,18 @@ def _section_summary_lines(code, items):
         negative = [item for item in items if item["kind"] == "negative_list"]
         transfer = [item for item in items if item["kind"] == "transfer_scope"]
         illegal = [item for item in items if item["kind"] == "illegal_subcontract"]
+        coverage = next((item for item in items if item["item_id"] == "W16-02"), None)
         lines = []
         if negative:
-            lines.append("已对负面清单关键性工作进行核对，现有材料未形成明确命中结论。")
+            match = re.search(r"已评估\s*(\d+)\s*/\s*(\d+)\s*条", coverage["message"]) if coverage else None
+            incomplete = bool(coverage) and any(
+                word in coverage["message"] for word in ("覆盖不足", "不足以确认", "未完成或仍需核实", "未召回"))
+            if match:
+                lines.append("负面清单仅完成 %s/%s 项核对，未覆盖部分不能认定未命中。" % match.groups())
+            elif incomplete:
+                lines.append("负面清单核查覆盖不足，未覆盖部分不能认定未命中。")
+            else:
+                lines.append("已对负面清单关键性工作进行核对，现有材料未形成明确命中结论。")
         if transfer or illegal:
             lines.append("转包、违法分包类事项需结合总包合同和现场资料核对。")
         return lines
@@ -404,6 +413,55 @@ def _section_summary_lines(code, items):
             return ["尚未确认：" + "、".join(pending[:6]) + "。"]
         return []
     return []
+
+
+_CONTRACT_CLAUSE_LABELS = (
+    ("pricing", "计价"),
+    ("measurement", "计量"),
+    ("payment", "支付"),
+    ("settlement", "结算/审计"),
+    ("breach", "违约"),
+    ("termination", "解除"),
+    ("quality", "质量"),
+    ("safety", "安全"),
+    ("wages", "农民工工资"),
+)
+
+
+def _contract_page_range(facts):
+    pages = sorted({page for page in facts.get("pages") or []
+                    if isinstance(page, int) and not isinstance(page, bool) and page > 0})
+    if not pages:
+        return ""
+    if len(pages) == 1:
+        return "第%d页" % pages[0]
+    return "第%d–%d页" % (pages[0], pages[-1])
+
+
+def _contract_summary_lines(facts):
+    if not facts or not facts.get("pages"):
+        return ["未取得可核对的合同正文页，计价、支付、违约等条款需人工核对。"]
+    lines = ["合同文本已随报审资料提供（%s）。" % _contract_page_range(facts)]
+    clauses = facts.get("clauses") or {}
+    seen = []
+    missing = []
+    for key, label in _CONTRACT_CLAUSE_LABELS:
+        item = clauses.get(key) or {}
+        if item.get("page"):
+            seen.append("%s（第%s页）" % (label, item["page"]))
+        else:
+            missing.append(label)
+    if seen:
+        lines.append("已定位主要条款：" + "、".join(seen) + "。")
+    if missing:
+        lines.append("未定位条款：" + "、".join(missing) + "，需核对合同原文。")
+    return lines
+
+
+def _contract_summary_conclusion(facts):
+    if facts and facts.get("pages"):
+        return "合同主要条款已在文本中定位；条款是否低于总承包合同、是否公平可执行，仍需人工核对。"
+    return "未取得完整合同条款，计价、支付、违约等条款需人工核对。"
 
 
 def _section_summary_conclusion(code, items, fallback):
@@ -421,6 +479,15 @@ def _section_summary_conclusion(code, items, fallback):
     if code == "personnel":
         return "人员材料已纳入核对，社保缴费记录和证书对应关系尚未形成一致结论。"
     if code == "legality":
+        coverage = next((item for item in items if item["item_id"] == "W16-02"), None)
+        match = re.search(r"已评估\s*(\d+)\s*/\s*(\d+)\s*条", coverage["message"]) if coverage else None
+        incomplete = bool(coverage) and any(
+            word in coverage["message"] for word in ("覆盖不足", "不足以确认", "未完成或仍需核实", "未召回"))
+        if match:
+            return ("负面清单仅完成 %s/%s 项核对，未覆盖部分不能认定未命中；"
+                    "转包、违法分包需结合材料核对。" % match.groups())
+        if incomplete:
+            return "负面清单核查覆盖不足，未覆盖部分不能认定未命中；转包、违法分包需结合材料核对。"
         return "已核对部分分包范围，未发现负面清单明确命中；转包、违法分包需结合材料核对。"
     if code == "procedure":
         return "已核对 %d 项材料，%d 项需核对原件。" % (counts["符合"], counts["待核实"])
@@ -465,7 +532,7 @@ def _section_status(items):
     return "未核查"
 
 
-def _sections(base, raw):
+def _sections(base, raw, contract_facts=None):
     dims = _dims(base)
     rows = []
     for code, title, kinds, dimension_code, empty_text, include, exclude in _SECTIONS:
@@ -474,16 +541,26 @@ def _sections(base, raw):
         counts = {status: sum(1 for item in items if _verdict(item) == status)
                   for status in ("符合", "不符合", "缺项", "待核实")}
         conclusion_text = _section_text(code, items, dimension)
+        summary_lines = _section_summary_lines(code, items)
+        summary_conclusion = _section_summary_conclusion(code, items, conclusion_text)
+        status = _section_status(items)
+        bullets = _section_bullets(items, empty_text)
+        if code == "contract" and contract_facts and contract_facts.get("pages"):
+            status = "待核实"
+            summary_lines = _contract_summary_lines(contract_facts)
+            summary_conclusion = _contract_summary_conclusion(contract_facts)
+            conclusion_text = summary_conclusion
+            bullets = []
         rows.append({
             "code": code,
             "title": title,
-            "status": _section_status(items),
+            "status": status,
             "counts": counts,
             "conclusion": conclusion_text,
-            "summary_conclusion": _section_summary_conclusion(code, items, conclusion_text),
-            "summary_lines": _section_summary_lines(code, items),
+            "summary_conclusion": summary_conclusion,
+            "summary_lines": summary_lines,
             "paragraphs": _section_paragraphs(code, items, dimension) or ([empty_text] if empty_text else []),
-            "bullets": _section_bullets(items, empty_text),
+            "bullets": bullets,
         })
     return rows
 
@@ -840,6 +917,11 @@ def _condition_for_item(item, facts=None):
             else "请提交营业执照原件核对登记信息"
     if "施工劳务备案" in text:
         return "已提供施工劳务备案证书；请核对证书原件及有效期"
+    if item.get("item_id") == "A2-01" or item.get("kind") == "person_consistency":
+        if any(word in text for word in ("未能识别到社保", "未识别到社保", "社保信息里未提取到人员姓名")):
+            return "补交主要人员社保缴费证明、劳动合同及证书"
+        if "劳动合同" in text:
+            return "补交主要人员劳动合同及证书；社保记录已提供，请核对覆盖人员和缴费期间"
     if "资质" in text:
         if any(word in text for word in ("未提供", "未取得", "缺")):
             return "补交资质证书，说明资质类别/等级覆盖分包范围"
@@ -849,6 +931,13 @@ def _condition_for_item(item, facts=None):
     if any(word in text for word in ("书面同意", "签字", "监理审查")):
         return "补齐监理审查意见、发包人书面同意及签字日期"
     if any(word in text for word in ("负面清单", "关键性工作", "关键工序")):
+        match = re.search(r"已评估\s*(\d+)\s*/\s*(\d+)\s*条", text)
+        incomplete = any(word in text for word in ("覆盖不足", "不足以确认", "未完成或仍需核实", "未召回"))
+        if match:
+            return ("补充负面清单逐条对照说明及人工核查结论（当前仅完成 %s/%s 项）"
+                    % match.groups())
+        if incomplete:
+            return "补充负面清单逐条对照说明及人工核查结论（当前覆盖不足）"
         return "出具不涉及负面清单关键性工作的书面说明"
     if any(word in text for word in ("转包", "违法分包", "再分包")):
         return "补充总包合同、现场管理及资金流资料，说明不存在转包、违法分包"
@@ -1081,11 +1170,6 @@ def _blocks(document):
               % ("劳务" if is_labor else "分包"))
 
     sections = [row for row in document["sections"] if row["status"] != "未核查"]
-    totals = {status: sum(row["counts"][status] for row in sections)
-              for status in ("符合", "不符合", "缺项", "待核实")}
-    paragraph("本次共核查 %d 项：通过 %d 项、不符合 %d 项、缺项 %d 项、待核实 %d 项。"
-              % (sum(totals.values()), totals["符合"], totals["不符合"],
-                 totals["缺项"], totals["待核实"]))
     skipped = [row["title"].split(". ", 1)[-1] for row in document["sections"] if row["status"] == "未核查"]
     if skipped:
         paragraph("本次未涉及：%s。" % "、".join(skipped))
@@ -1156,6 +1240,7 @@ def build_document(report: dict, base: dict | None = None) -> dict:
     raw = _raw_items(report)
     conclusion = _conclusion(base, raw)
     facts = deepcopy(report.get("certificate_facts") or {})
+    contract_facts = deepcopy(report.get("contract_clauses") or {})
     document = {
         "schema_version": SCHEMA_VERSION,
         "template_id": TEMPLATE_ID,
@@ -1167,13 +1252,14 @@ def build_document(report: dict, base: dict | None = None) -> dict:
         "basic_information": deepcopy(base["basic_information"]),
         "conclusion": conclusion,
         "signing_conclusion": _signing_conclusion(raw, facts),
-        "sections": _sections(base, raw),
+        "sections": _sections(base, raw, contract_facts),
         "issues": _issue_rows(raw),
         "pending": _pending_rows(raw),
         "pending_total": sum(1 for item in raw if _verdict(item) == "待核实"),
         "attachments": _attachments(base, raw),
         "appendix": _appendix(base, raw),
         "certificate_facts": facts,
+        "contract_clauses": contract_facts,
         "basis": deepcopy(base["basis"]),
         "limitations": deepcopy(base["limitations"]),
         "issued_date": base.get("issued_date") or "",

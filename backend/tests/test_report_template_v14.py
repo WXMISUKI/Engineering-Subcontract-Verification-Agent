@@ -54,8 +54,8 @@ def test_v14_builds_conclusion_sections_and_eight_attachments():
 
     text = "\n".join(block.get("text", "") for block in document["blocks"])
     assert "一、建设单位审查意见（正式表述）" in text
-    assert "本次共核查" in text
-    assert "通过" in text and "不符合" in text
+    assert "本次共核查" not in text
+    assert "结论：" in text
     assert "7. 结论" in text
     assert "附件一：本次自动核查结果" in text
     assert "附件二：8 表签约前核查导航" in text
@@ -139,6 +139,66 @@ def test_v14_worksheet_docx_is_readable_and_separate_from_opinion():
     text = "\n".join(paragraph.text for paragraph in rendered.paragraphs)
     assert "八张检查表工作底稿" in text
     assert "不构成正式审查意见" in text
+
+
+def test_v14_contract_section_uses_extracted_clause_pages():
+    from app.plus.blockchain_supervision.contract_clause_facts import extract_contract_clauses
+
+    pages = [
+        {"page": 46, "text": "劳务分包合同 合同编号：CRDQ-01 甲方：中国铁建 乙方：武汉龙辰"},
+        {"page": 48, "text": "1.3.2 分包工程暂定价款 计价方式：固定单价"},
+        {"page": 49, "text": "计量与验工计价：乙方按月报送工程量"},
+        {"page": 50, "text": "支付方式：按月支付进度款"},
+        {"page": 57, "text": "违约责任：逾期按日支付违约金"},
+        {"page": 58, "text": "合同解除与终止"},
+        {"page": 65, "text": "质量、安全、农民工工资支付约定"},
+    ]
+    material = SimpleNamespace(file_name="报审.pdf", role="labor", parse_state="done", pages_json=pages)
+    facts = extract_contract_clauses([material])
+    assert facts["pages"] == [46, 48, 49, 50, 57, 58, 65]
+    assert facts["clauses"]["pricing"]["page"] == 48
+    assert facts["clauses"]["payment"]["page"] == 50
+
+    report = sample_report()
+    report["contract_clauses"] = facts
+    document = v14.build_document(report)
+    contract = next(section for section in document["sections"] if section["code"] == "contract")
+    assert contract["status"] == "待核实"
+    assert contract["bullets"] == []
+    assert "合同主要条款" in contract["conclusion"]
+    assert any("合同文本已随报审资料提供" in line for line in contract["summary_lines"])
+    text = "\n".join(block.get("text", "") for block in document["blocks"])
+    assert "本次未涉及：合同与支付条款" not in text
+    assert "合同主要条款已在文本中定位" in text
+
+
+def test_v14_negative_list_coverage_is_not_reported_as_checked():
+    item = {"kind": "illegal_subcontract", "item_id": "W16-02", "status": "undecidable",
+            "material_missing": False, "material_only": False,
+            "label": "分包负面清单主体或关键性工作",
+            "message": "不可判定：负面清单核查覆盖不足，已评估1/21条（当前负面清单目录）"}
+    negative = {"kind": "negative_list", "item_id": "NL-R-01", "status": "miss",
+                "material_missing": False, "material_only": False,
+                "label": "省级负面清单增补", "message": "未触发"}
+    lines = v14._section_summary_lines("legality", [negative, item])
+    assert any("1/21" in line and "不能认定未命中" in line for line in lines)
+    conclusion = v14._section_summary_conclusion("legality", [item], "fallback")
+    assert "1/21" in conclusion and "不能认定未命中" in conclusion
+    condition = v14._condition_for_item(item)
+    assert "1/21" in condition and "逐条对照" in condition
+
+    variant = dict(item, message="无法核实：现有核查结果尚不足以确认是否涉及负面清单；共有 20 项未完成或仍需核实")
+    assert "覆盖不足" in v14._section_summary_conclusion("legality", [negative, variant], "fallback")
+    assert "覆盖不足" in v14._condition_for_item(variant)
+
+
+def test_v14_person_condition_does_not_ask_social_record_again_when_covered():
+    item = {"kind": "person_consistency", "item_id": "A2-01", "status": "undecidable",
+            "material_missing": False, "material_only": False, "label": "社保资料覆盖管理人员",
+            "message": "姓名层面已覆盖当前已提取的 3 名主要管理人员；劳动合同关系未证明（缺吴道记、于文祥）"}
+    condition = v14._condition_for_item(item)
+    assert "社保记录已提供" in condition
+    assert "补交主要人员社保缴费证明" not in condition
 
 
 def test_v14_skips_certificate_item_that_already_covers_baseline():

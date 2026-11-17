@@ -82,7 +82,33 @@ _SOCIAL_TITLE_RE = re.compile(r"(?:社会保险|社保).{0,6}(?:缴费|参保|�
 _LABOR_TITLE_RE = re.compile(r"^劳动合同(?:书)?[：:]?$")
 _RELATION_OBLIGATION_RE = re.compile(r"示例|样例|填表说明|填写示范|(?:应当|必须|应|须|需).{0,14}(?:缴纳|签订|提交|提供|购买)")
 _INDIRECT_RELATION_RE = re.compile(r"承诺|声明|台账|清单|模板|示例|样例|应提交|应提供")
-_SOCIAL_ATTACHMENT_TITLE_RE = re.compile(r"(?:社会保险|社保|养老保险)(?:个人|单位)?(?:缴费|参保|权益)?(?:证明|记录|明细)(?:表)?[：:]?$")
+_SOCIAL_ATTACHMENT_TITLE_RE = re.compile(
+    r".*(?:社会保险|社保|养老保险)(?:个人|单位)?(?:缴费|参保|权益)?(?:证明|记录|明细)(?:表)?"
+    r"(?:\s*[（(][^）)]{0,20}[）)])?[：:]?$")
+_SOCIAL_TABLE_LABELS = ("序号", "姓名", "身份证号", "个人编号", "缴费起止时间", "缴费状态")
+
+
+def _plain_title(line: str) -> str:
+    """去掉 OCR 的 LaTeX/表格包装，只保留可判标题的文本。"""
+    text = re.sub(r"[$]?\\text\s*\{", "", str(line or ""))
+    text = text.replace("$", "").replace("{", "").replace("}", "")
+    return re.sub(r"\s+", " ", text).strip(" ：:.-_")
+
+
+def _looks_like_social_title(line: str) -> bool:
+    text = _plain_title(line)
+    if not text or len(text) > 60 or _RELATION_OBLIGATION_RE.search(text):
+        return False
+    return bool(re.search(r"(?:社会保险|社保|养老保险).{0,24}(?:证明|记录|明细)", text)
+                or "参保证明" in text or "参保人员" in text)
+
+
+def _clean_relation_value(value: str) -> str:
+    """清掉 OCR 字段尾部残留的 LaTeX/表格包装。"""
+    text = re.sub(r"[$}{]+", "", str(value or ""))
+    return re.sub(r"\s+", " ", text).strip(" ：:.-")
+
+
 _FIELD_BOUNDARY = r"(?=\s*(?:姓名|劳动者姓名|参保单位|缴费单位|用人单位|单位名称|缴费所属期|缴费期间|缴费月份|缴费年月|费款所属期|参保月份|所属期|合同期限)\s*[:：]|\n|[;；]|$)"
 _EMPLOYER_RE = re.compile(r"(?:参保单位|缴费单位|用人单位|单位名称)\s*[:：]\s*([^\n;；]+?)" + _FIELD_BOUNDARY)
 _PERIOD_RE = re.compile(r"(?:缴费所属期|缴费期间|缴费月份|缴费年月|费款所属期|参保月份|所属期|合同期限)\s*[:：]\s*([^\n;；]+?)" + _FIELD_BOUNDARY)
@@ -108,8 +134,10 @@ def _page_lines(raw: str, *, preserve_roster_table=False, preserve_social_table=
     has_markdown_roster = preserve_roster_table and any(
         "|" in line and "姓名" in line and ("岗位" in line or "职务" in line)
         and _CONTACT_FIELD_RE.search(line) for line in lines)
-    has_social_table = preserve_social_table and any(
-        "|" in line and "姓名" in line and ("缴费" in line or "参保" in line) for line in lines)
+    has_social_table = preserve_social_table and any("|" in line for line in lines) and any(
+        _looks_like_social_title(line)
+        or ("姓名" in line and ("缴费" in line or "参保" in line))
+        for line in lines)
     return [line if (has_markdown_roster or has_social_table) and "|" in line else line.strip(" |#\t") for line in lines]
 
 
@@ -448,9 +476,8 @@ def _relation_context(material, lines):
         return None
     contract = material.role in ("general", "sub", "labor")
     actual = [line for line in lines if not _RELATION_OBLIGATION_RE.search(line)]
-    title = next((line for line in actual if _SOCIAL_TITLE_RE.search(line)
-                  and not _INDIRECT_RELATION_RE.search(line)
-                  and (not contract or _SOCIAL_ATTACHMENT_TITLE_RE.fullmatch(line))), None)
+    title = next((line for line in actual if _looks_like_social_title(line)
+                  and not _INDIRECT_RELATION_RE.search(line)), None)
     labor = next((line for line in actual if _LABOR_TITLE_RE.fullmatch(line)), None)
     filename = material.file_name or ""
     fallback = (not contract and _SOCIAL_TITLE_RE.search(filename)
@@ -464,7 +491,7 @@ def _relation_context(material, lines):
 def _relation_page_contexts(material, page):
     lines = _page_lines(page.get("text") or "", preserve_social_table=True)
     starts = [i for i, line in enumerate(lines)
-              if _SOCIAL_ATTACHMENT_TITLE_RE.fullmatch(line) or _LABOR_TITLE_RE.fullmatch(line)]
+              if _looks_like_social_title(line) or _LABOR_TITLE_RE.fullmatch(line)]
     # 同一页内有多份独立证明时，各段自行提供姓名/单位/期间，不借第一页首字段。
     if len(starts) > 1:
         segments = [lines[start:end] for start, end in zip(starts, starts[1:] + [len(lines)])]
@@ -477,7 +504,7 @@ def _relation_page_contexts(material, page):
 
 
 def _social_table_rows(lines):
-    """仅提取社保证明中按表头对齐且序号、姓名同一行的记录。"""
+    """提取社保证明表：兼容 OCR 把表头拆行、姓名与缴费期间分两行的情况。"""
     def cells(line):
         line = line.strip()
         if line.startswith("|"):
@@ -485,36 +512,66 @@ def _social_table_rows(lines):
         if line.endswith("|"):
             line = line[:-1]
         return [cell.strip() for cell in line.split("|")]
+
+    def label_of(line):
+        text = _plain_title(line)
+        return next((label for label in _SOCIAL_TABLE_LABELS if text.startswith(label)), None)
+
+    def period_of(values, start):
+        if start is None:
+            return None
+        parts = []
+        for value in values[start:start + 3]:
+            match = re.fullmatch(r"(\d{4})[-/年]?(\d{2})", value.strip())
+            if match:
+                parts.append(match.group(1) + match.group(2))
+        if len(parts) >= 2:
+            return parts[0] + "-" + parts[1]
+        return parts[0] if parts else None
+
+    def value_at(values, index):
+        return values[index] if index is not None and index < len(values) else ""
+
     for index, header in enumerate(lines):
         if "|" not in header:
             continue
         columns = cells(header)
-        if "序号" not in columns or "姓名" not in columns or not any("缴费" in c or "参保" in c for c in columns):
+        labels = [column for column in columns if column in _SOCIAL_TABLE_LABELS]
+        if len(labels) < 3:
+            # OCR 有时把“序号/姓名/身份证号/个人编号/缴费起止时间/缴费状态”
+            # 拆成表格前的独立文本行，表头行本身为空。
+            labels = []
+            for previous in lines[max(0, index - 12):index]:
+                label = label_of(previous)
+                if label and label not in labels:
+                    labels.append(label)
+        if "序号" not in labels or "姓名" not in labels:
             continue
-        period_index = next((i for i, c in enumerate(columns) if "缴费起止" in c or "缴费期间" in c), None)
+        positions = {label: position for position, label in enumerate(labels)}
+        name_index = positions.get("姓名")
+        period_index = positions.get("缴费起止时间")
+        pending = None
         for row in lines[index + 1:]:
             if "|" not in row:
                 break
             values = cells(row)
-            # 某些社保证明 OCR 把后部日期拆成两格、序号漏识别；前四列
-            # 仍须按明确表头验证姓名、完整身份证号和个人编号。此时只能保留
-            # 人员线索，不从错列中猜缴费期间或参保单位。
-            if (columns[:4] == ["序号", "姓名", "身份证号", "个人编号"]
-                    and len(values) == len(columns) + 1 and not values[0]
-                    and re.fullmatch(r"[\u4e00-\u9fa5]{2,4}", values[1])
-                    and values[1] not in _ROSTER_STOPWORDS
-                    and re.fullmatch(r"\d{17}[0-9Xx]", values[2])
-                    and re.fullmatch(r"\d{6,20}", values[3])):
-                yield values[1], None, row
+            if all(re.fullmatch(r":?-{2,}:?", value or "") for value in values):
                 continue
-            if len(values) != len(columns):
+            name = value_at(values, name_index)
+            period = period_of(values, period_index)
+            if re.fullmatch(r"[\u4e00-\u9fa5]{2,4}", name) and name not in _ROSTER_STOPWORDS:
+                if pending is not None:
+                    yield pending
+                pending = (name, period, row) if period else (name, None, row)
+                if period:
+                    yield pending
+                    pending = None
                 continue
-            serial, name = values[columns.index("序号")], values[columns.index("姓名")]
-            if (not re.fullmatch(r"\d+", serial) or not re.fullmatch(r"[\u4e00-\u9fa5]{2,4}", name)
-                    or name in _ROSTER_STOPWORDS):
-                continue
-            period = values[period_index] if period_index is not None and values[period_index] else None
-            yield name, period, row
+            if pending is not None and period:
+                yield pending[0], period, row
+                pending = None
+        if pending is not None:
+            yield pending
         break
 
 
@@ -531,8 +588,10 @@ def extract_person_relation_evidence(materials: list) -> list[dict]:
         for page in material.pages_json or []:
             for actual_lines, title, kind in _relation_page_contexts(material, page):
                 text = "\n".join(actual_lines)
-                employers = list(dict.fromkeys(m.group(1).strip() for m in _EMPLOYER_RE.finditer(text)))
-                periods = list(dict.fromkeys(m.group(1).strip() for m in _PERIOD_RE.finditer(text)))
+                employers = list(dict.fromkeys(
+                    _clean_relation_value(m.group(1)) for m in _EMPLOYER_RE.finditer(text)))
+                periods = list(dict.fromkeys(
+                    _clean_relation_value(m.group(1)) for m in _PERIOD_RE.finditer(text)))
                 for line in actual_lines:
                     for name in extract_social_names(line):
                         # 引文来自同段原文；候选全留，冲突时不擅自选择第一条。
@@ -545,10 +604,12 @@ def extract_person_relation_evidence(materials: list) -> list[dict]:
                                       "period": periods[0] if len(periods) == 1 else None,
                                       "employer_candidates": employers, "period_candidates": periods})
                 if kind == "social_record":
+                    employer = employers[0] if len(employers) == 1 else None
                     for name, period, row in _social_table_rows(actual_lines):
                         facts.append({"name": name, "post": None, "material_id": material.id,
                                       "page": page.get("page"), "quote": row.strip(), "evidence_kind": kind,
-                                      "employer": None, "period": period, "employer_candidates": [],
+                                      "employer": employer, "period": period,
+                                      "employer_candidates": employers,
                                       "period_candidates": [period] if period else []})
     return facts
 
