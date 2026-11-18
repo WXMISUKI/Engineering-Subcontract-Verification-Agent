@@ -47,6 +47,48 @@ def test_v14_uses_uniform_subcontractor_labels_for_labor_and_professional():
         assert "合同金额：" not in text
 
 
+def test_v14_qualification_matches_content_and_safety_moves_to_chapter_2():
+    report = sample_report()
+    info = report["business_document"]["basic_information"]
+    info.update({"分包类型": "专业分包", "分包单位": "上海华地建设工程有限公司",
+                 "分包事项": "桩基工程、基坑围护、地基处理", "拟分包金额": "61718114.95元",
+                 "核查基准日": "2026-11-17"})
+    report["certificate_facts"] = {
+        "business_license": {"name": "上海华地建设工程有限公司", "legal_rep": "张三",
+                             "registered_capital": "3.66亿元", "business_scope": "地基基础工程"},
+        "qualification": {"category": "地基基础工程专业承包", "level": "一级",
+                          "cert_no": "D123", "valid_until": "2030-01-01"},
+        "safety_license": {"cert_no": "（沪）JZ安许证字〔2008〕160595",
+                           "scope": "建筑施工", "valid_until": "2026-04-16"},
+    }
+    document = v14.build_document(report)
+    text = "\n".join(block.get("text", "") for block in document["blocks"])
+    assert "地基基础工程专业承包一级" in text
+    assert "与桩基工程、基坑围护、地基处理分包内容匹配" in text
+    assert "注册资本3.66亿元" in text
+    first, second = text.split("2. 安全生产许可")[:2]
+    assert "安全生产许可证" not in first
+    assert "（沪）JZ安许证字〔2008〕160595" in second
+    assert "早于核查基准日" in second
+
+
+def test_v14_labor_certificate_is_unclassified_and_acceptable():
+    report = sample_report()
+    info = report["business_document"]["basic_information"]
+    info.update({"分包类型": "劳务分包", "分包单位": "测试劳务公司",
+                 "分包事项": "预制板梁劳务分包", "核查基准日": "2026-11-17"})
+    report["certificate_facts"] = {
+        "business_license": {"name": "测试劳务公司", "registered_capital": "1900万元"},
+        "qualification": {"title": "建筑业企业施工劳务备案证书", "category": "施工劳务备案",
+                          "cert_no": "D342238415", "valid_until": "2029-08-04"},
+    }
+    document = v14.build_document(report)
+    text = "\n".join(block.get("text", "") for block in document["blocks"])
+    assert "施工劳务备案" in text
+    assert "施工劳务不分等级，可承接本工程劳务作业" in text
+    assert "资质与承接能力已核对" in text
+
+
 def test_v14_builds_conclusion_sections_and_eight_attachments():
     report = sample_report()
     before = deepcopy(report)
@@ -75,7 +117,9 @@ def test_v14_builds_conclusion_sections_and_eight_attachments():
     assert "结论：" in text
     assert "7. 结论" in text
     assert "附件一：本次自动核查结果" in text
-    assert "附件二：8 表签约前核查导航" in text
+    assert "附件二：8 表签约前核查明细" in text
+    assert "未自动核查事项及原因" in text
+    assert "八、综合审查结论" in text
     assert "附件三：需补充材料/人工核查事项" in text
     assert "暂缓签订该分包合同" in text
     assert "补正后重新报审" in text
@@ -122,7 +166,9 @@ def test_v14_reads_labor_certificate_and_expired_safety_license():
     text = "\n".join(lines)
     assert "建筑业企业施工劳务备案证书" in text
     assert "有效期至2029-08-04" in text
-    assert "安全生产许可证" in text and "有效期至2026-03-31" in text
+    assert "安全生产许可证" not in text
+    safety_text = "\n".join(v14._safety_summary_lines(facts["safety_license"], None))
+    assert "有效期至2026-03-31" in safety_text
 
     expired = {"kind": "cert_validity", "item_id": "A2-02", "status": "undecidable",
                "material_missing": False, "material_only": False, "label": "证件有效期",

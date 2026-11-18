@@ -155,8 +155,12 @@ def _safety_license(text, page, file_name):
 
 
 def extract_certificate_facts(materials) -> dict:
-    """按“营业执照 / 资质证书 / 安全生产许可证”归并字段，优先保留信息更完整的一页。"""
-    result = {"business_license": {}, "qualification": {}, "safety_license": {}}
+    """按“营业执照 / 资质证书 / 安全生产许可证”归并字段，优先保留信息更完整的一页。
+
+    ``qualification`` 保留信息最完整的一条（兼容既有报告）；``qualifications``
+    按证书页保留多条，供“主资质 + 配套资质”展示，不把同页重复记录算成多条。
+    """
+    result = {"business_license": {}, "qualification": {}, "safety_license": {}, "qualifications": []}
     for material in materials or []:
         file_name = getattr(material, "file_name", "") or ""
         for page, text in _pages(material):
@@ -166,6 +170,11 @@ def extract_certificate_facts(materials) -> dict:
                 candidate = _business_license(text, page, file_name)
             elif kind == "qualification":
                 candidate = _qualification(text, page, file_name)
+                identity = (candidate.get("cert_no"), candidate.get("category"), candidate.get("level"))
+                if any(identity) and not any(
+                        (existing.get("cert_no"), existing.get("category"), existing.get("level")) == identity
+                        for existing in result["qualifications"]):
+                    result["qualifications"].append(candidate)
             elif kind == "safety_license":
                 candidate = _safety_license(text, page, file_name)
             else:

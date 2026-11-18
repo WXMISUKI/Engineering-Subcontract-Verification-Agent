@@ -616,7 +616,7 @@ def _section_status(items):
     return "未核查"
 
 
-def _sections(base, raw, contract_facts=None, personnel_facts=None):
+def _sections(base, raw, contract_facts=None, personnel_facts=None, certificate_facts=None, baseline=None):
     dims = _dims(base)
     rows = []
     for code, title, kinds, dimension_code, empty_text, include, exclude in _SECTIONS:
@@ -629,6 +629,18 @@ def _sections(base, raw, contract_facts=None, personnel_facts=None):
         summary_conclusion = _section_summary_conclusion(code, items, conclusion_text)
         status = _section_status(items)
         bullets = _section_bullets(items, empty_text)
+        if code == "qualification" and certificate_facts and (
+                certificate_facts.get("qualification") or certificate_facts.get("business_license")):
+            if status == "未核查":
+                status = "待核实"
+        if code == "safety_permit" and certificate_facts and certificate_facts.get("safety_license"):
+            safety = certificate_facts["safety_license"]
+            summary_lines = _safety_summary_lines(safety, baseline)
+            summary_conclusion = _safety_summary_conclusion(safety, baseline)
+            conclusion_text = summary_conclusion
+            bullets = []
+            if status == "未核查":
+                status = "待核实"
         if code == "contract" and contract_facts and contract_facts.get("pages"):
             status = "待核实"
             summary_lines = _contract_summary_lines(contract_facts)
@@ -764,7 +776,7 @@ def _attachments(base, raw, contract_facts=None):
                     continue
                 manual_rows.append([
                     item,
-                    "本版本未建立该审查项的自动核查规则",
+                    "本版本未建立该审查项自动规则；报审材料中未定位到可直接核对的条款或字段",
                     point + "；请核对合同、证照原件或现场资料",
                     responsibility,
                 ])
@@ -1192,6 +1204,114 @@ def _scope_keywords(scope):
     return "、".join(word for word in _SCOPE_WORDS if word in str(scope or ""))
 
 
+# 资质类别 → 可覆盖的分包内容关键词；只做保守映射，命中不了就转人工。
+_QUALIFICATION_SCOPE_MAP = (
+    ("地基基础", ("桩基", "基坑", "地基处理", "地基基础")),
+    ("桥梁", ("桥梁", "桥面", "梁体", "预制梁", "吊装", "支座")),
+    ("隧道", ("隧道", "洞身", "盾构", "明挖")),
+    ("公路", ("公路", "路基", "路面", "匝道", "涵洞", "交通工程")),
+    ("市政", ("市政", "道路", "排水", "管网", "给水")),
+    ("机电", ("机电", "电气", "照明", "通信", "监控")),
+    ("建筑", ("房建", "建筑", "装饰", "幕墙", "钢结构")),
+    ("环保", ("环保", "绿化", "水保", "噪声")),
+)
+
+
+def _qualification_entries(facts):
+    entries = [row for row in (facts.get("qualifications") or []) if isinstance(row, dict)]
+    primary = facts.get("qualification") or {}
+    identity = (primary.get("cert_no"), primary.get("category"), primary.get("level"))
+    if primary and not any(
+            (row.get("cert_no"), row.get("category"), row.get("level")) == identity for row in entries):
+        entries.insert(0, primary)
+    return entries
+
+
+def _qualification_label(entry):
+    category = str(entry.get("category") or "").strip()
+    level = str(entry.get("level") or "").strip()
+    if category and level and level not in category:
+        return category + level
+    return category or str(entry.get("title") or "").strip() or "资质证书"
+
+
+def _scope_match(category, content):
+    category, content = str(category or ""), str(content or "")
+    for keyword, aliases in _QUALIFICATION_SCOPE_MAP:
+        if keyword in category:
+            return any(alias in content for alias in aliases) or keyword in content
+    parts = [part.strip() for part in re.split(r"[、,，/；;]", category) if part.strip()]
+    return bool(parts) and any(part in content for part in parts)
+
+
+def _qualification_lines(document, info, is_labor):
+    """第一章资质承接能力：主资质匹配 + 营业执照/法人 + 配套资质；安许不在此章。"""
+    facts = document.get("certificate_facts") or {}
+    license_facts = facts.get("business_license") or {}
+    entries = _qualification_entries(facts)
+    content = str(info.get("分包事项") or info.get("拟分包范围") or "")
+    primary = entries[0] if entries else {}
+    lines, conclusion = [], ""
+    if is_labor and (primary.get("category") == "施工劳务备案"
+                     or "施工劳务" in str(primary.get("title") or "")):
+        label = str(primary.get("title") or "").strip() or _qualification_label(primary)
+        details = []
+        if primary.get("cert_no"):
+            details.append("证书编号" + primary["cert_no"])
+        if primary.get("valid_until"):
+            details.append("有效期至" + primary["valid_until"])
+        lines.append("持有%s（%s）。" % (label, "，".join(details) if details else "证书编号/有效期未载明"))
+        lines.append("施工劳务不分等级，可承接本工程劳务作业。")
+        conclusion = "资质与承接能力已核对；施工劳务备案不区分等级，可承接本工程劳务作业。"
+    elif not entries:
+        lines.append("报审材料未载明资质类别/等级，无法判断是否覆盖分包内容，需人工核实。")
+        conclusion = "主体资格材料已核对；资质类别/等级未识别，需核对证书原件后确认。"
+    else:
+        label = _qualification_label(primary)
+        matched = _scope_match(primary.get("category") or label, content)
+        details = []
+        if primary.get("cert_no"):
+            details.append("证书编号" + primary["cert_no"])
+        if primary.get("valid_until"):
+            details.append("有效期至" + primary["valid_until"])
+        line = "分包单位具备%s" % label
+        if details:
+            line += "（%s）" % "，".join(details)
+        if matched:
+            line += "，与%s分包内容匹配，符合单位工程资质要求。" % (content or "本工程")
+        else:
+            line += "；与%s分包内容的对应关系需人工核实（现有证书未载明可覆盖该内容的类别/等级）。" % (
+                content or "本工程")
+        lines.append(line)
+        conclusion = "资质与承接能力已核对；%s与分包内容%s。" % (
+            label, "匹配" if matched else "对应关系需人工核实")
+        supporting = []
+        for entry in entries[1:]:
+            item = _qualification_label(entry)
+            if item and item not in supporting:
+                supporting.append(item)
+        if supporting:
+            lines.append("另持有%s等配套资质，可覆盖相应专业施工需要；是否覆盖本分包内容需结合证书原件核对。"
+                         % "、".join(supporting[:4]))
+    license_parts = []
+    if license_facts.get("name"):
+        license_parts.append("营业执照登记名称" + license_facts["name"])
+    if license_facts.get("uscc"):
+        license_parts.append("统一社会信用代码" + license_facts["uscc"])
+    if license_facts.get("legal_rep"):
+        license_parts.append("法定代表人" + license_facts["legal_rep"])
+    if license_facts.get("registered_capital"):
+        license_parts.append("注册资本" + license_facts["registered_capital"])
+    scope = _scope_keywords(license_facts.get("business_scope"))
+    if scope:
+        license_parts.append("经营范围含" + scope)
+    if license_parts:
+        lines.append("，".join(license_parts) + "，具备法人资格和相应履约能力。")
+    else:
+        lines.append("报审材料未载明营业执照/法人信息，需人工核实。")
+    return lines, conclusion
+
+
 def _parse_date(value):
     match = re.search(r"(\d{4})[-/年](\d{1,2})[-/月](\d{1,2})", str(value or ""))
     if not match:
@@ -1211,81 +1331,57 @@ def _expired(valid_until, baseline):
     return bool(valid and baseline and valid < baseline)
 
 
+def _safety_summary_lines(safety, baseline):
+    cert_no = str(safety.get("cert_no") or "").strip()
+    scope = str(safety.get("scope") or "").strip()
+    valid = str(safety.get("valid_until") or "").strip()
+    details = []
+    if cert_no:
+        details.append("证书号" + cert_no)
+    if scope:
+        details.append("许可范围“%s”" % scope)
+    line = "持有安全生产许可证"
+    if details:
+        line += "（%s）" % "，".join(details)
+    lines = [line + "。"]
+    if valid:
+        lines.append("有效期至%s。" % valid)
+        if _expired(valid, baseline):
+            lines.append("注意：该有效期已早于核查基准日，当前不能认定安许有效；"
+                         "须补充续期后的有效证件，否则不得进场施工。")
+        else:
+            lines.append("有效期覆盖核查基准日；证书号、许可范围需核对原件。")
+    else:
+        lines.append("有效期未载明，需核对证书原件。")
+    return lines
+
+
+def _safety_summary_conclusion(safety, baseline):
+    valid = str(safety.get("valid_until") or "").strip()
+    if valid and _expired(valid, baseline):
+        return ("安全生产许可证已提供，但有效期至%s，早于核查基准日，暂不能认定有效；"
+                "需提交续期后的证书后重新报审。" % valid)
+    if valid:
+        return "安全生产许可证在有效期内；许可范围和证书号需核对原件。"
+    return "未取得可核对的安全许可证有效期，需补充证书后核实。"
+
+
 def _section1_conclusion(document, section, is_labor):
     if section["counts"]["不符合"] or section["counts"]["缺项"]:
         return section["conclusion"]
     facts = document.get("certificate_facts") or {}
     qualification = facts.get("qualification") or {}
-    safety = facts.get("safety_license") or {}
     baseline = _baseline_date(document)
-    missing = []
-    qualification_title = str(qualification.get("title") or "")
-    labor_certificate = is_labor and "施工劳务" in qualification_title \
-        and bool(qualification.get("valid_until"))
-    if not labor_certificate and not (qualification.get("category") or qualification.get("level")):
-        missing.append("施工劳务备案证书" if is_labor else "资质类别/等级")
-    if not safety.get("valid_until"):
-        missing.append("安许有效期")
-    expired = []
+    _, conclusion = _qualification_lines(document, document.get("basic_information") or {}, is_labor)
     if _expired(qualification.get("valid_until"), baseline):
-        expired.append("资质证书有效期至%s" % qualification["valid_until"])
-    if _expired(safety.get("valid_until"), baseline):
-        expired.append("安全生产许可证有效期至%s" % safety["valid_until"])
-    if expired:
-        return "主体资格材料已核对；%s，早于核查基准日，需提交续期证书后确认。" % "；".join(expired)
-    if missing:
-        return "主体资格材料已核对；%s未识别，需核对证书原件后确认。" % "、".join(missing)
-    return "主体资格材料已核对。"
+        return "主体资格材料已核对；资质证书有效期至%s，早于核查基准日，需提交续期证书后确认。" % (
+            qualification["valid_until"])
+    return conclusion
 
 
 def _section_fact_lines(document, info, is_labor):
-    """第一章的已核实事实：只写证照页/合同里读到的字段，不反推结论。"""
-    facts = document.get("certificate_facts") or {}
-    license_facts = facts.get("business_license") or {}
-    qualification = facts.get("qualification") or {}
-    safety = facts.get("safety_license") or {}
-    lines = []
-    if license_facts:
-        parts = []
-        if license_facts.get("name"):
-            parts.append("分包单位" + license_facts["name"])
-        if license_facts.get("uscc"):
-            parts.append("统一社会信用代码" + license_facts["uscc"])
-        if license_facts.get("legal_rep"):
-            parts.append("法定代表人" + license_facts["legal_rep"])
-        if license_facts.get("registered_capital"):
-            parts.append("注册资本" + license_facts["registered_capital"])
-        scope = _scope_keywords(license_facts.get("business_scope"))
-        if scope:
-            parts.append("经营范围含" + scope)
-        if parts:
-            lines.append("，".join(parts) + "。")
-    if qualification:
-        title = qualification.get("title") or "建筑业企业资质证书"
-        details = []
-        category = qualification.get("category") or qualification.get("level")
-        if category:
-            details.append(category)
-        if qualification.get("cert_no"):
-            details.append("证书编号" + qualification["cert_no"])
-        if qualification.get("valid_until"):
-            details.append("有效期至" + qualification["valid_until"])
-        if details:
-            lines.append("持有%s（%s）。" % (title, "，".join(details)))
-        else:
-            lines.append("持有%s；资质类别/等级未识别，需核对证书原件。" % title)
-    if safety:
-        details = []
-        if safety.get("cert_no"):
-            details.append("证书号" + safety["cert_no"])
-        if safety.get("scope"):
-            details.append("许可范围“%s”" % safety["scope"])
-        if safety.get("valid_until"):
-            details.append("有效期至" + safety["valid_until"])
-        line = "持有安全生产许可证"
-        if details:
-            line += "（" + "，".join(details) + "）"
-        lines.append(line + "。")
+    """第一章的已核实事实：资质匹配 + 营业执照/法人 + 配套资质；安许归第二章。"""
+    lines, _ = _qualification_lines(document, info, is_labor)
     equipment = document.get("equipment_facts") or {}
     equipment_pages = sorted({page for page in equipment.get("pages") or []
                               if isinstance(page, int) and not isinstance(page, bool) and page > 0})
@@ -1386,19 +1482,32 @@ def _blocks(document):
     else:
         paragraph("本次自动核查未形成确定性结论，相关事项见附件二。")
 
-    heading("附件二：8 表签约前核查导航")
-    paragraph("本表说明八张检查表在签约前需要提交或核验的材料、合同应约定的条款，"
-              "以及未落实时对签约和开工的影响；工资专户、专项方案、安全费计划、设备检定等"
-              "开工前事项，签约时只核对合同是否约定。")
-    if appendix.get("nav_rows"):
-        table(appendix["nav_headers"], appendix["nav_rows"], appendix["nav_widths"])
+    heading("附件二：8 表签约前核查明细")
+    paragraph("本附件全量展示 8 张检查表。每张表先列已形成自动结论的事项，再列未自动核查事项及原因；"
+              "工资专户、专项方案、安全费计划、设备检定等开工前事项，签约时只核对合同是否约定。")
+    for sheet in document.get("attachments") or []:
+        paragraph(sheet.get("title") or "", bold=True)
+        if sheet.get("note"):
+            paragraph(sheet["note"], indent=True)
+        if sheet.get("kind") == "key_value":
+            rows = [list(row) for row in sheet.get("rows") or []]
+            if rows:
+                table(["项目", "内容"], rows, [.25, .75])
+            continue
+        if sheet.get("auto_rows"):
+            table(sheet.get("auto_headers") or [], sheet["auto_rows"],
+                  sheet.get("auto_widths") or [])
+        if sheet.get("manual_rows"):
+            paragraph("未自动核查事项及原因：", indent=True)
+            table(sheet.get("manual_headers") or [], sheet["manual_rows"],
+                  sheet.get("manual_widths") or [])
 
     heading("附件三：需补充材料/人工核查事项")
-    paragraph("本表按类别归并，具体明细见系统核查工作底稿。")
+    paragraph("本表按类别归并，具体明细见附件二。")
     if appendix.get("manual_rows"):
         table(appendix["manual_headers"], appendix["manual_rows"], appendix["manual_widths"])
     paragraph(appendix.get("uncovered_text") or "本次未覆盖：无。")
-    paragraph("八张检查表作为工作底稿保存在系统中，可按需下钻，不作为正式意见的逐项结论。")
+    paragraph("以上 8 表为签约前核查全量明细；未自动核查事项已列明原因，需人工核对后签认。")
     return blocks
 
 
@@ -1425,7 +1534,8 @@ def build_document(report: dict, base: dict | None = None) -> dict:
         "basic_information": deepcopy(base["basic_information"]),
         "conclusion": conclusion,
         "signing_conclusion": _signing_conclusion(raw, facts),
-        "sections": _sections(base, raw, contract_facts, personnel_facts),
+        "sections": _sections(base, raw, contract_facts, personnel_facts, facts,
+                              _baseline_date({"basic_information": base.get("basic_information") or {}})),
         "issues": _issue_rows(raw),
         "pending": _pending_rows(raw),
         "pending_total": sum(1 for item in raw if _verdict(item) == "待核实"),
