@@ -55,6 +55,7 @@ export function countOf(counts, code) {
 export function statusLabelOf(finding) {
   const label = typeof finding?.status_label === 'string' ? finding.status_label.trim() : ''
   if (label) return label
+  if ((finding?.finding_semantics ?? finding?.findingSemantics) === 'manual_prompt') return '人工提示'
   if (finding?.open_term === true) return OPEN_TERM_WORD
   return STATUS_WORD[finding?.status] || ''
 }

@@ -24,14 +24,29 @@ it('revokes cached formal opinion buttons while preserving draft body', () => {
   const view = render(<ReportView {...props} reportReadiness={ready()} />)
   expect(screen.getByTestId('opinion-export-pdf').disabled).toBe(false)
   view.rerender(<ReportView {...props} reportReadiness={{ ...ready(), confirmed_output_ready: false,
-    task_close_ready: false, reading_quality: { state: 'pending', pages: [{ page: 2 }] },
-    blocking_reasons: [{ code: 'reading_incomplete', message: '第 2 页尚未读取' }] }} />)
+    task_close_ready: false, execution: { state: 'incomplete' },
+    blocking_reasons: [{ code: 'ai_execution_incomplete', message: 'AI 核查执行失败' }] }} />)
   for (const id of ['regenerate-formal-opinion', 'opinion-export-word', 'opinion-export-pdf', 'prototype-report-export-pdf']) {
     expect(screen.getByTestId(id).disabled).toBe(true)
     fireEvent.click(screen.getByTestId(id))
   }
   expect(handler).not.toHaveBeenCalled()
-  expect(screen.getByTestId('report-readiness-disclosure').textContent).toContain('第 2 页尚未读取')
+  expect(screen.getByTestId('report-readiness-disclosure').textContent).toContain('AI 核查执行失败')
+})
+
+it('allows report output with OCR warnings while retaining their disclosure', () => {
+  const dto = { ...ready(), reading_quality: { state: 'pending', pages: [{ page: 2 }], blocking: false },
+    warnings: [{ code: 'reading_quality_limited', message: '第 2 页识别不完整，此提示不阻断报告生成。' }] }
+  expect(normalizeReportReadiness(dto).task_close_ready).toBe(true)
+  const handler = vi.fn()
+  render(<ReportView prototypeMode report={{ sections: [], summary: {} }} reportReadiness={dto}
+    onComplete={handler} onExport={handler} />)
+  expect(screen.getByTestId('prototype-report-export-word').disabled).toBe(false)
+  expect(screen.getByTestId('report-close-task').disabled).toBe(false)
+  expect(screen.queryByTestId('report-readiness-disclosure')).toBeNull()
+  expect(screen.getByTestId('report-readiness-warnings').textContent).toContain('第 2 页识别不完整')
+  fireEvent.click(screen.getByTestId('report-close-task'))
+  expect(handler).toHaveBeenCalledOnce()
 })
 
 it('blocks missing task DTO even if the cached report claims ready', () => {

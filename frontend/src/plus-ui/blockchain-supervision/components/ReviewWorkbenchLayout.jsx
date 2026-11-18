@@ -8,7 +8,7 @@ import { collectContainerIds } from '../lib/materialState'
 import { cleanText } from '../lib/plainText'
 import { useMediaQuery } from '../lib/useMediaQuery'
 import { primaryEvidenceRef } from '../lib/reviewWorkbenchModel'
-import { buildReviewQueueSections, classifyReviewItem } from '../lib/reviewQueueModel'
+import { buildReviewQueueSections, classifyReviewItem, compareHeaderTitle, queueSelectionExpired } from '../lib/reviewQueueModel'
 
 // 工作台骨架（U1）。
 // - 旧版 ≥1280px（Tailwind xl）左侧人工复核、右侧待办/详情/原文预览；<1280px 纵向降级：
@@ -47,6 +47,12 @@ function certificateRoleClass(role) {
   if (role === 'authoritative') return 'border-emerald-200 bg-emerald-50 text-emerald-700'
   if (role === 'superseded') return 'border-[#E5E5E5] bg-[#F7F1E9] text-[#6B7280]'
   return 'border-amber-200 bg-amber-50 text-amber-700'
+}
+
+const PERSON_EVIDENCE_SIDE_LABELS = {
+  management_roster: '人员名单',
+  social_record: '社保证明',
+  labor_contract: '劳动合同',
 }
 
 const EVIDENCE_ROLE_TEXT = {
@@ -254,6 +260,7 @@ function FindingDetailPane({
           <section data-testid="prototype-finding-heading" className="mb-1 border-b border-[#DCE5EE] pb-3">
             <div className="flex flex-wrap items-center gap-1.5">
               <span className={`rounded-full border px-2 py-0.5 text-[10px] leading-none ${prototypeReviewLabel === '未经人工处理' ? 'border-[#EAD5AA] bg-[#FFF8E9] text-[#96651C]' : 'border-[#C8E4CF] bg-[#EFFAF2] text-[#2F7D49]'}`}>{prototypeReviewLabel}</span>
+              {finding.review?.carried && <span className="rounded-full border border-[#DCE5EE] bg-[#F7F9FB] px-2 py-0.5 text-[10px] leading-none text-[#587089]">沿用上一轮复核意见（结论未变化）</span>}
             </div>
             <h2 className="mt-3 text-[19px] font-semibold leading-snug text-[#17283D]">{message}</h2>
             <p className="mt-1 text-[12px] leading-relaxed text-[#587089]">{source || finding.status_label || '系统依据已发现一项需要人工查看的问题'}</p>
@@ -357,6 +364,14 @@ function FindingDetailPane({
           const refQuote = cleanText(ref.quote)
           return <section key={index} className={prototypeMode ? 'sr-only' : 'rounded border border-[#EFE6D8] p-3'}>
             <h3 className="text-xs font-medium">{refMaterial?.file_name || '材料不可用'}</h3>
+            {(ref.person_key || ref.post || ref.evidence_side || ref.subject_id != null) && (
+              <p data-testid={`person-evidence-meta-${index}`} className="mt-1 text-[11px] text-[#6B7280]">
+                {ref.person_key ? `人员：${ref.person_key}` : '人员：待确认'}
+                {ref.post ? ` · 岗位：${ref.post}` : ''}
+                {ref.subject_id != null ? ` · 主体：${ref.subject_id}` : ''}
+                {ref.evidence_side ? ` · 证据侧：${PERSON_EVIDENCE_SIDE_LABELS[ref.evidence_side] || ref.evidence_side}` : ''}
+              </p>
+            )}
             {refQuote && <blockquote className="my-2 break-words text-xs text-[#6B7280]">{refQuote}</blockquote>}
             {loc.canOpen ? <button type="button" className="min-h-8 text-xs text-[#8B7355] hover:underline" onClick={() => onOpenSource?.(loc.materialId, loc.page, findingId)}>定位原文 · 第 {loc.page} 页</button> : <p className="text-xs text-[#9CA3AF]">{loc.label}</p>}
             {Array.isArray(ref.certificate_evidence) && ref.certificate_evidence.length > 0 && (
@@ -639,6 +654,7 @@ export default function ReviewWorkbenchLayout({
   onComplete,
   completing = false,
   completeDisabled = false,
+  completeDisabledReason = '',
   completeLabel = '生成报告',
   previewMaterialId = null,
   previewPage = null,
@@ -661,6 +677,9 @@ export default function ReviewWorkbenchLayout({
   overviewMode = false,
   // V2：筛选后无结论时的左栏空态文案（可选；不传时沿用原空态）。
   emptyLabel = null,
+  // 步骤筛选生效时，空待办队列表示“该步骤没有待处理项”，不是“处理完了”；
+  // 不能触发自动退回总览，否则点击步骤卡会立刻被弹回总览，看不到步骤详情。
+  stepScoped = false,
   // v3 原型：宽桌面为左待办/中详情/右问题队列；较窄视口纵向堆叠三列内容。
   prototypeMode = false,
 }) {
@@ -715,6 +734,13 @@ export default function ReviewWorkbenchLayout({
   const reviewItems = prototypeMode && reviewFilter != null
     ? buildReviewQueueSections(groups, reviewFilter).flatMap((section) => section.items)
     : allReviewItems
+  const reviewScopeLabel = reviewFilter === 'all'
+    ? '全部问题'
+    : reviewFilter === 'processed'
+      ? '已处理问题'
+      : reviewFilter === 'undecidable'
+        ? '无法核实问题'
+        : '问题'
   const selectFindingSource = (item) => {
     if (!item) return
     const material = item.materialId != null
@@ -828,14 +854,27 @@ export default function ReviewWorkbenchLayout({
     selectFindingSource(next)
   }
 
-  // 人工回执刷新可能先清空待处理队列，再完成异步跳转；同步关闭失去队列的对照层。
+  // 人工回执刷新可能先清空当前筛选队列（待处理/无法核实等），再完成异步跳转；
+  // 同步关闭失去队列的对照层，不能停在“1 / 0”。
   useEffect(() => {
-    if (!prototypeMode || !compareOpen || reviewFilter !== 'pending' || loading || submitting || reviewItems.length) return
+    if (!prototypeMode || !compareOpen || loading || submitting
+        || !queueSelectionExpired({ reviewItemsLength: reviewItems.length })) return
     closeCompare()
     onClosePreview?.()
     onReturnOverview?.()
-  }, [prototypeMode, compareOpen, reviewFilter, loading, submitting, reviewItems.length,
+  }, [prototypeMode, compareOpen, loading, submitting, reviewItems.length,
     closeCompare, onClosePreview, onReturnOverview])
+
+  // 待处理队列已清零时，普通详情也必须退出，不能停在上一条已处理问题上。
+  // 步骤筛选下队列为空只代表该步骤没有待处理项，此时必须保留步骤详情。
+  useEffect(() => {
+    if (!prototypeMode || selectedFindingId == null || loading || submitting
+        || !queueSelectionExpired({ reviewItemsLength: reviewItems.length, stepScoped })) return
+    onSelect?.(null)
+    onClosePreview?.()
+    onReturnOverview?.()
+  }, [prototypeMode, stepScoped, selectedFindingId, loading, submitting, reviewItems.length,
+    onSelect, onClosePreview, onReturnOverview])
 
   useEffect(() => {
     if (!compareOpen) return undefined
@@ -1012,7 +1051,10 @@ export default function ReviewWorkbenchLayout({
 
   // 全屏对照时只渲染对照层：避免底层两栏与对照层重复出现同一批 testid/焦点目标。
   if (compareOpen) {
-    const compareIndex = Math.max(0, reviewItems.findIndex((item) => String(item.findingId) === String(selectedFindingId)))
+    const comparePosition = reviewItems.findIndex((item) => String(item.findingId) === String(selectedFindingId))
+    const compareTitle = prototypeMode
+      ? compareHeaderTitle({ scopeLabel: reviewScopeLabel, position: comparePosition, total: reviewItems.length })
+      : '证据对照'
     const compareSubtitle = selectedFinding
       ? [selectedFinding.item_id, selectedFinding.status_label, selectedFinding.severity_label ? `风险：${selectedFinding.severity_label}` : null]
         .filter(Boolean).join(' · ')
@@ -1020,7 +1062,7 @@ export default function ReviewWorkbenchLayout({
     return (
       <ReviewCompareMode
         prototypeMode={prototypeMode}
-        title={prototypeMode ? `问题 ${compareIndex + 1} / ${reviewItems.length}` : '证据对照'}
+        title={compareTitle}
         subtitle={compareSubtitle}
         onClose={closeCompare}
         closeButtonRef={compareCloseRef}
@@ -1035,12 +1077,12 @@ export default function ReviewWorkbenchLayout({
               <>
                 <header data-testid="compare-detail-header" className="flex shrink-0 items-center gap-3 border-b border-[#E5DED3] bg-white px-4 py-2.5">
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-[13px] font-semibold text-[#3B332B]">问题 {compareIndex + 1} / {reviewItems.length}</p>
+                    <p className="truncate text-[13px] font-semibold text-[#3B332B]">{compareTitle}</p>
                     <p className="truncate text-[11px] text-[#7A6C5A]">{compareSubtitle || '当前问题详情'}</p>
                   </div>
                   <div className="flex shrink-0 items-center gap-1.5">
-                    <button type="button" onClick={selectPreviousFinding} className="min-h-8 rounded-[4px] border border-[#D8CBB8] bg-white px-2.5 text-[11px] text-[#705C45] hover:bg-[#FBF5EC]">上一条</button>
-                    <button type="button" onClick={selectNextFinding} className="min-h-8 rounded-[4px] border border-[#D8CBB8] bg-white px-2.5 text-[11px] text-[#705C45] hover:bg-[#FBF5EC]">下一条</button>
+                    <button type="button" disabled={!reviewItems.length} onClick={selectPreviousFinding} className="min-h-8 rounded-[4px] border border-[#D8CBB8] bg-white px-2.5 text-[11px] text-[#705C45] hover:bg-[#FBF5EC] disabled:opacity-50">上一条</button>
+                    <button type="button" disabled={!reviewItems.length} onClick={selectNextFinding} className="min-h-8 rounded-[4px] border border-[#D8CBB8] bg-white px-2.5 text-[11px] text-[#705C45] hover:bg-[#FBF5EC] disabled:opacity-50">下一条</button>
                     <button type="button" ref={compareCloseRef} data-testid="compare-close" onClick={closeCompare} className="min-h-8 rounded-[4px] border border-[#8B7355] bg-white px-2.5 text-[11px] text-[#8B7355] hover:bg-[#FBF5EC]">返回</button>
                   </div>
                 </header>
@@ -1088,7 +1130,7 @@ export default function ReviewWorkbenchLayout({
           className="col-span-full shrink-0 rounded-[6px] border border-[#E5C79C] bg-[#FFF8EC] px-3 py-2 text-[12px] text-[#765B36]"
           role="status"
         >
-          <div className="font-medium">部分页面识别不完整，请结合原件核对；相关内容尚未完整评估。</div>
+          <div className="font-medium">部分页面识别不完整，相关内容尚未完整评估；此提示不影响生成报告。</div>
           <div className="mt-1 space-y-0.5 text-[11px] text-[#8A6B42]">
             {incompleteReadingRows.length > 0 ? incompleteReadingRows.map((row) => {
               const unread = Array.isArray(row.unread_pages) ? row.unread_pages : []
@@ -1105,10 +1147,11 @@ export default function ReviewWorkbenchLayout({
                     : <span key={page}>第 {page} 页</span>
                 }) : <span>读取状态待确认</span>}
               </div>
-            }) : <div>存在材料读取覆盖缺口，请先查看材料状态或补充清晰材料。</div>}
+            }) : <div>存在材料读取覆盖缺口，报告将保留相关范围说明。</div>}
           </div>
         </section>
       )}
+      {completeDisabled && completeDisabledReason && <p role="status" data-testid="review-report-blocking-reason" className="col-span-full text-xs text-[#92400E]">{completeDisabledReason}</p>}
       <ScopeCoverageNotice coverage={scopeCoverage} />
       {!wide && !prototypeMode && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-[6px] border border-[#EFE6D8] bg-white px-3 py-2">

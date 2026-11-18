@@ -227,7 +227,7 @@ export default function CheckRunView({
           <div className="min-w-0">
             <strong data-testid="check-run-title" className="text-[16px] text-[#1A1A1A]">{runTitle}</strong>
             <p data-testid="check-run-note" className="mt-0.5 text-[15px] text-[#6B7280]">
-              {coverageUnavailable ? '已有结果保留，需核实当前运行状态。' : scopeGapReview ? 'AI 核查组已执行完成，但存在未读材料页，相关规则未形成覆盖结论。请进入人工复核；材料未变化前无需重试。' : failed ? '核查已中断，处理后可继续。' : receiptPending ? '规则步骤已完成，但 AI 辅助结果状态暂时无法确认。' : preparing ? `已读取 ${preparation.done} / ${preparationTotalLabel} 份材料` : completed ? `共发现 ${flow.issueCount} 项需人工复核的问题。` : '整册解析完成，按五步比对规则中…'}
+              {coverageUnavailable ? '已有结果保留，需核实当前运行状态。' : scopeGapReview ? 'AI 核查组已执行完成，但存在未读材料页，相关规则未形成覆盖结论。请进入人工复核；材料未变化前无需重试。' : failed ? '核查已中断，处理后可继续。' : receiptPending ? (receiptState === 'loading' ? '正在确认 AI 辅助核查结果状态…' : receiptState === 'warning' ? 'AI 辅助核查已完成，部分结果需人工核实。' : 'AI 辅助核查结果状态无法核实，请查看时间线或联系人工复核。') : preparing ? `已读取 ${preparation.done} / ${preparationTotalLabel} 份材料` : completed ? `共发现 ${flow.issueCount} 项需人工复核的问题。` : '整册解析完成，按五步比对规则中…'}
             </p>
           </div>
             {!scopeGapReview && <span data-testid="check-run-percent" className="shrink-0 text-[26px] font-bold leading-tight tabular-nums text-[#8B7355]">
@@ -265,7 +265,7 @@ export default function CheckRunView({
         {coverageUnavailable && (
           <div role="alert" className="mt-3 rounded-[8px] border border-[#F0D7A5] bg-[#FFF9EC] px-3.5 py-2.5 text-[13px] leading-relaxed text-[#8A5E1C]">
             {progress.ai_coverage.reason === 'rule_version_mismatch'
-              ? '当前规则或核查实现与本次运行不一致，AI 核查状态无法核实。请联系人工复核，已有结果已保留。'
+              ? '当前规则或核查实现与本次运行不一致，请点击「重新核查」按新规则重跑；已有结果已保留。'
               : 'AI 核查状态无法核实，请联系人工复核；已有结果已保留。'}
           </div>
         )}

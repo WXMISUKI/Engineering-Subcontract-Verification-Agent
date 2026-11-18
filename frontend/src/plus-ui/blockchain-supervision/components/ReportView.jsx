@@ -1,5 +1,8 @@
 import { ArrowLeft, Download, FileText, LoaderCircle } from 'lucide-react'
 import ReferenceSnapshot from './ReferenceSnapshot'
+import ReportTemplateV13 from './ReportTemplateV13'
+import ReportTemplateV14 from './ReportTemplateV14'
+import ReportWorksheetV14 from './ReportWorksheetV14'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { countOf, statusLabelOf } from '../lib/statusDisplay'
@@ -266,10 +269,14 @@ function ReportCoverageBlockingPanel({ blocking, onRefresh, refreshing }) {
 }
 
 export default function ReportView({
+  templateId = 'legacy',
+  onTemplateChange,
   report,
   onBack,
   onExport,
   exporting,
+  onExportWorksheet,
+  worksheetExporting = false,
   stage = 'draft',
   stageBusy = false,
   blockingByStage = {},
@@ -298,6 +305,7 @@ export default function ReportView({
   opinionExporting = null,
 }) {
   const blocking = blockingByStage?.[stage] || null
+  const templateDocument = opinion?.template_document || report?.template_document || null
   const readiness = normalizeReportReadiness(reportReadiness)
   const confirmedBlocked = !readiness.confirmed_output_ready
   // 材料缺口由材料清单承载，不计入人工问题处置摘要。
@@ -325,6 +333,15 @@ export default function ReportView({
 
   return (
     <div className={`flex h-full min-h-0 flex-col ${prototypeMode ? 'p-0' : 'px-8 py-6'}`}>
+      {onTemplateChange && <div className="mb-3 flex shrink-0 flex-wrap items-center gap-3 rounded border border-[#E5E5E5] bg-white px-4 py-3 text-xs">
+        <label htmlFor="report-template-select" className="font-medium text-[#374151]">报告模板</label>
+        <select id="report-template-select" value={templateId} onChange={(event) => onTemplateChange(event.target.value)} className="min-h-9 rounded border border-[#D1D5DB] bg-white px-2 text-[#374151]">
+          <option value="legacy">现行五阶段模板（默认）</option>
+          <option value="v1.3">V1.3 详细核查报告（审查人）</option>
+          <option value="v1.4">V1.4 正式审查意见（领导审阅）</option>
+        </select>
+        {(templateId === 'v1.3' || templateId === 'v1.4') && <span className="text-[#6B7280]">审批意见、期限和签字在导出 Word 中人工填写。</span>}
+      </div>}
       {!prototypeMode && <header className="flex shrink-0 flex-wrap items-center gap-3 border-b border-[#E5E5E5] pb-4">
         {!prototypeMode && <button type="button" onClick={onBack} className="inline-flex min-h-10 items-center gap-1 rounded border border-[#E5E5E5] px-3 text-xs text-[#6B7280] hover:bg-[#F7F1E9]">
           <ArrowLeft className="h-3.5 w-3.5" /> 返回核查
@@ -381,6 +398,9 @@ export default function ReportView({
           <p>草稿供应用内核对，正式输出尚未就绪。</p>
           {readiness.blocking_reasons.map((reason, index) => <p key={index}>{reason.message}</p>)}
         </section>}
+        {(readiness.warnings || []).length > 0 && <section role="status" data-testid="report-readiness-warnings" className="mb-3 rounded border border-[#E5E5E5] bg-[#FAFAFA] px-4 py-3 text-xs text-[#6B7280]">
+          {readiness.warnings.map((warning, index) => <p key={index}>{warning.message}</p>)}
+        </section>}
         {completed && !prototypeMode && <p data-testid="report-readonly-note" className="mb-3 text-xs leading-relaxed text-[#6B7280]">本轮已收口，报告与结论为只读；历史版本仅供只读回看，未提供冻结接口。</p>}
         {blocking ? (
           <ReportCoverageBlockingPanel blocking={blocking} onRefresh={onRefresh} refreshing={refreshing} />
@@ -399,32 +419,53 @@ export default function ReportView({
           </div>
         ) : (
           <>
-            {report.draft_notice && <p data-testid="report-draft-notice" className="mb-4 rounded border border-[#F0DCB8] bg-[#FDFAF4] px-4 py-3 text-xs leading-relaxed text-[#92400E]">{report.draft_notice}</p>}
+            {report.draft_notice && templateId !== 'v1.4' && <p data-testid="report-draft-notice" className="mb-4 rounded border border-[#F0DCB8] bg-[#FDFAF4] px-4 py-3 text-xs leading-relaxed text-[#92400E]">{report.draft_notice}</p>}
             {!prototypeMode && (report.scope_statements || []).length > 0 && <div data-testid="report-scope-statements" className="mb-4 space-y-1 text-xs leading-relaxed text-[#6B7280]">{report.scope_statements.map((statement, index) => <p key={index}>{statement}</p>)}</div>}
             {prototypeMode && (
               <section data-testid="report-formal-opinion" className="mb-4 rounded border border-[#E5E5E5] bg-white px-4 py-3">
                 <div data-testid="report-generate-gate" className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <h2 className="text-sm font-semibold text-[#1A1A1A]">正式意见书</h2>
+                    <h2 className="text-sm font-semibold text-[#1A1A1A]">{templateId === 'v1.4' ? '正式审查意见' : '正式意见书'}</h2>
                   </div>
                   <div className="flex flex-wrap items-center justify-end gap-2">
-                    <button type="button" data-testid={opinion ? 'regenerate-formal-opinion' : 'generate-formal-opinion'} onClick={onGenerateOpinion} disabled={opinionLoading || !onGenerateOpinion || confirmedBlocked} aria-busy={opinionLoading || undefined} className="inline-flex min-h-8 items-center gap-1.5 rounded border border-[#8B7355] bg-[#8B7355] px-3 text-xs text-white disabled:cursor-not-allowed disabled:opacity-60">
-                      {opinionLoading && <LoaderCircle aria-hidden="true" className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />}
-                      <span>{opinionLoading ? (opinion ? '正在重新生成…' : '正在生成…') : (opinion ? '重新生成正式意见书' : '生成正式意见书')}</span>
-                    </button>
-                    {opinion && <div className="flex flex-wrap gap-2" aria-label="正式意见书导出"><button type="button" data-testid="opinion-export-word" disabled={opinionLoading || opinionExporting != null || confirmedBlocked} onClick={() => onExportOpinion?.('docx')} className="min-h-8 rounded border border-[#E5E5E5] bg-white px-2.5 text-[11px] text-[#6B7280] disabled:opacity-60">{opinionExporting === 'docx' ? '导出中…' : '意见书 Word'}</button><button type="button" data-testid="opinion-export-pdf" disabled={opinionLoading || opinionExporting != null || confirmedBlocked} onClick={() => onExportOpinion?.('pdf')} className="min-h-8 rounded border border-[#E5E5E5] bg-white px-2.5 text-[11px] text-[#6B7280] disabled:opacity-60">{opinionExporting === 'pdf' ? '导出中…' : '意见书 PDF'}</button></div>}
+                    {templateId === 'v1.4' ? (
+                      <div data-testid="v14-report-exports" className="flex flex-wrap gap-2" aria-label="正式审查意见导出">
+                        <button type="button" data-testid={opinion ? 'v14-regenerate-opinion' : 'v14-generate-opinion'} onClick={onGenerateOpinion} disabled={opinionLoading || !onGenerateOpinion || confirmedBlocked} aria-busy={opinionLoading || undefined} className="inline-flex min-h-8 items-center gap-1.5 rounded border border-[#8B7355] bg-[#8B7355] px-3 text-xs text-white disabled:cursor-not-allowed disabled:opacity-60">
+                          {opinionLoading && <LoaderCircle aria-hidden="true" className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />}
+                          <span>{opinionLoading ? (opinion ? '正在重新生成…' : '正在生成…') : (opinion ? '重新生成意见书' : '生成意见书')}</span>
+                        </button>
+                        <button type="button" data-testid="v14-report-export-word" disabled={exporting != null || confirmedBlocked} onClick={() => onExport?.('confirmed', 'docx')} className="min-h-8 rounded border border-[#E5E5E5] bg-white px-2.5 text-[11px] text-[#6B7280] disabled:cursor-not-allowed disabled:opacity-60">{exporting === 'docx' ? '导出中…' : '导出 Word'}</button>
+                        <button type="button" data-testid="v14-report-export-pdf" disabled={exporting != null || confirmedBlocked} onClick={() => onExport?.('confirmed', 'pdf')} className="min-h-8 rounded border border-[#E5E5E5] bg-white px-2.5 text-[11px] text-[#6B7280] disabled:cursor-not-allowed disabled:opacity-60">{exporting === 'pdf' ? '导出中…' : '导出 PDF'}</button>
+                        <button type="button" data-testid="v14-worksheet-export-word" disabled={worksheetExporting || confirmedBlocked || !onExportWorksheet} onClick={() => onExportWorksheet?.()} className="min-h-8 rounded border border-[#E5E5E5] bg-white px-2.5 text-[11px] text-[#6B7280] disabled:cursor-not-allowed disabled:opacity-60">{worksheetExporting ? '导出中…' : '8表底稿 Word'}</button>
+                      </div>
+                    ) : (
+                      <>
+                        <button type="button" data-testid={opinion ? 'regenerate-formal-opinion' : 'generate-formal-opinion'} onClick={onGenerateOpinion} disabled={opinionLoading || !onGenerateOpinion || confirmedBlocked} aria-busy={opinionLoading || undefined} className="inline-flex min-h-8 items-center gap-1.5 rounded border border-[#8B7355] bg-[#8B7355] px-3 text-xs text-white disabled:cursor-not-allowed disabled:opacity-60">
+                          {opinionLoading && <LoaderCircle aria-hidden="true" className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />}
+                          <span>{opinionLoading ? (opinion ? '正在重新生成…' : '正在生成…') : (opinion ? '重新生成正式意见书' : '生成正式意见书')}</span>
+                        </button>
+                        {opinion && <div className="flex flex-wrap gap-2" aria-label="正式意见书导出"><button type="button" data-testid="opinion-export-word" disabled={opinionLoading || opinionExporting != null || confirmedBlocked} onClick={() => onExportOpinion?.('docx')} className="min-h-8 rounded border border-[#E5E5E5] bg-white px-2.5 text-[11px] text-[#6B7280] disabled:opacity-60">{opinionExporting === 'docx' ? '导出中…' : '意见书 Word'}</button><button type="button" data-testid="opinion-export-pdf" disabled={opinionLoading || opinionExporting != null || confirmedBlocked} onClick={() => onExportOpinion?.('pdf')} className="min-h-8 rounded border border-[#E5E5E5] bg-white px-2.5 text-[11px] text-[#6B7280] disabled:opacity-60">{opinionExporting === 'pdf' ? '导出中…' : '意见书 PDF'}</button></div>}
+                      </>
+                    )}
                   </div>
                 </div>
-                <div data-testid="prototype-report-exports" className="mt-3 flex flex-wrap items-center gap-2 border-t border-[#F3EDE3] pt-3" aria-label="审查报告导出">
+                {templateId !== 'v1.3' && templateId !== 'v1.4' && <div data-testid="prototype-report-exports" className="mt-3 flex flex-wrap items-center gap-2 border-t border-[#F3EDE3] pt-3" aria-label="审查报告导出">
                   <span className="mr-1 text-[11px] text-[#6B7280]">审查报告</span>
                   <button type="button" data-testid="prototype-report-export-word" disabled={exporting != null || confirmedBlocked} onClick={() => onExport?.('confirmed', 'docx')} className="min-h-8 rounded border border-[#E5E5E5] bg-white px-2.5 text-[11px] text-[#6B7280] disabled:cursor-not-allowed disabled:opacity-60">{exporting === 'docx' ? '导出中…' : '导出 Word'}</button>
                   <button type="button" data-testid="prototype-report-export-pdf" disabled={exporting != null || confirmedBlocked} onClick={() => onExport?.('confirmed', 'pdf')} className="min-h-8 rounded border border-[#E5E5E5] bg-white px-2.5 text-[11px] text-[#6B7280] disabled:cursor-not-allowed disabled:opacity-60">{exporting === 'pdf' ? '导出中…' : '导出 PDF'}</button>
-                </div>
+                </div>}
                 {opinionError && <p data-testid="formal-opinion-error" role="alert" className="mt-2 rounded border border-[#F3C9C9] bg-[#FDF3F3] px-3 py-2 text-xs text-[#C62828]">正式意见书读取失败：{opinionError}</p>}
               </section>
             )}
-            {report.business_document && <BusinessDocument document={report.business_document} basicInformation={report.basic_information} />}
-            {!report.business_document && prototypeMode && <section data-testid="prototype-report-body" className="space-y-3">
+            {templateDocument
+              ? (templateDocument.template_id === 'v1.4'
+                  ? <>
+                      <ReportTemplateV14 document={templateDocument} />
+                      <ReportWorksheetV14 attachments={templateDocument.attachments || []} />
+                    </>
+                  : <ReportTemplateV13 document={templateDocument} />)
+              : report.business_document && <BusinessDocument document={report.business_document} basicInformation={report.basic_information} />}
+            {!report.template_document && !report.business_document && prototypeMode && <section data-testid="prototype-report-body" className="space-y-3">
               <BusinessReportStructureCard businessReport={report?.business_report} />
               <QualificationSummaryCard summary={qualificationSummary} prototypeMode />
               <p data-testid="report-overall-summary" className="sr-only">{allIssues.some((item) => item.material_only) ? '当前报告已形成，可查看逐项处置情况。' : (report.summary?.headline || '当前报告已形成，可查看逐项处置情况。')}</p>
@@ -433,7 +474,7 @@ export default function ReportView({
               <ReferenceSnapshot key={report.reference_snapshot?.review_run_id || 'no-reference'} snapshot={report.reference_snapshot ?? null} onDownload={onDownloadReference} />
               <div data-testid="report-prototype-banner" className="rounded border border-[#E5E5E5] bg-[#FAFAF7] px-4 py-3 text-xs leading-relaxed text-[#6B7280]">报告保留机器原始结论、依据、证据和自动核查覆盖限制；人工处置只作为独立记录，不覆盖机器事实。</div>
             </section>}
-            {!report.business_document && !prototypeMode && <>
+            {!report.template_document && !report.business_document && !prototypeMode && <>
              <BusinessReportStructureCard businessReport={report?.business_report} />
              <QualificationSummaryCard summary={qualificationSummary} />
              {coverage && (

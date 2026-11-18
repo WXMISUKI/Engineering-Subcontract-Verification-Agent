@@ -230,6 +230,7 @@ def plan_review_batches(items: list[dict], *, max_chars: int = MAX_REQUEST_JSON_
                     entry = {**identity_field, "item_id": item.get("item_id"), "subject_id": subject_id,
                              "kind": item.get("kind"),
                              "item_label": item.get("item_label") or item["item_id"],
+                             "recall_mode": item.get("recall_mode") or "deterministic",
                              "incomplete_material_scope": item.get("incomplete_material_scope", False) or removed_noise,
                              **({"scope_selection_fingerprint": item["scope_selection"]["input_fingerprint"]}
                                 if isinstance(item.get("scope_selection"), dict)
@@ -312,6 +313,11 @@ async def execute_review_batch(*, client, batch: dict, on_usage=None, max_attemp
         '证据不足不能判为未命中，也不能推断不存在；无可提出建议时返回空 proposals。'
         if grouped and all(key[0] == "candidate_id" for key in grouped) else ''
     )
+    semantic_instruction = (
+        '候选输入中的 recall_mode=semantic 表示字面触发词未命中但工程范围片段可读；此时可以依据具体工程事实提出人工核实线索，'
+        '但必须引用输入中的精确工程范围原文和冻结规则原文，不能把没有候选写成未命中或符合。'
+        if grouped and any(entry.get("recall_mode") == "semantic" for entry in entries) else ''
+    )
     try:
         response = await _request_review_json(client,
             "逐项核查输入，在有需要时提出待人工核实的建议，不推断缺失事实，不输出无风险结论。"
@@ -320,7 +326,7 @@ async def execute_review_batch(*, client, batch: dict, on_usage=None, max_attemp
             "每项 allowed_reference_ids 是该项唯一允许引用的依据编号；rule_evidence 的 reference_id 必须从本项列表逐字复制，依据 quote 必须从该编号对应的 text 逐字复制。"
             "指定主体名称时每条材料引文必须包含该名称。"
             "仅提供文本时不能根据文字缺少图形而断言网络图缺失，须提示查看原页。"
-            + candidate_instruction + MODEL_EVIDENCE_INSTRUCTIONS +
+            + candidate_instruction + semantic_instruction + MODEL_EVIDENCE_INSTRUCTIONS +
             '输出 JSON 对象：{"proposals":[{' + identity_example + ',"item_id":"核查项",'
             '"subject_id":主体ID或null,"status":"hit或undecidable","message":"说明",'
             '"material_evidence":[{"material_id":整数,"page":整数,"quote":"材料原文"}],'
@@ -374,6 +380,7 @@ async def execute_review_batch(*, client, batch: dict, on_usage=None, max_attemp
         references = first["references"]
         if any(entry["item_id"] != first["item_id"] or entry["subject_id"] != first["subject_id"]
                or entry["references"] != references
+               or entry.get("recall_mode", "deterministic") != first.get("recall_mode", "deterministic")
                or entry.get("incomplete_material_scope", False) != first.get("incomplete_material_scope", False)
                for entry in group):
             results[key]["execution_status"] = "partial"
@@ -384,7 +391,7 @@ async def execute_review_batch(*, client, batch: dict, on_usage=None, max_attemp
             item_id=first["item_id"], materials=materials, references=references,
             required_subject_name=batch.get("required_subject_name"),
             incomplete_material_scope=first.get("incomplete_material_scope", False),
-            kind=first.get("kind"))
+            kind=first.get("kind"), recall_mode=first.get("recall_mode"))
         if validation.accepted:
             if validation.proposal not in results[key]["proposals"]:
                 results[key]["proposals"].append(validation.proposal)

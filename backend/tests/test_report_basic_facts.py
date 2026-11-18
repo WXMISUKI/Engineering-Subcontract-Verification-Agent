@@ -218,3 +218,72 @@ def test_packet_name_conflicting_with_contract_candidate_needs_review():
     packet = extract_report_basic_facts([material("施工总承包单位：甲建设有限公司")])
     contract = {"general_contractor": {"status": "unresolved", "candidate_company": "乙建设有限公司", "evidence": []}}
     assert merge_party_facts(contract, packet)["general_contractor"]["status"] == "conflict"
+
+
+def test_report_form_markdown_fills_item_scope_amount_and_recipient_without_ocr_retry():
+    item = material("$\\text { 分包单位认可表 }$\n$\\text { 致：上海沪申高速公路建设发展有限公司 }$\n"
+                    "| 序号 | 拟分包工程内容 | 拟分包范围 | 拟分包金额（万元） |\n"
+                    "| --- | --- | --- | --- |\n"
+                    "| 1 | 预制构件吊装劳务 | K1287+958.203~K1289+454.891 | 1583.4648 |")
+    item.role = "labor"
+    facts = extract_report_basic_facts([item])
+    assert facts["subcontract_item_name"]["value"] == "预制构件吊装劳务"
+    assert facts["subcontract_scope"]["value"] == "K1287+958.203~K1289+454.891"
+    assert (facts["subcontract_amount"]["value"], facts["subcontract_amount"]["unit"]) == ("1583.4648", "万元")
+    assert facts["employer_recipient_candidates"][0]["value"] == "上海沪申高速公路建设发展有限公司"
+
+
+def test_html_submission_table_and_explicit_submission_date():
+    facts = extract_report_basic_facts([material("报送日期：2026年8月11日\n<table><tr><th>拟分包工程内容</th><th>拟分包金额（万元）</th></tr>"
+                                                "<tr><td>吊装劳务</td><td>1,583.4648</td></tr></table>")])
+    assert facts["subcontract_amount"]["value"] == "1583.4648"
+    assert facts["submitted_date"]["value"] == "2026-08-11"
+    assert extract_report_basic_facts([material("项目经理签字\n2026年8月11日")])["submitted_date"]["value"] is None
+
+
+def test_bracketed_submission_date_in_packet_intro_is_extracted_with_evidence():
+    item = material("根据相关法律法规，对你部【11月10日】报送的分包材料实施审查。")
+    item.role = "packet"
+
+    fact = extract_report_basic_facts([item])["submitted_date"]
+
+    assert fact["status"] == "matched"
+    assert fact["value"] == "11月10日"
+    assert fact["evidence"][0]["quote"] == "根据相关法律法规，对你部【11月10日】报送的分包材料实施审查。"
+
+
+def test_bracketed_and_labeled_submission_dates_merge_without_losing_year():
+    item = material("你部【11月10日】报送的材料\n报送日期：2026年11月10日")
+    item.role = "packet"
+
+    fact = extract_report_basic_facts([item])["submitted_date"]
+
+    assert fact["status"] == "matched"
+    assert fact["value"] == "2026-11-10"
+    assert len(fact["evidence"]) == 2
+
+
+def test_project_dash_spaces_and_parenthesis_are_equivalent_but_road_ranges_are_not():
+    names = ["G15公路嘉金段（G1503公路-S32公路）改扩建工程主线施工6标",
+             "G15公路嘉金段(G1503 公路—S32公路)改扩建工程主线施工6标"]
+    facts = extract_report_basic_facts([material(name, material_id=index) for index, name in enumerate(names)])
+    assert facts["project_name"]["status"] == "matched"
+    assert len(facts["project_name"]["evidence"]) == 2
+    facts = extract_report_basic_facts([material(names[0]), material(names[1].replace("S32", "S33"), material_id=2)])
+    assert facts["project_name"]["status"] == "conflict"
+
+
+def test_report_contract_view_excludes_historical_performance_without_modifying_original():
+    from copy import deepcopy
+    from app.plus.blockchain_supervision.report_basic_facts import current_contract_materials
+    from app.plus.blockchain_supervision.contract_party_evidence import resolve_contract_party_evidence
+    item = material("工程名称：当前公路改扩建工程主线施工6标")
+    item.role = "labor"
+    item.pages_json += [{"page": 10, "text": "劳务分包合同\n工程名称：机场四期工程\n发包人：历史建设有限公司\n承包人：分包建设有限公司"},
+                        {"page": 45, "text": "劳务分包合同\n工程名称：当前公路改扩建工程主线施工6标安装工程\n发包人：本次建设有限公司\n承包人：分包建设有限公司"}]
+    original = deepcopy(item.pages_json)
+    view = current_contract_materials([item], {"status": "matched", "value": "当前公路改扩建工程主线施工6标"})
+    parties = resolve_contract_party_evidence(view)
+    assert parties["general_contractor"]["candidate_company"] == "本次建设有限公司"
+    assert parties["subcontractor"]["company"] == "分包建设有限公司"
+    assert item.pages_json == original

@@ -211,6 +211,30 @@ def test_long_term_validity_produces_undecidable_not_hit():
     assert "有效期" in findings[0].message and "人工核对" in findings[0].message
 
 
+def test_traffic_safety_cert_split_line_period_is_valid():
+    """交安证「有效期」与两行日期分离时仍能读出有效期，不误报未见有效期。"""
+    text = ("公路水运工程施工企业主要负责人和安全生产管理人员安全生产考核合格证书\n"
+            "姓名:于文祥\n企业名称:武汉龙辰建设有限公司2025-06-10\n"
+            "证书编号：鄂交安C25G01400\n考核部门:\n有效期:\n2028-06-10\n至\n2025-06-10")
+    findings = a2_check.run_cert_validity_check(
+        _task(), [_mat(30, "交安证.pdf", text)], baseline=BASE)
+    assert not any("未见可识别有效期" in finding.message for finding in findings)
+    assert any(finding.status == STATUS_MISS and "均在有效期内" in finding.message
+               for finding in findings)
+
+
+def test_traffic_safety_cert_label_after_dates_is_valid():
+    """OCR 把「有效期：」排在日期之后时，仍按同页两个日期识别有效期。"""
+    text = ("公路水运工程施工企业主要负责人和安全生产管理人员安全生产考核合格证书\n"
+            "姓名:于文祥\n性别:男\n2028-06-10\n至\n企业名称:武汉龙辰建设有限公司\n"
+            "2025-06-10\n证书编号：鄂交安C25G01400\n考核部门:\n有效期:")
+    findings = a2_check.run_cert_validity_check(
+        _task(), [_mat(31, "交安证.pdf", text)], baseline=BASE)
+    assert not any("未见可识别有效期" in finding.message for finding in findings)
+    assert any(finding.status == STATUS_MISS and "均在有效期内" in finding.message
+               for finding in findings)
+
+
 def test_scanned_material_undecidable_message_mentions_manual_review():
     """扫描件（无文本层）→ 不可判定，绝不断言「未上传/缺失」。"""
     mat = _mat(5, "社保缴费证明.pdf", "")  # pages 为空
@@ -437,6 +461,15 @@ def test_registered_to_consistent_is_miss():
                                                      _reg_mats(CERT_IN_HOUSE))
     assert len(findings) == 1 and findings[0].status == STATUS_MISS
     assert "均为" in findings[0].message
+
+
+def test_registered_to_accepts_enterprise_name_label():
+    """交安证以「企业名称」标注持证企业时也应纳入一致性比对。"""
+    cert = ("公路水运工程施工企业主要负责人和安全生产管理人员安全生产考核合格证书 "
+            "姓名:于文祥 企业名称:上海隧道工程有限公司 证书编号：鄂交安C25G01400 "
+            "考核部门:湖北省交通运输厅 有效期至2030年1月1日")
+    findings = a2_check.run_cert_registered_to_check(_task(), _reg_mats(cert))
+    assert len(findings) == 1 and findings[0].status == STATUS_MISS
 
 
 def test_registered_to_missing_baseline_is_undecidable():
@@ -727,6 +760,25 @@ def test_name_coverage_alone_is_undecidable_with_facts():
     assert f.item_id == "A2-01" and "2 名主要管理人员" in f.message
     assert "同一人" in f.message and "劳动" in f.message
     assert {ref["name"] for ref in f.evidence_json} == {"王建国", "李秀英"}
+    assert {ref["evidence_side"] for ref in f.evidence_json} == {
+        "management_roster", "social_record"
+    }
+    roster_refs = [ref for ref in f.evidence_json if ref["evidence_side"] == "management_roster"]
+    assert {ref["post"] for ref in roster_refs} == {"项目经理", "安全员"}
+    assert all("person_key" in ref and "subject_id" in ref for ref in f.evidence_json)
+
+
+def test_person_evidence_keeps_same_name_subjects_separate():
+    """同名跨主体时，逐人证据引用保留主体键，不能相互借用岗位。"""
+    roster_a = _mat(12, "甲项目人员名单.pdf", ROSTER_OK, role="packet")
+    roster_a.subject_id = 7
+    social_b = _mat(13, "乙项目社保.pdf", "参保人员 姓名：王建国", role="packet")
+    social_b.subject_id = 8
+    finding = a2_check.run_person_consistency_check(_task(), [roster_a, social_b])[0]
+    refs = [ref for ref in finding.evidence_json if ref["person_key"] == "王建国"]
+    assert {ref["subject_id"] for ref in refs} == {7, 8}
+    assert {ref["evidence_side"] for ref in refs} == {"management_roster", "social_record"}
+    assert [ref["post"] for ref in refs if ref["evidence_side"] == "social_record"] == [None]
 
 
 def test_missing_name_requires_supplement_not_automatic_violation():
@@ -795,10 +847,10 @@ def test_scanned_social_requires_ingestion_result_before_review():
 def test_service_person_consistency_replaces_on_rerun(db_session):
     task = service.create_task(db_session, conversation_id=101, title="A2P",
                                scope_a1=False, scope_a3=True, created_by=1)
-    soc = service.add_material(db_session, task, file_name="社保缴费证明.pdf")
+    soc = service.add_material(db_session, task, file_name="社保缴费证明.pdf", role="packet")
     soc.pages_json = [{"page": 1, "text": SOCIAL_COVERS_ONE}]
     soc.parse_state = "done"
-    ros = service.add_material(db_session, task, file_name="主要管理人员名单.pdf")
+    ros = service.add_material(db_session, task, file_name="主要管理人员名单.pdf", role="packet")
     ros.pages_json = [{"page": 1, "text": ROSTER_OK}]
     ros.parse_state = "done"
     db_session.commit()
@@ -815,10 +867,14 @@ def test_report_person_section_registered(db_session):
     from app.plus.blockchain_supervision import reporting
     task = service.create_task(db_session, conversation_id=101, title="A2PR",
                                scope_a1=False, scope_a3=True, created_by=1)
-    soc = service.add_material(db_session, task, file_name="社保缴费证明.pdf")
+    subject = service.create_subject(db_session, task, name="上海测试建设有限公司",
+                                     subject_type="professional")
+    soc = service.add_material(db_session, task, file_name="社保缴费证明.pdf", role="packet",
+                               subject_id=subject.id)
     soc.pages_json = [{"page": 1, "text": SOCIAL_COVERS_ONE}]
     soc.parse_state = "done"
-    ros = service.add_material(db_session, task, file_name="主要管理人员名单.pdf")
+    ros = service.add_material(db_session, task, file_name="主要管理人员名单.pdf", role="packet",
+                               subject_id=subject.id)
     ros.pages_json = [{"page": 1, "text": ROSTER_OK}]
     ros.parse_state = "done"
     db_session.commit()
@@ -828,6 +884,10 @@ def test_report_person_section_registered(db_session):
     # A-13（B2）：报告条目按严重度+三态重排，故按 item_id 取而非位置取。
     unit = next(it for it in sec["items"] if it["item_id"] == "A2-01")
     assert sec["checked"] and unit["label"] == "社保资料覆盖管理人员"
+    assert any(ref.get("person_key") == "王建国" and ref.get("evidence_side") == "management_roster"
+               for ref in unit["evidence_list"])
+    assert any(ref.get("person_key") == "王建国" and ref.get("evidence_side") == "social_record"
+               for ref in unit["evidence_list"])
 
 
 def test_report_label_fallback_for_legacy_a2_01_p():
@@ -899,6 +959,17 @@ def test_qualification_no_scope_label_is_undecidable():
     sub = _mat(24, "02_分包合同_桩基.pdf", "本合同经双方协商签订，无内容标签。", role="sub")
     findings = a2_check.run_qualification_match_check(_task(), [sub, lic])
     assert findings[0].status == STATUS_UNDECIDABLE and "分包工程内容" in findings[0].message
+
+
+def test_qualification_labor_certificate_is_miss_without_professional_category():
+    labor = _mat(25, "劳务报审.pdf",
+                 "3.资质证书\n建筑业企业施工劳务备案证书\n"
+                 "企业名称:武汉龙辰建设有限公司\n"
+                 "证书编号:D342238415有效期至:2029年08月04日", role="labor")
+    findings = a2_check.run_qualification_match_check(_task(), [labor])
+    assert len(findings) == 1 and findings[0].status == STATUS_MISS
+    assert "施工劳务备案证书" in findings[0].message
+    assert "不适用专业承包类别匹配" in findings[0].message
 
 
 def test_qualification_reads_labor_contract_scope_without_guessing_certificate():

@@ -95,6 +95,11 @@ function QueueItem({ item, selected, onSelect, actions, submitting, onReview, ma
                 {reviewBucket(item) === 'accepted' ? '已采纳' : '已忽略'}
               </span>
             )}
+            {hasReviewResult && item.review?.carried && (
+              <span className="rounded border border-[#DCE5EE] bg-[#F7F9FB] px-1.5 py-0.5 text-[10px] leading-none text-[#587089]">
+                沿用上一轮意见
+              </span>
+            )}
             {/* 机器状态与“未复核”不在问题卡重复展示；待处置数量和采纳/忽略筛选已表达处理状态。 */}
             {item.invalidated && (
               <span data-testid={`finding-invalidated-${item.findingId}`} className="rounded border border-[#F0DCB8] bg-[#FFFDF8] px-1 py-0.5 text-[10px] leading-none text-[#92400E]">
@@ -143,6 +148,7 @@ function QueueItem({ item, selected, onSelect, actions, submitting, onReview, ma
 
 function GroupBlock({ group, selectedFindingId, onSelect, actions, submitting, onReview, materialsById, containerIds, onOpenSource, hideItemActions = false, prototypeMode = false }) {
   const items = group.items || []
+  const qualityGroups = (group.qualityGroups || []).filter((qualityGroup) => qualityGroup.count > 1)
   return (
     <div className="mb-3 last:mb-0" data-group-key={group.key} data-group-kind={group.kind}>
       <div className="flex items-baseline gap-2 px-1.5 py-1">
@@ -153,6 +159,20 @@ function GroupBlock({ group, selectedFindingId, onSelect, actions, submitting, o
           <b className="text-amber-600">待处理 {(group.hitCount || 0) + (group.undecidableCount || 0)}</b>
         </span>
       </div>
+      {qualityGroups.length > 0 && (
+        <div data-testid="quality-group-summary" className="mb-1 space-y-0.5 px-1.5 text-[10px] leading-relaxed text-[#6B7280]">
+          {qualityGroups.map((qualityGroup) => {
+            const material = materialsById?.[qualityGroup.materialId]
+            const materialLabel = material?.file_name || `材料 #${qualityGroup.materialId}`
+            return (
+              <p key={qualityGroup.key}>
+                同页质量问题 {qualityGroup.count} 条：{materialLabel} · 第 {qualityGroup.page} 页
+                <span className="ml-1 text-[#9CA3AF]">（逐项回执）</span>
+              </p>
+            )
+          })}
+        </div>
+      )}
       <ul className="space-y-0.5">
         {items.map((item) => (
           <QueueItem

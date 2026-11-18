@@ -563,8 +563,8 @@ def reading_coverage(material) -> dict:
     - `suspect_pages`：`parse_incomplete.ocr_suspect_pages`（已取得文字但质量可疑，需人工核对）；
     - `degraded`：存在未读页，或整体读取失败/无文本层（`no_text_layer` /
       `parse_failed` / `parse_interrupted`）。
-    - `reading_complete`：已知总页数、每一页都有可读正文，且没有读取降级；这是
-      最终报告的读取闸门，不等同于 `parse_state == "done"` 或核查组已完成。
+    - `reading_complete`：已知总页数、每一页都有可读正文，且没有读取降级；作为
+      报告中的质量/覆盖提示，不等同于 `parse_state == "done"` 或核查组已完成。
 
     页集合由保存的解析记录、旧缓存横置检测和有效人工复核共同派生；
     仅人工确认且存在正文的页可以解除对应质量疑点。本函数不写库。

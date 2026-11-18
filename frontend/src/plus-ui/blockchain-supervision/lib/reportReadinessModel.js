@@ -7,7 +7,7 @@ export function normalizeReportReadiness(dto) {
     && Array.isArray(dto.reading_quality?.pages) && Array.isArray(dto.finding_review?.blocking)
     && Array.isArray(dto.blocking_reasons) && Array.isArray(dto.next_actions)
     && (!dto.confirmed_output_ready || (dto.execution.state === 'completed'
-      && dto.reading_quality.state !== 'pending' && dto.finding_review.blocking.length === 0))
+      && dto.finding_review.blocking.length === 0))
   if (valid) return dto
   return { draft_readable: false, confirmed_output_ready: false, task_close_ready: false,
     blocking_reasons: [{ code: 'readiness_unavailable', message: '报告就绪状态尚未确认，请刷新任务后重试。' }] }

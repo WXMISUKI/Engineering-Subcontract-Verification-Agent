@@ -27,7 +27,7 @@ from . import (a1_check, a2_check, a3_check, extract, internal_records, parsing,
                semantic_review, knowledge_runs, reference_snapshots, subject_reviews,
                ruleset, rule_item_catalog, checklist, knowledge, material_versions, supplement_impact,
                supplement_generation, ai_guarded_review, ai_advisory_snapshots, ai_review_batch, reference_visibility,
-               personnel_evidence, certificate_number_check, evidence_projection, identity_observation, negative_candidate_plan,
+               personnel_evidence, certificate_facts, certificate_number_check, evidence_projection, identity_observation, negative_candidate_plan,
                section_projection, material_confirmation, report_policy, optional_source_scope)
 from ..startup_conditions_check.llm import client_from_env, run_sync
 from .classify import ROLE_LABELS, classify_material, validate_materials, validate_role
@@ -2902,7 +2902,7 @@ def materialize_zip_children(db: Session, task: BsTask, container: BsMaterial,
 _CARRY_KEY_FIELDS = ("subject_id", "item_id", "material_id", "page")
 _CARRY_CONCLUSION_FIELDS = (
     "status", "severity", "confidence", "message", "quote", "page",
-    "missing_json", "evidence_json", "location_mode",
+    "missing_json", "evidence_json", "location_mode", "finding_semantics",
 )
 
 
@@ -2937,7 +2937,12 @@ def _inherit_review(finding: BsFinding, carry_index: dict) -> dict | None:
 
     if all(_same_value(getattr(finding, field), old.get(field))
            for field in _CARRY_CONCLUSION_FIELDS):
-        return _json_safe(deepcopy(old.get("review_json")))
+        review = _json_safe(deepcopy(old.get("review_json")))
+        # 显式标注“沿用上一轮回执”，避免旧时间戳被误读为本次没有更新。
+        if isinstance(review, dict):
+            review["carried"] = True
+            review["carried_at"] = datetime.now().isoformat(timespec="seconds")
+        return review
     return _json_safe({
         "invalidated": {
             "at": datetime.now().isoformat(timespec="seconds"),
@@ -3091,6 +3096,9 @@ def run_a1_checks(db: Session, task: BsTask) -> list:
         a3_findings = (db.query(BsFinding)
                        .filter(BsFinding.task_id == task.id, BsFinding.kind == "completeness")
                        .all())
+        # W16-01 的“三侧资格证据”直接取证照事实，避免 A3 已识别证照后仍按缺件判定。
+        qualification_evidence = certificate_facts.qualification_evidence(
+            certificate_facts.extract_certificate_facts(materials))
         negative_findings = a1_check.run_negative_list_check(task, materials)
         # 占比规则当前默认关闭；新策略只在冻结的 A1-01 适用时传递来源状态。
         ratio_findings = []
@@ -3115,7 +3123,8 @@ def run_a1_checks(db: Session, task: BsTask) -> list:
                     + a1_check.run_transfer_relations_check(task, materials, **optional_source_args)
                     + a1_check.run_illegal_subcontract_check(
                         task, materials, a3_findings=a3_findings,
-                        negative_list_findings=negative_findings, **optional_source_args))
+                        negative_list_findings=negative_findings,
+                        qualification_evidence=qualification_evidence, **optional_source_args))
         # BS-P1-11：开放条款仅登记，不参与 hit/miss/undecidable 统计。
         findings += a1_check.run_open_term_registrations(task, findings)
         findings, superseded = a1_check.supersede_dependency_findings(findings)
@@ -3744,7 +3753,15 @@ def current_background_execution_state(db: Session, task: BsTask) -> str | None:
     review_run_id = (task.options_snapshot_json or {}).get(reference_snapshots.REVIEW_POINTER)
     if not review_run_id:
         return None
-    return background_ai_review.job_status(db, task, review_run_id).get("state")
+    status = background_ai_review.job_status(db, task, review_run_id)
+    state = status.get("state")
+    # 已完成的后台 job 可能因规则指纹变化导致覆盖率不可核实（last_recorded_state=completed）。
+    # 这时没有“可能仍在运行”的进程，终态事件本身足以证明可以安全重核查；
+    # 不能把“覆盖率失效”误报成“执行状态未知”而把重核查锁死。
+    terminal = status.get("last_recorded_state")
+    if state == "unavailable" and terminal in {"completed", "failed", "review_required"}:
+        return terminal
+    return state
 
 
 def _record_ai_advisory_usage(bind, *, usage_batches, user_id, user_type, conversation_id, task_id, model_code):
@@ -3917,7 +3934,7 @@ def sync_candidate_review_records(db: Session, task: BsTask, reviewable: list, p
         if key in prior_rows:
             old = prior_rows[key]
             fields = ("subject_id", "item_id", "kind", "status", "message", "material_id", "page", "quote",
-                      "source", "evidence_json", "location_mode", "severity", "confidence")
+                      "source", "evidence_json", "location_mode", "finding_semantics", "severity", "confidence")
             if (any(getattr(old, field) != getattr(finding, field) for field in fields)
                     or previous[key].get("rule_evidence") != rule_refs):
                 raise AiContextChanged("候选复核内容已变化")
@@ -5174,6 +5191,7 @@ def _review_version_snapshot(db: Session, task: BsTask, *, trigger: str) -> dict
         "quote": finding.quote,
         "page": finding.page,
         "location_mode": finding.location_mode,
+        "finding_semantics": finding.finding_semantics,
         "evidence": finding.evidence_json,
         "source": finding.source,
         "review": finding.review_json,
@@ -5219,9 +5237,9 @@ def _review_version_snapshot(db: Session, task: BsTask, *, trigger: str) -> dict
         "scope_coverage": scope_coverage,
         "ai_advisories": ai_advisory_snapshots.collect_current_advisories(db, task),
         "report": None if stale_rules else reporting.build_report(
-            db, task, scope_coverage=scope_coverage),
+            db, task, scope_coverage=scope_coverage, include_templates=True),
         "opinion": None if stale_rules else reporting.build_opinion(
-            db, task, scope_coverage=scope_coverage),
+            db, task, scope_coverage=scope_coverage, include_templates=True),
         **({"report_unavailable_reason": "ruleset_version_mismatch" if task.ruleset_version
             else "ruleset_version_unknown"} if stale_rules else {}),
     })
@@ -5690,8 +5708,8 @@ def version_diff(db: Session, task: BsTask, ref_a, ref_b, *, user=None) -> dict:
 def task_reading_coverage(db: Session, task: BsTask) -> dict:
     """当前任务规则输入材料的读取覆盖投影。
 
-    `parse_state=done` 只表示解析流程退出，不代表每页都有正文；最终收口和
-    确认稿导出必须消费这里的统一投影。没有活动输入材料时返回 ``complete=None``，
+    `parse_state=done` 只表示解析流程退出，不代表每页都有正文；报告保留这里的
+    质量提示，但不要求人工确认页面才能收口。没有活动输入材料时返回 ``complete=None``，
     保留历史/契约任务的兼容读取口径，真正的已上传任务会得到 True/False。
     """
     materials = (db.query(BsMaterial)
@@ -5725,10 +5743,6 @@ def review_output_readiness(db: Session, task: BsTask) -> dict:
     全部必需结论，报告正文另明示其运行记录缺口，绝不补造本轮运行证据。
     """
     reading = task_reading_coverage(db, task)
-    if any(row.get("parse_state") == "failed" for row in reading["materials"]):
-        return {"ok": False, "code": "reading_incomplete", "missing_groups": [],
-                "pending_groups": [], "reading_coverage": reading,
-                "detail": "有材料解析失败，请重新读取材料后再完成核查"}
     selected = {group_id: group for group_id, group in reference_snapshots.CHECK_GROUPS.items()
                 if (task.scope_a1 if group["scope"] == "a1" else task.scope_a3)}
     kinds = {kind for (kind,) in db.query(BsFinding.kind)
@@ -5933,26 +5947,15 @@ def _report_output_readiness_base(db: Session, task: BsTask, *, require_reading_
                 return {"ok": False, "code": "supplement_in_progress", "missing_groups": [],
                         "pending_groups": [], "detail": "本轮 AI 辅助核查尚在执行，请等待完成"}
             from . import background_ai_review
-            if background_ai_review.job_status(db, task, snapshot.get("review_run_id"))["state"] != "completed":
+            if background_ai_review.job_status(db, task, snapshot.get("review_run_id"))["state"] not in {"completed", "review_required"}:
                 return {"ok": False, "code": "supplement_in_progress", "missing_groups": [],
                         "pending_groups": [], "detail": "本轮 AI 辅助核查尚未完成，请等待或重试"}
             coverage = ai_advisory_snapshots.collect_current_coverage(db, task, snapshot, reporting.report_review_blocking)
-            groups = (coverage or {}).get("groups") or []
-            if (not coverage or coverage.get("state") != "available"
-                    or {group.get("group_id") for group in groups} != set(snapshot.get("ai_auto_groups") or [])
-                    or any(group.get("state") != "available" or
-                           any((group.get("counts") or {}).get(name, 0) for name in ("not_started", "pending")) or
-                           (group.get("counts") or {}).get("failed", 0) > group.get("reviewable_failed", 0) or
-                           (group.get("counts") or {}).get("partial", 0) > group.get("reviewable_partial", 0) or
-                           ai_advisory_snapshots.blocking_not_run_count(group) != 0
-                           for group in groups)):
+            if not _ai_coverage_output_ready(db, task, snapshot, coverage):
                 return {"ok": False, "code": "supplement_in_progress", "missing_groups": [],
                         "pending_groups": [], "detail": "本轮 AI 辅助核查尚未完成，请等待或重试"}
     reading = task_reading_coverage(db, task)
-    if require_reading_complete and any(row.get("parse_state") == "failed" for row in reading["materials"]):
-        return {"ok": False, "code": "reading_incomplete", "missing_groups": [],
-                "pending_groups": [], "reading_coverage": reading,
-                "detail": "有材料解析失败，请重新读取材料后再生成确认报告"}
+    # 保留 require_reading_complete 参数以兼容调用方；OCR 质量仅披露，不再作为输出门禁。
     finding_count = (db.query(BsFinding)
                      .filter(BsFinding.task_id == task.id)
                      .count())
@@ -6053,8 +6056,45 @@ def _finding_review_projection(db: Session, task: BsTask, *, user=None) -> dict:
     return {"blocking": blocking}
 
 
+def _ai_coverage_output_ready(db: Session, task: BsTask, snapshot: dict, coverage: dict | None) -> bool:
+    """终态的范围限制可披露；失败、在途及未知原因不得借 OCR 提示放行。"""
+    groups = (coverage or {}).get("groups")
+    expected = snapshot.get("ai_auto_groups")
+    if (not coverage or coverage.get("state") != "available" or not isinstance(groups, list)
+            or not isinstance(expected, list) or len(groups) != len(expected)
+            or any(not isinstance(group, dict) for group in groups)
+            or {g.get("group_id") for g in groups} != set(expected)):
+        return False
+    has_reading_gap = False
+    for group in groups:
+        counts = group.get("counts") or {}
+        if not isinstance(counts, dict):
+            return False
+        values = [counts.get(key, 0) for key in ("not_started", "pending", "failed", "partial")]
+        partial = group.get("reviewable_partial", 0)
+        gap = group.get("reading_gap_not_run", 0)
+        if (group.get("state") != "available"
+                or any(type(value) is not int or value < 0 for value in [*values, partial, gap])
+                or any(values[:3]) or partial != counts.get("partial", 0)):
+            return False
+        blocking = ai_advisory_snapshots.blocking_not_run_count(group)
+        if blocking is None or blocking != gap:
+            return False
+        if gap:
+            if (group.get("group_id") != "a1"
+                    or set(group.get("failure_categories") or []) != {"incomplete_material_scope"}):
+                return False
+            has_reading_gap = True
+    if has_reading_gap:
+        from . import reading_gap_scope
+        # 根据当前代、材料归属和实际缺口页验证来源，不仅信任汇总计数。
+        if not reading_gap_scope.collect(db, task, snapshot, coverage):
+            return False
+    return True
+
+
 def ai_output_readiness(db: Session, task: BsTask) -> dict:
-    """只读执行门禁：人工处置不抵消必需执行失败/未完成，无信号不作未命中。"""
+    """只读执行门禁：OCR 覆盖限制仅提示，真实失败/未完成仍阻断。"""
     blocked = {"ok": False, "code": "ai_execution_incomplete", "missing_groups": [],
                "pending_groups": [], "detail": "部分 AI 辅助核查未完成，请返回核查页等待或重试"}
     if current_ai_advisory_pending(db, task):
@@ -6063,13 +6103,7 @@ def ai_output_readiness(db: Session, task: BsTask) -> dict:
     if snapshot and snapshot.get("ai_auto_enabled") is True:
         coverage = ai_advisory_snapshots.collect_current_coverage(
             db, task, snapshot, reporting.report_review_blocking)
-        groups = (coverage or {}).get("groups") or []
-        if (not coverage or coverage.get("state") != "available"
-                or {g.get("group_id") for g in groups} != set(snapshot.get("ai_auto_groups") or [])
-                or any(g.get("state") != "available"
-                       or any((g.get("counts") or {}).get(key, 0)
-                              for key in ("not_started", "pending", "failed", "partial"))
-                       or ai_advisory_snapshots.blocking_not_run_count(g) != 0 for g in groups)):
+        if not _ai_coverage_output_ready(db, task, snapshot, coverage):
             return blocked
     return {"ok": True}
 
@@ -6078,10 +6112,6 @@ def _formal_output_readiness(db: Session, task: BsTask, output: dict, *, user=No
     """正式输出/收口共享技术与人工判据；发布候选的差异由调用边界处理。"""
     if not output.get("ok"):
         return output
-    reading = output.get("reading_coverage") or task_reading_coverage(db, task)
-    if reading.get("complete") is False:
-        return {**output, "ok": False, "code": "reading_incomplete",
-                "reading_coverage": reading, "detail": "材料存在未读或质量待核页面，请核对读取后再正式输出或收口"}
     for readiness in (review_output_readiness(db, task), ai_output_readiness(db, task)):
         if not readiness.get("ok"):
             return {**output, **readiness}
@@ -6149,17 +6179,21 @@ def build_report_readiness(db: Session, task: BsTask, *, user=None) -> dict:
     if not close and not reasons:
         reasons.append({"code": "task_not_ready", "scope": "task_close", "message": "请先启动核查"})
     actions = []
-    if quality_state == "pending":
-        actions.append({"code": "review_reading_quality", "message_key": "review_reading_quality"})
     if execution_state != "completed":
         actions.append({"code": "rerun_execution", "message_key": "rerun_execution"})
     if finding_review["blocking"]:
         actions.append({"code": "review_findings", "message_key": "review_findings"})
+    warnings = []
+    if quality_state == "pending":
+        warnings.append({"code": "reading_quality_limited", "scope": "reading",
+                         "message": "部分页面识别不完整，相关内容尚未完整评估；此提示不阻断报告生成，报告将保留读取范围说明。",
+                         "evidence_refs": quality_pages})
     return {"schema_version": REPORT_READINESS_SCHEMA_VERSION,
             "draft_readable": output.get("ok") is True and supplement_publication(task).get("state") != "candidate",
             "confirmed_output_ready": confirmed, "task_close_ready": close,
-            "execution": {"state": execution_state}, "reading_quality": {"state": quality_state, "pages": quality_pages},
-            "finding_review": finding_review, "blocking_reasons": reasons, "next_actions": actions}
+            "execution": {"state": execution_state},
+            "reading_quality": {"state": quality_state, "pages": quality_pages, "blocking": False},
+            "finding_review": finding_review, "blocking_reasons": reasons, "next_actions": actions, "warnings": warnings}
 
 
 def complete_review(db: Session, task: BsTask) -> dict:
@@ -6583,6 +6617,62 @@ def start_page_text_refresh(db: Session, task: BsTask, material_id: int, page_no
             finish_page_text_refresh(db, task.id, lease["run_id"], "failed")
             raise
     return lease
+
+
+READING_QUALITY_EVENT = "material.reading_quality_reviewed"
+
+
+def record_reading_quality_review(db: Session, task: BsTask, material_id: int, pages: list[int], *,
+                                  reviewer: str, note: str = "", transcripts: dict | None = None) -> dict:
+    """记录页读取质量复核结果；只解除已核实页的疑点，不改写未请求页。
+
+    补读候选（``page-text-refresh``）默认标为待人工核验；本函数是复核落库入口：
+    复核人确认可读后写 ``reading_quality_review`` 记录，``reading_coverage`` 据此
+    把对应页从 unread/suspect 移入 read。可同时提交该页的核对转写，替换原 OCR 文本，
+    使后续规则读取到可核对的字段。
+    """
+    if (not isinstance(pages, list) or not pages or len(set(pages)) != len(pages)
+            or any(type(page) is not int or page < 1 for page in pages)):
+        raise ValueError("复核页码无效")
+    db.rollback()
+    db.refresh(task, with_for_update=True)
+    if task.state not in ("running", "review", "done"):
+        raise ValueError("任务状态不允许复核读取质量")
+    material = (db.query(BsMaterial)
+                .filter(BsMaterial.id == material_id, BsMaterial.task_id == task.id)
+                .with_for_update().first())
+    if (material is None or material.parse_state != "done"
+            or material.id not in {item.id for item in _rule_materials(db, task)}):
+        raise ValueError("材料不可复核或不属于当前有效材料")
+    gap = parsing.material_reading_gap(material)
+    if gap is None or any(page not in gap for page in pages):
+        raise ValueError("只能复核当前标记为未读或可疑的页")
+    cleaned = {}
+    for key, value in (transcripts or {}).items():
+        page_no = int(key)
+        if page_no not in pages or not isinstance(value, str) or not value.strip():
+            raise ValueError("复核转写内容无效")
+        cleaned[page_no] = value.strip()
+    reviewed_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    pages_json = deepcopy(material.pages_json or [])
+    for page in pages_json:
+        text = cleaned.get(page.get("page"))
+        if text is None:
+            continue
+        page["text"] = text
+        page["ocr_meta"] = {**(page.get("ocr_meta") or {}), "quality": "ocr_verified",
+                           "source": "vlm_review", "reviewed_at": reviewed_at}
+    material.pages_json = pages_json
+    material.degradations_json = [*(material.degradations_json or []), {
+        "kind": "reading_quality_review", "outcome": "readable", "pages": sorted(pages),
+        "reviewer": reviewer, "at": reviewed_at, "note": note,
+        "transcript_pages": sorted(cleaned)}]
+    add_event(db, task.id, READING_QUALITY_EVENT, stage="check", payload={
+        "material_id": material_id, "pages": sorted(pages), "reviewer": reviewer,
+        "at": reviewed_at, "transcript_pages": sorted(cleaned)}, commit=False)
+    db.commit()
+    return {"material_id": material_id, "pages": sorted(pages), "reviewed_at": reviewed_at,
+            "transcript_pages": sorted(cleaned)}
 
 
 def _page_text_candidate_signature(candidate: dict) -> str:
@@ -7037,6 +7127,7 @@ def rerun_task(db: Session, task: BsTask, *, scope: str = "all", item_ids=None,
             "missing_json": _json_safe(finding.missing_json),
             "evidence_json": _json_safe(finding.evidence_json),
             "location_mode": finding.location_mode,
+            "finding_semantics": finding.finding_semantics,
             "review_json": _json_safe(deepcopy(finding.review_json)),
         })
     # ④ 删旧结论：以实际计划为准；安全回退时全删，局部时只删实际条目。
@@ -7445,6 +7536,7 @@ EVENT_LABELS = {
     "material.replacement_requested": "已登记材料替代意图",
     "material.role_corrected": "已更正材料归属",
     "material.parsed": "材料已读取",
+    "material.reading_quality_reviewed": "已复核读取质量",
     "evidence.anchor_recovered": "已补充原文定位坐标",
     "material.parse_failed": "材料无法读取",
     # BS-P2-01（设计 98 §6.1）：显式替换旧材料后旧行标记被替代；payload 只带

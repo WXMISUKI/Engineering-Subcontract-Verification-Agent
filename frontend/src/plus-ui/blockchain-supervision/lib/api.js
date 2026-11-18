@@ -495,14 +495,16 @@ export async function enterBsMaterialEdit(taskId) {
 // - stage=draft / confirmed：均允许已启动任务读取中间结果；覆盖缺口由报告正文披露。
 // - 只有尚未开始核查或输入指纹失效等技术前提不足时返回 409 结构化 detail。
 // 错误对象保留 err.detail 与 err.status，供调用方区分覆盖提示与故障。
-export async function getBsReport(taskId, { signal, stage = 'draft' } = {}) {
-  const r = await fetch(`${BASE}/tasks/${taskId}/report?stage=${stage}`, { credentials: 'include', signal })
+const reportTemplateQuery = (templateId) => templateId && templateId !== 'legacy' ? `&template_id=${encodeURIComponent(templateId)}` : ''
+
+export async function getBsReport(taskId, { signal, stage = 'draft', templateId } = {}) {
+  const r = await fetch(`${BASE}/tasks/${taskId}/report?stage=${stage}${reportTemplateQuery(templateId)}`, { credentials: 'include', signal })
   return _json(r, 'bs report')
 }
 
 // 正式意见书读取：与报告使用同一审查代和稿别，只读取后端聚合事实。
-export async function getBsOpinion(taskId, { signal, stage = 'draft' } = {}) {
-  const r = await fetch(`${BASE}/tasks/${taskId}/opinion?stage=${stage}`, { credentials: 'include', signal })
+export async function getBsOpinion(taskId, { signal, stage = 'draft', templateId } = {}) {
+  const r = await fetch(`${BASE}/tasks/${taskId}/opinion?stage=${stage}${reportTemplateQuery(templateId)}`, { credentials: 'include', signal })
   return _json(r, 'bs opinion')
 }
 
@@ -598,21 +600,27 @@ async function _blob(r, tag) {
 // 报告导出（W3-3）：Word/PDF，后端只渲染聚合结果不重算。
 // stage 与 getBsReport 同口径（draft=AI 初稿 / confirmed=确认稿）；未人工处置不阻止导出，
 // 仅技术前提不足时返回 409 + 结构化 detail（不由前端自行判定能否导出）。
-export async function downloadBsReport(taskId, fmt, stage = 'draft', { versionNo } = {}) {
+export async function downloadBsReport(taskId, fmt, stage = 'draft', { versionNo, templateId } = {}) {
   const versionQuery = versionNo != null ? `&version_no=${encodeURIComponent(versionNo)}` : ''
-  const r = await fetch(`${BASE}/tasks/${taskId}/report/export?fmt=${fmt}&stage=${stage}${versionQuery}`, { credentials: 'include' })
+  const r = await fetch(`${BASE}/tasks/${taskId}/report/export?fmt=${fmt}&stage=${stage}${versionQuery}${reportTemplateQuery(templateId)}`, { credentials: 'include' })
   return _blob(r, `bs export ${fmt}`)
 }
 
-export async function downloadBsOpinion(taskId, fmt, stage = 'draft', { versionNo, expectedDigest } = {}) {
+export async function downloadBsWorksheet(taskId, stage = 'draft', { versionNo } = {}) {
+  const versionQuery = versionNo != null ? `&version_no=${encodeURIComponent(versionNo)}` : ''
+  const r = await fetch(`${BASE}/tasks/${taskId}/report/worksheet?stage=${stage}${versionQuery}`, { credentials: 'include' })
+  return _blob(r, 'bs worksheet export docx')
+}
+
+export async function downloadBsOpinion(taskId, fmt, stage = 'draft', { versionNo, expectedDigest, templateId } = {}) {
   const versionQuery = versionNo != null ? `&version_no=${encodeURIComponent(versionNo)}` : ''
   const digestQuery = expectedDigest ? `&expected_digest=${encodeURIComponent(expectedDigest)}` : ''
-  const r = await fetch(`${BASE}/tasks/${taskId}/opinion/export?fmt=${fmt}&stage=${stage}${versionQuery}${digestQuery}`, { credentials: 'include' })
+  const r = await fetch(`${BASE}/tasks/${taskId}/opinion/export?fmt=${fmt}&stage=${stage}${versionQuery}${digestQuery}${reportTemplateQuery(templateId)}`, { credentials: 'include' })
   return _blob(r, `bs opinion export ${fmt}`)
 }
 
-export async function previewBsOpinion(taskId, stage = 'draft') {
-  const r = await fetch(`${BASE}/tasks/${taskId}/opinion/preview-markdown?stage=${encodeURIComponent(stage)}`, { credentials: 'include' })
+export async function previewBsOpinion(taskId, stage = 'draft', { templateId } = {}) {
+  const r = await fetch(`${BASE}/tasks/${taskId}/opinion/preview-markdown?stage=${encodeURIComponent(stage)}${reportTemplateQuery(templateId)}`, { credentials: 'include' })
   const result = await _json(r, '意见书预览')
   return { markdown: result.markdown, digest: result.opinion_digest }
 }

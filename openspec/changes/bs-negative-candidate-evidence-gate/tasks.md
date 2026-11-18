@@ -53,6 +53,17 @@
 - [ ] 6.5 Verify retries, report gate, UI and offline real-scenario replay; run focused regressions and strict validation. Focused tests and real-task continuation passed; full report acceptance remains open.
 - [ ] 6.6 Verify the complete real-material workflow within explicit authorization; record remaining limits without modifying historical outcomes.
 
+## 9. Hybrid scope recall (2026-11-17)
+
+- [x] 9.1 Map current candidate states, max-batch limits, evidence validation, and scope/page provenance; preserve all existing worktree changes.
+- [x] 9.2 Add offline regression cases for semantic-recall candidates without literal triggers, unrelated generic text, and exact subject/material/page/rule citations.
+- [x] 9.3 Implement semantic candidate screening for readable scope/no-trigger rules under the existing batch budget and usage accounting; keep proposals advisory-only and no-candidate outcomes distinct from rule misses.
+- [x] 9.4 Replace whole-contract candidate completeness attribution with rule/scope/page provenance; isolate unread, suspect, and unlocated pages without converting unknown technical failures into reading gaps.
+- [x] 9.5 Version the candidate validation contract; retain historical events and require explicit retry for new screening.
+- [ ] 9.6 Validate terminal group execution, report readiness, scope-limited disclosures, stale cache behavior, partial batches, and no extra model call from reads/exports.
+  Offline coverage of these boundaries passed in the 2026-11-17 joint regression (157 tests). Real Provider/task and cross-service acceptance remain unverified; this checkbox stays open for that acceptance.
+- [x] 9.7 Run focused backend/foreground tests, strict OpenSpec validation, and synthetic Word/PDF content checks; do not call a real Provider or rerun business tasks without separate approval.
+
 ### Local candidate evidence
 
 - After explicit authorization, local backend/frontend were rebuilt and updated. Task 4 retried as job `e9f1d4d8d68648ac8e41d288942d4300`; earlier events remained intact. A1 was not rerun, A2 produced 7 reviewable partial results, and internal records produced 1 reviewable not-run result. The job ended failed with `incomplete_material_scope`; 20 A1 candidates remain blocked, not assessed as passes.

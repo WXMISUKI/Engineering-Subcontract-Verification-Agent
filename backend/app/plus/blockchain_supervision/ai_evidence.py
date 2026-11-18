@@ -78,7 +78,8 @@ def validate_ai_proposal(proposal: Any, *, task_id: int, subject_id: int | None,
                          materials: list[dict], references: list[dict],
                          required_subject_name: str | None = None,
                          incomplete_material_scope: bool = False,
-                         kind: str | None = None) -> ProposalValidation:
+                         kind: str | None = None,
+                         recall_mode: str | None = None) -> ProposalValidation:
     """只验证本次上下文中的双侧连续原文；返回结果仍是待人工核实的建议。"""
     def reject(reason: str) -> ProposalValidation:
         return ProposalValidation(False, reason, None)
@@ -149,10 +150,12 @@ def validate_ai_proposal(proposal: Any, *, task_id: int, subject_id: int | None,
         matches = [row for row in page_rows if contains_quote(row.get("text"), ref.get("quote"))]
         if not matches:
             return reject("引用文字未在本次提供的原页片段中找到")
-        if kind == "negative_candidate":
+        if kind == "negative_candidate" and recall_mode != "semantic":
             relevance_error = _negative_candidate_quote_relevance(item_id, ref["quote"])
             if relevance_error:
                 return reject(relevance_error)
+        if kind == "negative_candidate" and recall_mode == "semantic" and not ref.get("quote", "").strip():
+            return reject("语义候选缺少可核验工程范围引文")
         if (len(matches) != 1 or (matches[0].get("subject_id") is not None
                                   and type(matches[0].get("subject_id")) is not int)):
             return reject("材料证据不属于本次任务主体或无法在原页核验")

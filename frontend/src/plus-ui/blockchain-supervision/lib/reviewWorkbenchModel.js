@@ -21,6 +21,67 @@ const STATUS_RANK = { hit: 0, undecidable: 1, miss: 2 }
 // 严重度权重：high→medium→low→未分级（与 EvidencePanel.SEVERITY_RANK 同口径）。
 const SEVERITY_RANK = { high: 0, medium: 1, low: 2 }
 const UNRANKED = 3
+const QUALITY_EVIDENCE_STATES = new Set(['review_required', 'unreadable'])
+
+function materialRevisionIdentity(material) {
+  if (!material || typeof material !== 'object') return null
+  if (Number.isInteger(material.revision_no)) return `revision:${material.revision_no}`
+  if (typeof material.generation_id === 'string' && material.generation_id.trim()) {
+    return `generation:${material.generation_id.trim()}`
+  }
+  return null
+}
+
+function qualityEvidenceKeys(item, materialsById = {}) {
+  if (!item || item.subjectId == null || !Array.isArray(item.evidence)) return []
+  const keys = []
+  for (const ref of item.evidence) {
+    if (!ref || !QUALITY_EVIDENCE_STATES.has(ref.quality)) continue
+    const materialId = ref.material_id ?? ref.materialId ?? item.materialId
+    const page = Number(ref.page ?? item.page)
+    if (materialId == null || !Number.isInteger(page) || page <= 0) continue
+    const material = materialsById[materialId]
+    const revision = materialRevisionIdentity(material)
+    if (!revision) continue
+    if (material?.subject_id != null
+        && String(material.subject_id) !== String(item.subjectId)) continue
+    keys.push({
+      key: `quality:${item.subjectId}:${materialId}:${revision}:${page}`,
+      subjectId: item.subjectId,
+      materialId,
+      revision,
+      revisionNo: Number.isInteger(material?.revision_no) ? material.revision_no : null,
+      generationId: material?.generation_id ?? null,
+      page,
+      quality: ref.quality,
+    })
+  }
+  return [...new Map(keys.map((entry) => [entry.key, entry])).values()]
+}
+
+/**
+ * 质量问题只做同页展示聚合：主体、材料修订身份和物理页任一缺失都不归组。
+ * 返回的 findingIds 仅用于展示，复核回执仍然写回各自 finding。
+ */
+export function buildQualityGroups(items, materialsById = {}) {
+  const byKey = new Map()
+  for (const item of items || []) {
+    for (const evidence of qualityEvidenceKeys(item, materialsById)) {
+      const group = byKey.get(evidence.key) || {
+        ...evidence,
+        findingIds: [],
+        itemIds: [],
+      }
+      if (!group.findingIds.includes(item.findingId)) group.findingIds.push(item.findingId)
+      if (item.itemId != null && !group.itemIds.includes(item.itemId)) group.itemIds.push(item.itemId)
+      byKey.set(evidence.key, group)
+    }
+  }
+  return [...byKey.values()].map((group) => ({
+    ...group,
+    count: group.findingIds.length,
+  }))
+}
 
 /** 主体分组的稳定 key（`subject:` 前缀 + 主体 id）。 */
 export function subjectGroupKey(subjectId) {
@@ -175,6 +236,7 @@ function toItem(finding, resolved) {
     itemId: finding.item_id ?? null,
     kind: finding.kind ?? null,
     status: finding.status,
+    findingSemantics: finding.finding_semantics ?? finding.findingSemantics ?? null,
     openTerm: finding.open_term === true,
     materialOnly: finding.material_only === true,
     // 后端 status_label 是唯一展示词来源；缺失时才按三态码兜底（历史快照）。
@@ -271,6 +333,19 @@ export function groupFindings({ findings, materialsById = {}, subjectsById = {},
 
   for (const g of groups) {
     g.items = sortFindingItems(g.items)
+    g.qualityGroups = buildQualityGroups(g.items, materialsById)
+    const qualityKeysByFinding = new Map()
+    for (const qualityGroup of g.qualityGroups) {
+      for (const findingId of qualityGroup.findingIds) {
+        const keys = qualityKeysByFinding.get(findingId) || []
+        keys.push(qualityGroup.key)
+        qualityKeysByFinding.set(findingId, keys)
+      }
+    }
+    g.items = g.items.map((item) => ({
+      ...item,
+      qualityGroupKeys: qualityKeysByFinding.get(item.findingId) || [],
+    }))
     let miss = 0
     let hit = 0
     let und = 0

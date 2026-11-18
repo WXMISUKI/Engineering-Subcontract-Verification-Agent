@@ -8,6 +8,10 @@ export function isMaterialOnly(item) {
   return item?.material_only === true || item?.materialOnly === true
 }
 
+export function isManualPrompt(item) {
+  return (item?.finding_semantics ?? item?.findingSemantics) === 'manual_prompt'
+}
+
 export function reviewBucket(item) {
   if (isOpenTerm(item) || isMaterialOnly(item) || (item?.status && !REVIEWABLE_STATUSES.has(item.status))) return 'all'
   const decision = item?.review?.decision

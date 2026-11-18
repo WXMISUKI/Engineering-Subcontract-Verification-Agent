@@ -138,7 +138,9 @@ def ensure_standalone_schema(engine) -> dict:
                 connection.execute(text("RENAME TABLE standalone_token_usage TO token_usage"))
         renamed_usage = True
 
-    _add_columns(engine, "bs_finding", {"ai_adjudication_json": "JSON NULL"})
+    _add_columns(engine, "bs_finding", {
+        "ai_adjudication_json": "JSON NULL", "finding_semantics": "VARCHAR(30) NULL",
+    })
     _add_columns(engine, "bs_material", {
         "general_source_set_id": "VARCHAR(36) NULL",
         "general_source_set_version": "INTEGER NULL",

@@ -70,6 +70,12 @@ def report_digest(report: dict) -> str:
     document = body.get("business_document") or {}
     if isinstance(document.get("basic_information"), dict):
         document["basic_information"]["报告日期"] = ""
+    template_document = body.get("template_document") or {}
+    if template_document:
+        template_document["issued_date"] = ""
+        for block in template_document.get("blocks") or []:
+            if block.get("derived_date"):
+                block["text"] = ""
     return hashlib.sha256(_canonical_json(body)).hexdigest()
 
 
@@ -584,6 +590,9 @@ def _ai_advisory_lines(report: dict) -> list[str]:
 
 def word_bytes(report: dict, digest: str = None, exported_at: str = None) -> bytes:
     """report dict → Word (docx) 字节流；digest/exported_at 缺省时按当前内容自算。"""
+    if report.get("template_document"):
+        from . import report_template_render
+        return report_template_render.word_bytes(report, digest or report_digest(report), exported_at)
     doc = Document()
     _configure_word_document(doc)
     meta = report["meta"]
@@ -809,6 +818,9 @@ def _draw_business_pdf(doc, page, y, report):
 
 def pdf_bytes(report: dict, digest: str = None, exported_at: str = None) -> bytes:
     """report dict → PDF 字节流（fitz 内置简体中文字体 china-s）。"""
+    if report.get("template_document"):
+        from . import report_template_render
+        return report_template_render.pdf_bytes(report, digest or report_digest(report), exported_at)
     margin, size_body, size_h1, size_h2 = 48.0, 10.5, 15.0, 12.5
     page_w, page_h = 595.0, 842.0
     max_w = page_w - margin * 2
@@ -1172,6 +1184,9 @@ def _opinion_summary_lines(opinion: dict) -> list[tuple[str, str]]:
 
 def opinion_word_bytes(opinion: dict, digest: str = None, exported_at: str = None) -> bytes:
     """Word 与页面、PDF 使用同一份正文。"""
+    if opinion.get("template_document"):
+        from . import report_template_render
+        return report_template_render.word_bytes(opinion, digest or report_digest(opinion), exported_at)
     doc = Document()
     _configure_word_document(doc)
     if opinion.get("business_document"):
@@ -1196,7 +1211,12 @@ def opinion_word_bytes(opinion: dict, digest: str = None, exported_at: str = Non
 def opinion_markdown(opinion: dict, digest: str) -> str:
     """材料文字转义后呈现，避免改变 Markdown 结构。"""
     result = []
-    for kind, text in _opinion_summary_lines(opinion):
+    if opinion.get("template_document"):
+        from . import report_template_render
+        lines = report_template_render.summary_lines(opinion)
+    else:
+        lines = _opinion_summary_lines(opinion)
+    for kind, text in lines:
         value = str(text).replace("\\", "\\\\")
         for char in chr(96) + "*_{}[]<>#|":
             value = value.replace(char, "\\" + char)
@@ -1208,6 +1228,9 @@ def opinion_markdown(opinion: dict, digest: str) -> str:
 
 def opinion_pdf_bytes(opinion: dict, digest: str = None, exported_at: str = None) -> bytes:
     """PDF 与 Word、页面预览使用同一份正文。"""
+    if opinion.get("template_document"):
+        from . import report_template_render
+        return report_template_render.pdf_bytes(opinion, digest or report_digest(opinion), exported_at)
     margin, page_w, page_h = 48.0, 595.0, 842.0
     doc = fitz.open()
     page = doc.new_page(width=page_w, height=page_h)

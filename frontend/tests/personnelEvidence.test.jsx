@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import ReviewWorkbenchLayout from '../src/plus-ui/blockchain-supervision/components/ReviewWorkbenchLayout'
@@ -67,6 +68,29 @@ it('shows certificate authority roles and field reason', () => {
   expect(screen.getByTestId('certificate-evidence-item-0-1').textContent).toContain('补件证书.pdf')
 })
 
+it('shows person, subject, post and evidence side for personnel references', () => {
+  const finding = {
+    id: 3, findingId: 3, item_id: 'A2-01', message: '人员与社保关系待核实', status: 'undecidable',
+    material_id: 12, page: 1, quote: '王建国', location_mode: 'page',
+    evidence: [
+      { material_id: 12, page: 1, quote: '王建国 项目经理', person_key: '王建国', post: '项目经理', subject_id: 7, evidence_side: 'management_roster', location_mode: 'page' },
+      { material_id: 13, page: 2, quote: '王建国 参保记录', person_key: '王建国', subject_id: 8, evidence_side: 'social_record', location_mode: 'page' },
+    ],
+  }
+  render(<ReviewWorkbenchLayout model={{
+    groups: [], selectedFinding: finding, selectedFindingId: 3,
+    materialsById: {
+      12: { id: 12, file_name: '甲项目人员名单.pdf', parse_state: 'done' },
+      13: { id: 13, file_name: '乙项目社保.pdf', parse_state: 'done' },
+    },
+  }} onOpenSource={() => {}} />)
+  expect(screen.getByTestId('person-evidence-meta-0').textContent).toContain('岗位：项目经理')
+  expect(screen.getByTestId('person-evidence-meta-0').textContent).toContain('主体：7')
+  expect(screen.getByTestId('person-evidence-meta-0').textContent).toContain('人员名单')
+  expect(screen.getByTestId('person-evidence-meta-1').textContent).toContain('主体：8')
+  expect(screen.getByTestId('person-evidence-meta-1').textContent).toContain('社保证明')
+})
+
 it('prototype compare view shows subject, reason code and generic evidence roles', () => {
   vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener() {}, removeEventListener() {} }))
   const finding = {
@@ -109,4 +133,47 @@ it('explains publication generation and review policy in the workbench', () => {
   expect(banner.textContent).toContain('候选代次')
   expect(banner.textContent).toContain('supplement-20261107')
   expect(banner.textContent).toContain('原人工意见不会自动继承')
+})
+
+it('marks a carried review decision explicitly', () => {
+  vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener() {}, removeEventListener() {} }))
+  const finding = {
+    id: 9, findingId: 9, item_id: 'A2-01', message: '人员与社保关系待核实',
+    status: 'undecidable', material_id: 2, page: 1, quote: '名单', location_mode: 'page',
+    review: { decision: 'accepted', decision_label: '采纳', carried: true, reviewer: '用户', at: '2026-11-17T12:14:00' },
+  }
+  render(<ReviewWorkbenchLayout prototypeMode reviewFilter="all" model={{
+    groups: [{ key: 'group', items: [finding] }], selectedFinding: finding, selectedFindingId: 9,
+    materialsById: { 2: { id: 2, file_name: '报审.pdf', parse_state: 'done' } },
+  }} onOpenSource={() => {}} />)
+  expect(screen.getByText('沿用上一轮意见')).toBeTruthy()
+  expect(screen.getByText('沿用上一轮复核意见（结论未变化）')).toBeTruthy()
+})
+
+it('keeps step detail visible when the pending queue is empty', () => {
+  vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener() {}, removeEventListener() {} }))
+  const onReturnOverview = vi.fn()
+
+  function Harness() {
+    const [step, setStep] = useState(null)
+    const [overview, setOverview] = useState(true)
+    return <ReviewWorkbenchLayout
+      prototypeMode
+      reviewFilter="pending"
+      stepScoped={step != null}
+      overviewMode={overview}
+      model={{ groups: [], selectedFinding: null, selectedFindingId: null, materialsById: {} }}
+      todoPanel={<button type="button" onClick={() => { setStep('s1'); setOverview(false) }}>打开第一步</button>}
+      stepPanel={step ? <p>STEP DETAIL</p> : null}
+      overviewPanel={<p>OVERVIEW</p>}
+      onSelect={() => {}}
+      onClosePreview={() => {}}
+      onReturnOverview={() => { onReturnOverview(); setStep(null); setOverview(true) }}
+    />
+  }
+
+  render(<Harness />)
+  fireEvent.click(screen.getByRole('button', { name: '打开第一步' }))
+  expect(screen.getByText('STEP DETAIL')).toBeTruthy()
+  expect(onReturnOverview).not.toHaveBeenCalled()
 })

@@ -40,13 +40,21 @@ def project(candidates, run, materials, coverage_by_id):
                 return None
             gaps += 1
             item = result.setdefault(material_id, {'material_id': material_id, 'file_name': material.file_name,
-                                                   'pages': set(), 'rule_ids': set()})
+                                                   'pages': set(), 'rule_ids': set(), 'unattributed': False})
             item['pages'].update(pages)
-            item['rule_ids'].add(rule_id)
+            if candidate.get('scope_attribution') != 'attributed':
+                item['unattributed'] = True
+            else:
+                item['rule_ids'].add(rule_id)
         if not gaps:
             return None
-    return [{**row, 'pages': sorted(row['pages']), 'rule_ids': sorted(row['rule_ids'])}
-            for _, row in sorted(result.items())]
+    output = []
+    for _, row in sorted(result.items()):
+        projected = {**row, 'pages': sorted(row['pages']), 'rule_ids': sorted(row['rule_ids'])}
+        if not projected['unattributed']:
+            projected.pop('unattributed', None)
+        output.append(projected)
+    return output
 
 
 def collect(db, task, snapshot, coverage):
@@ -88,6 +96,15 @@ def collect(db, task, snapshot, coverage):
 
 
 def statements(rows):
-    return ['负面清单 AI 辅助候选未覆盖规则 %s；材料「%s」第 %s 页识别不完整，相关规则未形成符合或不符合结论。'
-            % ('、'.join(row['rule_ids']), row['file_name'], '、'.join(str(page) for page in row['pages']))
-            for row in rows]
+    output = []
+    for row in rows:
+        pages = '、'.join(str(page) for page in row['pages'])
+        if row.get('unattributed') and not row.get('rule_ids'):
+            output.append('材料「%s」第%s页存在读取质量缺口，相关负面清单候选未形成可确认结论；具体规则归属待人工核对。'
+                          % (row['file_name'], pages))
+        else:
+            output.append('负面清单 AI 辅助候选未覆盖规则 %s；材料「%s」第 %s 页识别不完整，相关规则未形成符合或不符合结论。'
+                          % ('、'.join(row['rule_ids']), row['file_name'], pages))
+            if row.get('unattributed'):
+                output.append('材料「%s」另有读取质量缺口尚未明确具体规则归属，需人工核对。' % row['file_name'])
+    return output

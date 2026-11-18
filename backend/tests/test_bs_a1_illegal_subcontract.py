@@ -1006,6 +1006,38 @@ def test_hotfix_f12b_v16_01_mixed_reverse_supervision_risk():
     assert "待人工裁决" in f.message
 
 
+def test_hotfix_f14_v16_01_consent_heading_is_not_written_consent():
+    """F14：仅有「发包人书面同意：」栏目标题时，同意侧仍缺证据。"""
+    mats = [_mat(4, "报审表.pdf", "未经监理审查。发包人书面同意：", role="packet")]
+    f = _find("V16-01", mats, a3_findings=[])
+    assert f.status == STATUS_UNDECIDABLE
+    assert "缺：发包人书面同意" in f.message
+    assert "混合态" not in f.message
+
+
+def test_hotfix_f16_v16_01_preserves_both_side_evidence_refs():
+    """F16：监理与同意证据分在两份材料时，结果保留两侧原页引用。"""
+    mats = [
+        _mat(4, "监理审查.pdf", "甲项目未经监理审查。", role="packet"),
+        _mat(5, "发包人同意.pdf", "甲项目未经发包人书面同意。", role="packet"),
+    ]
+    f = _find("V16-01", mats, a3_findings=[])
+    assert f.status == STATUS_HIT
+    assert {ref["side"] for ref in f.evidence_json} == {
+        "supervision_review", "employer_written_consent"
+    }
+    assert {ref["material_id"] for ref in f.evidence_json} == {4, 5}
+    assert all(ref["page"] == 1 and ref["quote"] for ref in f.evidence_json)
+
+
+def test_hotfix_f15_v16_01_signature_headings_are_not_both_sides_evidence():
+    """F15：监理/同意两侧仅有栏目标题时，不得合成未命中。"""
+    mats = [_mat(4, "报审表.pdf", "总监理工程师签章：\n发包人书面同意：", role="packet")]
+    f = _find("V16-01", mats, a3_findings=[])
+    assert f.status == STATUS_UNDECIDABLE
+    assert "缺：监理审查、发包人书面同意" in f.message
+
+
 def test_hotfix_f13_cross_project_not_deduped():
     """F13：不同项目的 W16-05 与 L17-01 不得去重 → L17-01 primary=True、无 owner。"""
     mats = [_mat(3, "a.pdf", "甲项目劳务合作合同：甲劳务企业承担路基工程施工，按工程量计取工程款。",
