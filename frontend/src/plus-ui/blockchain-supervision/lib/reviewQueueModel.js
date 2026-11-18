@@ -62,6 +62,17 @@ export function queueSelectionExpired({ reviewItemsLength = 0, stepScoped = fals
   return !stepScoped && reviewItemsLength === 0
 }
 
+/**
+ * 全屏对照标题。
+ * 当前项被处理后已离开筛选队列，但队列里可能还有别的问题；此时不能显示
+ * “已全部处理”，否则会让人误以为整批已清零，随后又跳到下一项。
+ */
+export function compareHeaderTitle({ scopeLabel, position = -1, total = 0 } = {}) {
+  if (position >= 0 && total > 0) return `${scopeLabel} ${position + 1} / ${total}`
+  if (total > 0) return `${scopeLabel} 共 ${total} 项`
+  return `${scopeLabel} 已全部处理`
+}
+
 export function reportGateForGroups(groups) {
   const counts = reviewQueueCounts(groups)
   return {

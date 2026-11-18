@@ -8,7 +8,7 @@ import { collectContainerIds } from '../lib/materialState'
 import { cleanText } from '../lib/plainText'
 import { useMediaQuery } from '../lib/useMediaQuery'
 import { primaryEvidenceRef } from '../lib/reviewWorkbenchModel'
-import { buildReviewQueueSections, classifyReviewItem, queueSelectionExpired } from '../lib/reviewQueueModel'
+import { buildReviewQueueSections, classifyReviewItem, compareHeaderTitle, queueSelectionExpired } from '../lib/reviewQueueModel'
 
 // 工作台骨架（U1）。
 // - 旧版 ≥1280px（Tailwind xl）左侧人工复核、右侧待办/详情/原文预览；<1280px 纵向降级：
@@ -1052,12 +1052,8 @@ export default function ReviewWorkbenchLayout({
   // 全屏对照时只渲染对照层：避免底层两栏与对照层重复出现同一批 testid/焦点目标。
   if (compareOpen) {
     const comparePosition = reviewItems.findIndex((item) => String(item.findingId) === String(selectedFindingId))
-    const compareHasCurrent = comparePosition >= 0
-    const compareIndex = compareHasCurrent ? comparePosition + 1 : 0
     const compareTitle = prototypeMode
-      ? (reviewItems.length && compareHasCurrent
-          ? `${reviewScopeLabel} ${compareIndex} / ${reviewItems.length}`
-          : `${reviewScopeLabel} 已全部处理`)
+      ? compareHeaderTitle({ scopeLabel: reviewScopeLabel, position: comparePosition, total: reviewItems.length })
       : '证据对照'
     const compareSubtitle = selectedFinding
       ? [selectedFinding.item_id, selectedFinding.status_label, selectedFinding.severity_label ? `风险：${selectedFinding.severity_label}` : null]
