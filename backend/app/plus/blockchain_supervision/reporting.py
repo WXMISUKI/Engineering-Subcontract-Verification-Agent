@@ -18,7 +18,7 @@ from . import a2_check, ai_advisory_snapshots, business_report, certificate_numb
 from .certificate_facts import extract_certificate_facts
 from .contract_clause_facts import extract_contract_clauses
 from .equipment_facts import extract_equipment_facts
-from .personnel_evidence import extract_management_roster
+from .personnel_evidence import extract_management_roster, extract_person_relation_evidence
 from .classify import ROLE_LABELS, ROLE_PACKET, ROLE_UNKNOWN, classify_material
 from . import report_contract_type, report_template_v13, report_template_v14
 from .models import (STATUS_CODES, STATUS_LABELS, STATUS_UNDECIDABLE,
@@ -1470,6 +1470,8 @@ def build_report(db: Session, task: BsTask, *, scope_coverage: dict | None = Non
         "certificate_facts": extract_certificate_facts(input_materials),
         "contract_clauses": extract_contract_clauses(input_materials),
         "personnel_roster": extract_management_roster(input_materials),
+        "personnel_social": [fact for fact in extract_person_relation_evidence(input_materials)
+                             if fact.get("evidence_kind") == "social_record"],
         "equipment_facts": extract_equipment_facts(input_materials),
         "submission_materials": [{"material_id": m.id, "file_name": m.file_name,
                                   "subject_id": m.subject_id, "pages": m.pages,

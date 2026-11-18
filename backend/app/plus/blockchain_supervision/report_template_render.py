@@ -322,7 +322,6 @@ def word_bytes_v14(payload, digest, exported_at=None):
             _add_text(doc, block.get("text") or "", bold=bool(block.get("bold")),
                       align=block.get("align"), space_after=4,
                       indent=bool(block.get("indent")))
-    _add_text(doc, _footer(payload, digest, exported_at), size=8, space_after=0)
     output = io.BytesIO()
     doc.save(output)
     return output.getvalue()
@@ -441,7 +440,8 @@ def pdf_bytes(payload, digest, exported_at=None):
             table(block)
         else:
             paragraph(block["text"], 12 if block["type"] == "heading" else 10.5, block["type"] == "heading")
-    paragraph(_footer(payload, digest, exported_at), 8)
+    if document.get("template_id") != "v1.4":
+        paragraph(_footer(payload, digest, exported_at), 8)
     output = doc.tobytes()
     doc.close()
     return output

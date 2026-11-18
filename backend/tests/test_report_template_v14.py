@@ -120,7 +120,8 @@ def test_v14_builds_conclusion_sections_and_eight_attachments():
     assert "附件二：8 表签约前核查明细" in text
     assert "未自动核查事项及原因" in text
     assert "八、综合审查结论" in text
-    assert "附件三：需补充材料/人工核查事项" in text
+    assert "附件三" not in text
+    assert "以上 8 表" not in text
     assert "暂缓签订该分包合同" in text
     assert "补正后重新报审" in text
     assert "指挥部/建设单位（章）" in text
@@ -258,6 +259,28 @@ def test_v14_adds_equipment_fact_when_list_is_present():
         {"equipment_facts": {"pages": [12, 13], "rows": [{"page": 12, "quote": "机械设备清单"}]}},
         {"分包类型": "专业分包", "拟分包范围": "测试施工"}, False)
     assert any("报审资料含设备清单或机械配置（第12–13页）" in line for line in lines)
+
+
+def test_v14_personnel_section_lists_social_period_and_specific_gap():
+    report = sample_report()
+    report["personnel_roster"] = [{"name": "吴道记", "post": "项目负责人"},
+                                  {"name": "于文祥", "post": "安全员"}]
+    report["personnel_social"] = [{"name": "吴道记", "period": "202502-202507",
+                                   "employer": "武汉龙辰建设有限公司"}]
+    report["sections"].append({"kind": "person_consistency", "items": [
+        {"finding_id": "l11", "item_id": "RC-L11", "status": "undecidable",
+         "label": "安全员（身份证、学历证、职称证、交安C证）",
+         "message": "名单第17页中的安全员于文祥，尚不能确认以下证件与其对应：职称证；请核对原件"},
+        {"finding_id": "a201", "item_id": "A2-01", "status": "undecidable",
+         "label": "社保资料覆盖管理人员",
+         "message": "劳动合同关系未证明（缺吴道记、于文祥）"},
+    ]})
+    document = v14.build_document(report)
+    text = "\n".join(block.get("text", "") for block in document["blocks"])
+    assert "吴道记（项目负责人）、于文祥（安全员）" in text
+    assert "社保缴费记录已覆盖：吴道记（202502-202507），参保单位武汉龙辰建设有限公司" in text
+    assert "证件核对：安全员（职称证）" in text
+    assert "劳动合同关系未证明：吴道记、于文祥" in text
 
 
 def test_v14_personnel_section_lists_extracted_roster():
@@ -425,6 +448,12 @@ def test_v14_word_and_pdf_exports_are_readable_files():
     assert round(section.top_margin.cm, 1) == 2.5
     assert rendered.styles["Normal"].font.size.pt == 11
     assert rendered.styles["Normal"].paragraph_format.line_spacing == 1.5
+    assert "内容指纹" not in "\n".join(paragraph.text for paragraph in rendered.paragraphs)
+    import fitz
+
+    with fitz.open(stream=pdf, filetype="pdf") as pdf_doc:
+        pdf_text = "".join(page.get_text() for page in pdf_doc)
+    assert "内容指纹" not in pdf_text
 
 
 def test_v14_uses_v13_base_when_multi_subject_is_unavailable():

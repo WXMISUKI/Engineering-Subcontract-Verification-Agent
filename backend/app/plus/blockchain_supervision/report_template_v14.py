@@ -529,7 +529,7 @@ def _contract_summary_conclusion(facts):
     return "未取得完整合同条款，计价、支付、违约等条款需人工核对。"
 
 
-def _personnel_summary_lines(facts):
+def _personnel_summary_lines(facts, social=None, items=None):
     rows = []
     seen = set()
     for fact in facts or []:
@@ -541,10 +541,44 @@ def _personnel_summary_lines(facts):
             continue
         seen.add(name)
         rows.append("%s（%s）" % (name, post))
-    if not rows:
-        return ["未取得主要管理人员名单的实填姓名和岗位，需补充或人工核对。"]
-    return ["已提取主要管理人员：" + "、".join(rows[:8]) + "。",
-            "人员与社保、劳动合同、证书的对应关系仍需核对。"]
+    lines = (["已提取主要管理人员：" + "、".join(rows[:8]) + "。"] if rows
+             else ["未取得主要管理人员名单的实填姓名和岗位，需补充或人工核对。"])
+    social_periods, employer = {}, ""
+    for fact in social or []:
+        if not isinstance(fact, dict):
+            continue
+        name = str(fact.get("name") or "").strip()
+        period = str(fact.get("period") or "").strip()
+        if name and period:
+            social_periods.setdefault(name, period)
+        if not employer and fact.get("employer"):
+            employer = str(fact["employer"]).strip()
+    if social_periods:
+        detail = "、".join("%s（%s）" % (name, period)
+                          for name, period in list(social_periods.items())[:6])
+        lines.append("社保缴费记录已覆盖：%s%s。" % (
+            detail, "，参保单位" + employer if employer else ""))
+    else:
+        lines.append("社保缴费记录未识别到人员与期间，需补充或人工核对。")
+    cert_gaps, labor_gap = [], ""
+    for item in items or []:
+        message = item.get("message") or ""
+        match = re.search(r"尚不能确认以下证件与其对应：(.+?)(?:；|。|$)", message)
+        if match:
+            head = str(item.get("label") or "").split("（", 1)[0]
+            cert_gaps.append("%s（%s）" % (head, match.group(1).strip()))
+        labor = re.search(r"劳动合同关系未证明(?:（缺([^）]*)）)?", message)
+        if labor and not labor_gap:
+            labor_gap = labor.group(1) or ""
+    if cert_gaps:
+        lines.append("证件核对：" + "；".join(cert_gaps) + "。")
+    if labor_gap:
+        lines.append("劳动合同关系未证明：%s，需补交劳动合同。" % labor_gap)
+    elif any("劳动合同" in (item.get("message") or "") for item in items or []):
+        lines.append("劳动合同关系尚未证明，需补交主要人员劳动合同。")
+    lines.append("要求：项目负责人、技术负责人、安全负责人须为本单位人员并常驻现场，"
+                 "未经建设单位同意不得更换。")
+    return lines
 
 
 def _section_summary_conclusion(code, items, fallback):
@@ -560,7 +594,9 @@ def _section_summary_conclusion(code, items, fallback):
             return "安全生产许可证已提供%s，但已早于核查基准日，需提交续期后的证书后重新报审。" % when
         return "安许证书已提供；许可范围、证书号、有效期需核对证书原件。"
     if code == "personnel":
-        return "人员材料已纳入核对，社保缴费记录和证书对应关系尚未形成一致结论。"
+        if any("劳动合同" in (item.get("message") or "") for item in items):
+            return "人员配置已核对；劳动合同关系未证明，需补交主要人员劳动合同后确认。"
+        return "人员配置与社保、证书对应关系已核对；未在册证件需核对原件。"
     if code == "legality":
         coverage = next((item for item in items if item["item_id"] == "W16-02"), None)
         match = re.search(r"已评估\s*(\d+)\s*/\s*(\d+)\s*条", coverage["message"]) if coverage else None
@@ -616,7 +652,8 @@ def _section_status(items):
     return "未核查"
 
 
-def _sections(base, raw, contract_facts=None, personnel_facts=None, certificate_facts=None, baseline=None):
+def _sections(base, raw, contract_facts=None, personnel_facts=None, certificate_facts=None,
+              baseline=None, personnel_social=None):
     dims = _dims(base)
     rows = []
     for code, title, kinds, dimension_code, empty_text, include, exclude in _SECTIONS:
@@ -648,7 +685,7 @@ def _sections(base, raw, contract_facts=None, personnel_facts=None, certificate_
             conclusion_text = summary_conclusion
             bullets = []
         if code == "personnel" and personnel_facts:
-            summary_lines = _personnel_summary_lines(personnel_facts)
+            summary_lines = _personnel_summary_lines(personnel_facts, personnel_social, items)
             if status == "未核查":
                 status = "待核实"
         rows.append({
@@ -1476,7 +1513,7 @@ def _blocks(document):
     appendix = document.get("appendix") or {}
     heading("附件一：本次自动核查结果")
     paragraph("本表只列系统已形成确定结论的事项；同一材料组的多项材料合并为一行，"
-              "行数不等于正文核查项数；待核实、未覆盖事项见附件二、附件三。")
+              "行数不等于正文核查项数；待核实、未覆盖事项见附件二。")
     if appendix.get("auto_rows"):
         table(appendix["auto_headers"], appendix["auto_rows"], appendix["auto_widths"])
     else:
@@ -1502,12 +1539,6 @@ def _blocks(document):
             table(sheet.get("manual_headers") or [], sheet["manual_rows"],
                   sheet.get("manual_widths") or [])
 
-    heading("附件三：需补充材料/人工核查事项")
-    paragraph("本表按类别归并，具体明细见附件二。")
-    if appendix.get("manual_rows"):
-        table(appendix["manual_headers"], appendix["manual_rows"], appendix["manual_widths"])
-    paragraph(appendix.get("uncovered_text") or "本次未覆盖：无。")
-    paragraph("以上 8 表为签约前核查全量明细；未自动核查事项已列明原因，需人工核对后签认。")
     return blocks
 
 
@@ -1522,6 +1553,7 @@ def build_document(report: dict, base: dict | None = None) -> dict:
     facts = deepcopy(report.get("certificate_facts") or {})
     contract_facts = deepcopy(report.get("contract_clauses") or {})
     personnel_facts = deepcopy(report.get("personnel_roster") or [])
+    personnel_social = deepcopy(report.get("personnel_social") or [])
     equipment_facts = deepcopy(report.get("equipment_facts") or {})
     document = {
         "schema_version": SCHEMA_VERSION,
@@ -1535,7 +1567,8 @@ def build_document(report: dict, base: dict | None = None) -> dict:
         "conclusion": conclusion,
         "signing_conclusion": _signing_conclusion(raw, facts),
         "sections": _sections(base, raw, contract_facts, personnel_facts, facts,
-                              _baseline_date({"basic_information": base.get("basic_information") or {}})),
+                              _baseline_date({"basic_information": base.get("basic_information") or {}}),
+                              personnel_social),
         "issues": _issue_rows(raw),
         "pending": _pending_rows(raw),
         "pending_total": sum(1 for item in raw if _verdict(item) == "待核实"),
@@ -1544,6 +1577,7 @@ def build_document(report: dict, base: dict | None = None) -> dict:
         "certificate_facts": facts,
         "contract_clauses": contract_facts,
         "personnel_roster": personnel_facts,
+        "personnel_social": personnel_social,
         "equipment_facts": equipment_facts,
         "basis": deepcopy(base["basis"]),
         "limitations": deepcopy(base["limitations"]),
