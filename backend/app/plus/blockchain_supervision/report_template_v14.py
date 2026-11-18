@@ -1248,7 +1248,7 @@ def _section_fact_lines(document, info, is_labor):
     if license_facts:
         parts = []
         if license_facts.get("name"):
-            parts.append(("劳务单位" if is_labor else "分包人") + license_facts["name"])
+            parts.append("分包单位" + license_facts["name"])
         if license_facts.get("uscc"):
             parts.append("统一社会信用代码" + license_facts["uscc"])
         if license_facts.get("legal_rep"):
@@ -1296,7 +1296,7 @@ def _section_fact_lines(document, info, is_labor):
     content = info.get("分包事项") or info.get("拟分包范围")
     amount = info.get("拟分包金额")
     if content:
-        line = "合同约定%s为%s" % ("劳务内容" if is_labor else "分包内容", content)
+        line = "合同约定分包内容为%s" % content
         if amount:
             line += "，金额%s" % amount
         lines.append(line + "。")
@@ -1326,9 +1326,9 @@ def _blocks(document):
 
     info = document["basic_information"]
     is_labor = "劳务" in str(info.get("分包类型") or "")
-    unit_label = "劳务单位" if is_labor else "分包单位"
-    content_label = "劳务内容" if is_labor else "分包内容"
-    amount_label = "合同金额" if is_labor else "分包金额"
+    unit_label = "分包单位"
+    content_label = "分包内容"
+    amount_label = "分包金额"
 
     paragraph("以下依据《上海市公路工程施工分包管理实施细则》（2026）、"
               "《公路工程施工分包管理办法》（交公路规〔2024〕2号）、"
@@ -1338,8 +1338,7 @@ def _blocks(document):
     paragraph("%s：%s" % (unit_label, _text(info.get("分包单位"))))
     paragraph("%s：%s" % (content_label, _text(info.get("分包事项") or info.get("拟分包范围"))))
     paragraph("%s：%s" % (amount_label, _text(info.get("拟分包金额"))))
-    paragraph("经核对%s报审资料、资质证书、安许、人员证书及社保记录，建设单位意见如下："
-              % ("劳务" if is_labor else "分包"))
+    paragraph("经核对分包报审资料、资质证书、安许、人员证书及社保记录，建设单位意见如下：")
 
     sections = [row for row in document["sections"] if row["status"] != "未核查"]
     skipped = [row["title"].split(". ", 1)[-1] for row in document["sections"] if row["status"] == "未核查"]

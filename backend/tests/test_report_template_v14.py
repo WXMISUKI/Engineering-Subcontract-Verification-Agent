@@ -30,6 +30,23 @@ def sample_report():
     }
 
 
+def test_v14_uses_uniform_subcontractor_labels_for_labor_and_professional():
+    for kind in ("专业分包", "劳务分包"):
+        report = sample_report()
+        info = report["business_document"]["basic_information"]
+        info.update({"分包类型": kind, "分包单位": "测试分包企业",
+                     "分包事项": "预制梁施工", "拟分包金额": "100万元"})
+        document = v14.build_document(report)
+        text = "\n".join(block.get("text", "") for block in document["blocks"])
+        assert "分包单位：测试分包企业" in text
+        assert "分包内容：预制梁施工" in text
+        assert "分包金额：100万元" in text
+        assert "经核对分包报审资料" in text
+        assert "劳务单位：" not in text
+        assert "劳务内容：" not in text
+        assert "合同金额：" not in text
+
+
 def test_v14_builds_conclusion_sections_and_eight_attachments():
     report = sample_report()
     before = deepcopy(report)

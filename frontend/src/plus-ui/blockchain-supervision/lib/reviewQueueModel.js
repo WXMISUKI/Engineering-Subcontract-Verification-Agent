@@ -54,6 +54,14 @@ export function buildReviewQueueSections(groups, filter = 'pending') {
   return []
 }
 
+/**
+ * 当前筛选队列已空时，选中项已不在可导航范围内，必须退出详情/对照。
+ * 步骤筛选例外：空队列只代表该步骤没有待处理项，步骤详情仍需保留。
+ */
+export function queueSelectionExpired({ reviewItemsLength = 0, stepScoped = false } = {}) {
+  return !stepScoped && reviewItemsLength === 0
+}
+
 export function reportGateForGroups(groups) {
   const counts = reviewQueueCounts(groups)
   return {

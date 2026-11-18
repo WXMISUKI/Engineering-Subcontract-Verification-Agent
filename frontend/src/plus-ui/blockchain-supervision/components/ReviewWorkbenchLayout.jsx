@@ -8,7 +8,7 @@ import { collectContainerIds } from '../lib/materialState'
 import { cleanText } from '../lib/plainText'
 import { useMediaQuery } from '../lib/useMediaQuery'
 import { primaryEvidenceRef } from '../lib/reviewWorkbenchModel'
-import { buildReviewQueueSections, classifyReviewItem } from '../lib/reviewQueueModel'
+import { buildReviewQueueSections, classifyReviewItem, queueSelectionExpired } from '../lib/reviewQueueModel'
 
 // 工作台骨架（U1）。
 // - 旧版 ≥1280px（Tailwind xl）左侧人工复核、右侧待办/详情/原文预览；<1280px 纵向降级：
@@ -854,24 +854,26 @@ export default function ReviewWorkbenchLayout({
     selectFindingSource(next)
   }
 
-  // 人工回执刷新可能先清空待处理队列，再完成异步跳转；同步关闭失去队列的对照层。
+  // 人工回执刷新可能先清空当前筛选队列（待处理/无法核实等），再完成异步跳转；
+  // 同步关闭失去队列的对照层，不能停在“1 / 0”。
   useEffect(() => {
-    if (!prototypeMode || !compareOpen || reviewFilter !== 'pending' || loading || submitting || reviewItems.length) return
+    if (!prototypeMode || !compareOpen || loading || submitting
+        || !queueSelectionExpired({ reviewItemsLength: reviewItems.length })) return
     closeCompare()
     onClosePreview?.()
     onReturnOverview?.()
-  }, [prototypeMode, compareOpen, reviewFilter, loading, submitting, reviewItems.length,
+  }, [prototypeMode, compareOpen, loading, submitting, reviewItems.length,
     closeCompare, onClosePreview, onReturnOverview])
 
   // 待处理队列已清零时，普通详情也必须退出，不能停在上一条已处理问题上。
   // 步骤筛选下队列为空只代表该步骤没有待处理项，此时必须保留步骤详情。
   useEffect(() => {
-    if (!prototypeMode || stepScoped || selectedFindingId == null || reviewFilter !== 'pending'
-        || loading || submitting || reviewItems.length) return
+    if (!prototypeMode || selectedFindingId == null || loading || submitting
+        || !queueSelectionExpired({ reviewItemsLength: reviewItems.length, stepScoped })) return
     onSelect?.(null)
     onClosePreview?.()
     onReturnOverview?.()
-  }, [prototypeMode, stepScoped, selectedFindingId, reviewFilter, loading, submitting, reviewItems.length,
+  }, [prototypeMode, stepScoped, selectedFindingId, loading, submitting, reviewItems.length,
     onSelect, onClosePreview, onReturnOverview])
 
   useEffect(() => {
@@ -1049,7 +1051,14 @@ export default function ReviewWorkbenchLayout({
 
   // 全屏对照时只渲染对照层：避免底层两栏与对照层重复出现同一批 testid/焦点目标。
   if (compareOpen) {
-    const compareIndex = Math.max(0, reviewItems.findIndex((item) => String(item.findingId) === String(selectedFindingId)))
+    const comparePosition = reviewItems.findIndex((item) => String(item.findingId) === String(selectedFindingId))
+    const compareHasCurrent = comparePosition >= 0
+    const compareIndex = compareHasCurrent ? comparePosition + 1 : 0
+    const compareTitle = prototypeMode
+      ? (reviewItems.length && compareHasCurrent
+          ? `${reviewScopeLabel} ${compareIndex} / ${reviewItems.length}`
+          : `${reviewScopeLabel} 已全部处理`)
+      : '证据对照'
     const compareSubtitle = selectedFinding
       ? [selectedFinding.item_id, selectedFinding.status_label, selectedFinding.severity_label ? `风险：${selectedFinding.severity_label}` : null]
         .filter(Boolean).join(' · ')
@@ -1057,7 +1066,7 @@ export default function ReviewWorkbenchLayout({
     return (
       <ReviewCompareMode
         prototypeMode={prototypeMode}
-        title={prototypeMode ? `${reviewScopeLabel} ${compareIndex + 1} / ${reviewItems.length}` : '证据对照'}
+        title={compareTitle}
         subtitle={compareSubtitle}
         onClose={closeCompare}
         closeButtonRef={compareCloseRef}
@@ -1072,12 +1081,12 @@ export default function ReviewWorkbenchLayout({
               <>
                 <header data-testid="compare-detail-header" className="flex shrink-0 items-center gap-3 border-b border-[#E5DED3] bg-white px-4 py-2.5">
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-[13px] font-semibold text-[#3B332B]">{reviewScopeLabel} {compareIndex + 1} / {reviewItems.length}</p>
+                    <p className="truncate text-[13px] font-semibold text-[#3B332B]">{compareTitle}</p>
                     <p className="truncate text-[11px] text-[#7A6C5A]">{compareSubtitle || '当前问题详情'}</p>
                   </div>
                   <div className="flex shrink-0 items-center gap-1.5">
-                    <button type="button" onClick={selectPreviousFinding} className="min-h-8 rounded-[4px] border border-[#D8CBB8] bg-white px-2.5 text-[11px] text-[#705C45] hover:bg-[#FBF5EC]">上一条</button>
-                    <button type="button" onClick={selectNextFinding} className="min-h-8 rounded-[4px] border border-[#D8CBB8] bg-white px-2.5 text-[11px] text-[#705C45] hover:bg-[#FBF5EC]">下一条</button>
+                    <button type="button" disabled={!reviewItems.length} onClick={selectPreviousFinding} className="min-h-8 rounded-[4px] border border-[#D8CBB8] bg-white px-2.5 text-[11px] text-[#705C45] hover:bg-[#FBF5EC] disabled:opacity-50">上一条</button>
+                    <button type="button" disabled={!reviewItems.length} onClick={selectNextFinding} className="min-h-8 rounded-[4px] border border-[#D8CBB8] bg-white px-2.5 text-[11px] text-[#705C45] hover:bg-[#FBF5EC] disabled:opacity-50">下一条</button>
                     <button type="button" ref={compareCloseRef} data-testid="compare-close" onClick={closeCompare} className="min-h-8 rounded-[4px] border border-[#8B7355] bg-white px-2.5 text-[11px] text-[#8B7355] hover:bg-[#FBF5EC]">返回</button>
                   </div>
                 </header>
