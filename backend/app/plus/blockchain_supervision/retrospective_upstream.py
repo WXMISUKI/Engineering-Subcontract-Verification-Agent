@@ -68,8 +68,9 @@ def _compact_ref(ref):
 
 
 def evidence_catalog(rows):
-    return {'e' + digest(_compact_ref(ref))[:24]: _compact_ref(ref)
-            for row in rows for ref in row['evidence']}
+    refs = list({digest(_compact_ref(ref)): _compact_ref(ref)
+                 for row in rows for ref in row['evidence']}.values())
+    return {f'R{index:03d}': ref for index, ref in enumerate(refs, 1)}
 
 
 def resolve_selected(raw, schema, catalog):
@@ -155,8 +156,14 @@ async def compare(sources, identity, *, client, load_checkpoint=None, before_bat
         if before_batch:
             before_batch(key, index, total)
         try:
+            response_schema = strict_response_schema(schema)
+            if payload.get('evidence_catalog'):
+                for definition in response_schema.get('$defs', {}).values():
+                    selected = definition.get('properties', {}).get('evidence_ids')
+                    if selected:
+                        selected['items']['enum'] = list(payload['evidence_catalog'])
             raw = await request_json(client, system, {'analysis_type': 'upstream_' + phase, **payload},
-                on_usage=account_usage, response_schema=strict_response_schema(schema))
+                on_usage=account_usage, response_schema=response_schema)
             result = {'state': 'completed', **validator(raw)}
         except ExecutionBoundaryError:
             raise
