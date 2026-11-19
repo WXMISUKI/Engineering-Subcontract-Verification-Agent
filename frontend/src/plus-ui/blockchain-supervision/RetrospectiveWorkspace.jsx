@@ -1,3 +1,4 @@
+import { useBsEventStream } from './hooks/useBsEventStream'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Download } from 'lucide-react'
 import { associateBsGeneralSourceSet, createBsTask, deleteBsMaterial, downloadBsReport, getBsRetrospective, getBsTask,
@@ -45,9 +46,9 @@ export default function RetrospectiveWorkspace({ conversationId, taskId, onTaskC
           getBsTask(taskId, { signal: controller.signal }), getBsRetrospective(taskId, { signal: controller.signal }),
         ])
         if (dead) return
-        setTask(detail); setStatus(result)
+        setTask(detail); setStatus(result); setError('')
         if (['queued', 'running'].includes(result.state) || detail.materials?.some((m) => ['parsing', 'uploading'].includes(m.parse_state))) timer = setTimeout(tick, 2500)
-      } catch (exc) { if (!dead) setError(exc.message) }
+      } catch (exc) { if (!dead) { setError(exc.message); timer = setTimeout(tick, 5000) } }
     }
     tick()
     return () => { dead = true; controller.abort(); clearTimeout(timer) }
@@ -59,6 +60,7 @@ export default function RetrospectiveWorkspace({ conversationId, taskId, onTaskC
   }, [conversationId, taskId])
 
   const setup = taskId == null || (status?.state === 'not_started' && task?.state === 'setup')
+  const events = useBsEventStream(taskId, status?.run_id, { retrospective: true })
   const report = status?.report
   const stage = setup ? 'upload' : view || (report ? 'report' : 'run')
   const reached = setup ? 0 : report ? 2 : 1
@@ -176,7 +178,7 @@ export default function RetrospectiveWorkspace({ conversationId, taskId, onTaskC
         onRemove={(id) => changeInput(() => deleteBsMaterial(taskId, id))}
         onReplace={(id, file) => upload([file], id)} onStart={start} />
     </>}
-    {stage === 'run' && <div className="min-h-0 flex-1 overflow-auto p-6"><CheckRunView reviewMode="contract_retrospective" retrospective={status || {}} onRefresh={() => setRetry((value) => value + 1)} onOpenReport={() => setView('report')}/></div>}
+    {stage === 'run' && <div className="min-h-0 flex-1 overflow-auto p-6"><CheckRunView reviewMode="contract_retrospective" retrospective={status || {}} events={events} onRefresh={() => setRetry((value) => value + 1)} onOpenReport={() => setView('report')}/></div>}
     {stage === 'report' && report && <div className="min-w-0 flex-1 overflow-auto px-6 py-4">
       <div className="border-b border-[#DADCE0] pb-3"><h2 className="text-sm font-semibold">{report.summary?.replace('部分范围受限，详见核查限制。', '')}</h2>
       </div>

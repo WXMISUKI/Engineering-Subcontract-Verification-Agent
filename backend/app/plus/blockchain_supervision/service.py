@@ -8071,6 +8071,12 @@ def enter_material_edit(db: Session, task: BsTask) -> dict:
 
 # 事件中文化白名单（唯一表源）：新增 event_type 必须在此登记（契约测试锁发射端）。
 EVENT_LABELS = {
+    "retrospective.accepted": "合同倒查已受理",
+    "retrospective.input_frozen": "合同及核查依据已冻结",
+    "retrospective.batch_started": "正在核查合同批次",
+    "retrospective.batch_completed": "合同批次已处理",
+    "retrospective.completed": "合同倒查报告已保存",
+    "retrospective.failed": "合同倒查执行中断",
     _PAGE_TEXT_REFRESH_EVENT: "材料页面补读",
     "task.supplement_planned": "补件局部核查计划已生成",
     "task.supplement_blocked": "补件局部核查计划被阻止",
@@ -8359,6 +8365,12 @@ def event_dto(ev: BsTaskEvent) -> dict:
             label = "AI 辅助核查部分结果待核实"
         elif raw.get("execution_status") in {"failed", "not_run"}:
             label = "AI 辅助核查未完成"
+    retrospective_event = ev.event_type.startswith("retrospective.")
+    if retrospective_event:
+        # 冻结正文、检索原文、模型结果和配置身份不通过SSE广播。
+        payload = {key: raw[key] for key in ("run_id", "phase", "label", "index", "total", "batch_id", "execution_status", "state") if key in raw}
+        if ev.event_type in {"retrospective.batch_started", "retrospective.batch_completed"}:
+            label = raw.get("label") or label
     diagnostics = _safe_event_diagnostics(raw)
     event_time = ev.created_at
     # 兼容历史/替身事件对象：没有偏移列时按“未知”输出，不阻断时间线投影。
@@ -8369,7 +8381,8 @@ def event_dto(ev: BsTaskEvent) -> dict:
         "sequence": ev.sequence,
         "event_type": ev.event_type,
         "label": label,
-        "message": _event_message(ev),
+        "message": (f'{raw["index"]}/{raw["total"]}批' if retrospective_event and raw.get("total", 0) > 1 and "index" in raw else None) if retrospective_event else _event_message(ev),
+        "run_id": raw.get("run_id") if retrospective_event else None,
         "stage": ev.stage,
         "payload": payload,
         "progress_key": progress_key,

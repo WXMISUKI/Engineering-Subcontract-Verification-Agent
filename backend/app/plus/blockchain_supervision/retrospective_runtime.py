@@ -94,7 +94,12 @@ def status(db, task, *, version_no=None):
     if report and (version_no is not None or report["identity"]["run_id"] == run_id):
         result.update(report=deepcopy(report), version_no=version.version_no,
                       state=report["execution_status"])
-    result["progress"] = _event(db, task.id, BATCH_STARTED, run_id) if run_id else None
+    progress_event = (db.query(BsTaskEvent).filter_by(task_id=task.id)
+                      .filter(BsTaskEvent.event_type.in_([BATCH_STARTED, CHECKPOINT]))
+                      .order_by(BsTaskEvent.sequence.desc()).all()) if run_id else []
+    latest = next((row.payload_json for row in progress_event if (row.payload_json or {}).get("run_id") == run_id
+                   and "phase" in (row.payload_json or {})), None)
+    result["progress"] = {key: latest[key] for key in ("run_id", "phase", "label", "index", "total", "batch_id", "state") if key in latest} if latest else None
     if job and job.state == "failed" and not result["report"]:
         result["error"] = "合同倒查未完成，执行状态已保存；请查看限制说明或新建核查。"
     return result
@@ -350,8 +355,13 @@ async def run(engine, job_id, *, client=None):
         def save_checkpoint(batch_id, result):
             with Session(engine) as db:
                 owned(db)
+                started = _event(db, task_id, BATCH_STARTED, run_id, batch_id) or {}
+                progress = {key: started[key] for key in ("phase", "label", "total") if key in started}
+                if "index" in started:
+                    progress["index"] = started["index"] + 1
+                progress["state"] = result.get("state", "completed")
                 service.add_event(db, task_id, CHECKPOINT, stage="check", payload={
-                    "run_id": run_id, "batch_id": batch_id, "result": result}, commit=False)
+                    **progress, "run_id": run_id, "batch_id": batch_id, "result": result}, commit=False)
                 db.commit()
 
         def usage(raw):
