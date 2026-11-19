@@ -3,7 +3,7 @@
 目录只组合会实际产出 ``BsFinding.item_id`` 的规则源；``basis_index`` 仅是条款
 坐标，不能充当白名单。每次调用都直读规则数据，使“改规则后重跑”立即生效。
 """
-from . import a2_check, certificate_number_check, identity_observation, internal_records, rules
+from . import a2_check, certificate_number_check, identity_observation, internal_records, rules, safety_permit_scope
 
 
 class RuleItemCatalogError(ValueError):
@@ -45,18 +45,30 @@ def item_group_catalog() -> dict[str, str]:
                             if item.get("execution_group", "completeness") == group_id),
                   group_id)
     _register(catalog, (item["id"] for item in rules.load_negative_list()["rules"]), "a1")
+    _register(catalog, ("RC-A10-cost", "RC-A11-wages"), "completeness")
     _register(catalog, (item["id"] for item in rules.load_transfer_rules()["rules"]), "a1")
     _register(catalog, (
         a2_check.ITEM_UNIT,
         a2_check.ITEM_ID,
         a2_check.ITEM_REG,
         a2_check.ITEM_QUAL,
+        a2_check.ITEM_STAFF,
+        a2_check.ITEM_SPECIAL,
+        a2_check.ITEM_TECHNICAL_TITLE,
         certificate_number_check.ITEM_ID,
         identity_observation.ITEM_ID,
+        safety_permit_scope.ITEM_ID,
+        "A2-10",
+        "A2-11",
+        "A2-12",
+        "A2-13",
     ), "a2")
     _register(catalog, (
         *("A3-02-%s" % chain["id"] for chain in rules.load_signature_chains()),
         "A3-02-timing",
+        "A3-03-plan",
+        "A3-04-security",
+        "A3-05-change",
         rules.ATTACHMENT_SEAL_ITEM,
     ), "signature_chain")
     _register(catalog, (internal_records.ITEM_ID,), "internal_records")

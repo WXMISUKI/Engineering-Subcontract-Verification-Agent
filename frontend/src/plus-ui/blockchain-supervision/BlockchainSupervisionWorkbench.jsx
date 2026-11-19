@@ -24,6 +24,7 @@ import PrototypeSupplementOverlay from './prototype/PrototypeSupplementOverlay'
 import BlockchainSupervisionModuleContainer from './prototype/BlockchainSupervisionModuleContainer'
 import BlockchainSupervisionWorkspaceFrame from './prototype/BlockchainSupervisionWorkspaceFrame'
 import ModelSelect from '../../components/ModelSelect'
+import ReviewModeSelect from './components/ReviewModeSelect'
 import { buildPrototypeTask, stageFromTaskState, stageIndexOf } from './prototype/prototypeViewModel'
 import './components/CheckProgress.css'
 import './prototype/v3VisualTokens.css'
@@ -49,6 +50,7 @@ import { taskMutationBusy } from './lib/taskMutationGate'
 import { buildStepOverview } from './lib/stepOverviewModel'
 import { buildTaskHeader } from './lib/taskHeaderModel'
 import { buildMissingPlan, supplementUploadCategoryOf, matchingSupplementGeneration, supplementItemsForSubject } from './lib/todoPlan'
+import { countedStatusOf } from './lib/statusDisplay'
 import { bsEtaLabel, updateBsEta } from './lib/bsEtaPlan'
 import { supplementPublicationPending } from './lib/supplementPublication'
 import { formatEventTime } from './lib/eventTime'
@@ -86,7 +88,7 @@ const AUTO_CHECK_ORDER = ['completeness', 'signature', 'a2', 'a1', 'internal_rec
 const AUTO_CHECK_KINDS = {
   completeness: ['completeness'],
   signature: ['signature_chain'],
-  a2: ['cert_validity', 'person_consistency', 'qualification_match'],
+  a2: ['cert_validity', 'person_consistency', 'personnel_adequacy', 'qualification_match'],
   a1: ['negative_list', 'transfer_scope', 'illegal_subcontract'],
   internal_records: ['internal_records'],
 }
@@ -167,7 +169,7 @@ function currentActivity(events, state, autoPhase, index = 0, total = 0, stage =
 function userFacingActivity(activity, findings) {
   const text = typeof activity === 'string' ? activity : ''
   if (!/不符合|无法核实|待处置/.test(text)) return text
-  const pendingFindings = (findings || []).filter((finding) => ['hit', 'undecidable'].includes(finding?.status))
+  const pendingFindings = (findings || []).filter((finding) => ['hit', 'undecidable'].includes(countedStatusOf(finding?.status)))
   const pending = pendingFindings.filter((finding) => finding?.open_term !== true).length
   const openTerms = pendingFindings.filter((finding) => finding?.open_term === true).length
   const denominatorNote = openTerms > 0
@@ -238,6 +240,7 @@ export default function BlockchainSupervisionWorkbench({ conversationId, onExitP
   const deepLinkTaskId = Number(initialTaskId) || null
   const [phase, setPhase] = useState('loading') // setup | materials | workbench | error
   const [modelCode, setModelCode] = useState('')
+  const [reviewMode, setReviewMode] = useState('admission')
   const [taskId, setTaskId] = useState(null)
   const [activeTaskTitle, setActiveTaskTitle] = useState('')
   const [error, setError] = useState('')
@@ -502,6 +505,7 @@ export default function BlockchainSupervisionWorkbench({ conversationId, onExitP
       if (deepLinkTaskId != null) {
         const desired = tasks.find((t) => Number(t.task_id) === deepLinkTaskId)
         if (desired) {
+          setReviewMode(desired.review_mode || 'admission')
             if (['preparing', 'running', 'review', 'done'].includes(desired.state)) {
               openWorkbench(desired.task_id, { title: desired.title, autoRun: true, view: desired.state === 'preparing' ? 'run' : undefined })
           } else {
@@ -516,12 +520,13 @@ export default function BlockchainSupervisionWorkbench({ conversationId, onExitP
         return
       }
         const started = tasks.find((t) => t.state === 'preparing' || t.state === 'running' || t.state === 'review' || t.state === 'done')
-        if (started) { openWorkbench(started.task_id, { title: started.title, autoRun: started.state === 'preparing', view: started.state === 'preparing' ? 'run' : undefined }); return }
+        if (started) { setReviewMode(started.review_mode || 'admission'); openWorkbench(started.task_id, { title: started.title, autoRun: started.state === 'preparing', view: started.state === 'preparing' ? 'run' : undefined }); return }
       // T10-C C3：`setup` 与 `preparing` 都进第一阶段。`preparing` 是 ZIP 资料包准备中的
       // 持久任务态（契约 §7.3），此时**结论尚未产生** —— 若按「任务已开始」跳进工作台，
       // 用户看到的是一页空结论；故交给 SetupStage 呈现「资料准备中」并轮询到收口，
       // 由收口结果决定进 workbench 还是回 setup 显示原因。
       const inSetupStage = tasks.find((t) => t.state === 'setup' || t.state === 'preparing')
+      setReviewMode(inSetupStage?.review_mode || 'admission')
       openSetup(inSetupStage ? inSetupStage.task_id : null)
     }).catch((e) => {
       if (dead) return
@@ -549,7 +554,10 @@ export default function BlockchainSupervisionWorkbench({ conversationId, onExitP
       subtitle="工程分包合规"
       billing={{ scopeType: 'bs_task', scopeId: taskId }}
       showModelSelect={false}
-      headerModelSelector={<ModelSelect value={modelCode} onChange={setModelCode} placement="bottom" />}
+      headerModelSelector={<div className="flex flex-wrap items-center gap-3">
+        <ReviewModeSelect value={reviewMode} onChange={setReviewMode} locked={taskId != null || phase === 'loading' || phase === 'error'} />
+        <ModelSelect value={modelCode} onChange={setModelCode} placement="bottom" />
+      </div>}
       dataTestId="plus-ui-shell"
       moduleCode="blockchain-supervision"
       ariaLabel="通用 Plus 工作台容器：工程分包审查智能体"
@@ -599,6 +607,7 @@ export default function BlockchainSupervisionWorkbench({ conversationId, onExitP
         )}
         {phase === 'setup' && (
           <SetupStage key={`setup-${setupNonce}`} conversationId={conversationId} taskId={taskId} editing={editingMaterials}
+          reviewMode={reviewMode}
           supplement={pendingSupplement} reachedIndex={reachedIndex}
             onReset={handleRestart} resetting={restarting}
             onTaskCreated={setTaskId} onStarted={(id) => { setError(''); openWorkbench(id, { autoRun: true, view: 'run' }) }} onError={setError} />
@@ -669,6 +678,7 @@ export default function BlockchainSupervisionWorkbench({ conversationId, onExitP
 /* ==================== 两段式 · 第一段：上传材料并开始核查（07 §4.1） ==================== */
 
   function SetupStage({ conversationId, taskId, editing = false, readOnly = false, supplement = null,
+    reviewMode = 'admission',
     reachedIndex = 0, onStageSelect, onRequestEdit, onExit, onReset, resetting = false, onTaskCreated, onStarted, onError }) {
   const [detail, setDetail] = useState(null)           // getBsTask 返回
   const [detailError, setDetailError] = useState('')
@@ -831,6 +841,7 @@ export default function BlockchainSupervisionWorkbench({ conversationId, onExitP
     const title = `分包合规核查 ${new Date().toISOString().slice(0, 10)}`
     const created = await createBsTask({
       conversationId, title, scopeA1: true, scopeA3: true,
+      reviewMode,
       // A-03（B1）：三字段随创建一并提交（空则后端存 NULL）
       projectName: section.projectName,
       contractSection: section.contractSection,
@@ -838,7 +849,7 @@ export default function BlockchainSupervisionWorkbench({ conversationId, onExitP
     })
     onTaskCreated(created.task_id) // 任务与本会话 1:1 绑定；先同步父态再继续上传
     return created.task_id
-  }, [conversationId, taskId, section, onTaskCreated])
+  }, [conversationId, taskId, section, onTaskCreated, reviewMode])
 
   // A-03（B1）：标段字段已建任务则 PATCH /section（setup 段可改），未建任务先存本地态，创建时随体提交
   const changeSection = useCallback((key, value) => {

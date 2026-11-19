@@ -5,7 +5,7 @@ import ReportTemplateV14 from './ReportTemplateV14'
 import ReportWorksheetV14 from './ReportWorksheetV14'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { countOf, statusLabelOf } from '../lib/statusDisplay'
+import { countedStatusOf, countOf, statusLabelOf } from '../lib/statusDisplay'
 import { normalizeReportReadiness } from '../lib/reportReadinessModel'
 
 // 应用内草稿披露读取/执行缺口；正式输出资格由当前任务 DTO 确认。
@@ -20,7 +20,7 @@ function issueItems(sections) {
   // 兜底条款（open_term）只登记、不构成结论：放进「不符合项清单」会让人去补一份并不存在
   // 的材料（BS-P1-11）。它们由 openTermItems 单独呈现。
   return sections.flatMap((section) => (section.items || [])
-    .filter((item) => !item.open_term && (item.status === 'hit' || item.status === 'undecidable'))
+    .filter((item) => !item.open_term && ['hit', 'undecidable'].includes(countedStatusOf(item.status)))
     .map((item) => ({ ...item, category: item.category || section.title })))
 }
 

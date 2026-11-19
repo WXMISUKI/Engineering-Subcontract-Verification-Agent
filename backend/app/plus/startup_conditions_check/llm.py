@@ -70,23 +70,51 @@ class OpenAICompatibleClient:
             await client.close()
 
 
+def _runtime_params(model_code=None):
+    """按目录 code 解析请求模型/端点/Key；无 code 时返回 (None, None) 走环境变量。"""
+    from app.services.billing.model_context import current_model_code
+    from app.services.billing.model_keys import resolve_client_params
+    code = model_code or current_model_code()
+    if not code:
+        return None, None
+    params = resolve_client_params(
+        code,
+        default_model=os.environ.get('LLM_MODEL', '').strip(),
+        default_base_url=os.environ.get('LLM_API_BASE', '').strip(),
+    )
+    return code, params
+
+
 def llm_configured(model_code=None):
+    code, params = _runtime_params(model_code)
+    if code is not None:
+        return bool(params and params.get('available'))
     model = os.environ.get('LLM_MODEL', '').strip()
-    return bool(model and os.environ.get('LLM_API_BASE', '').strip() and os.environ.get('LLM_API_KEY', '').strip()
-                and (model_code is None or model_code == model))
+    return bool(model and os.environ.get('LLM_API_BASE', '').strip() and os.environ.get('LLM_API_KEY', '').strip())
 
 
 def client_from_env(enable_thinking=False, prompt_cache_key=None, model_code=None, max_retries=None):
     provider = os.environ.get('LLM_PROVIDER', 'legacy').strip().lower()
     if provider not in ('legacy', 'moma'):
         raise ValueError('不支持的业务模型 provider')
-    if not llm_configured(model_code):
-        raise RuntimeError('模型配置不完整或所选模型不可用')
+    code, params = _runtime_params(model_code)
+    if code is not None:
+        if not params or not params.get('available'):
+            raise RuntimeError('所选模型不可用：模型目录、Key 或端点未配置')
+        base_url = params.get('base_url')
+        api_key = params.get('api_key')
+        request_model = params.get('model') or code
+    else:
+        if not llm_configured():
+            raise RuntimeError('模型配置不完整或所选模型不可用')
+        base_url = os.environ['LLM_API_BASE'].strip()
+        api_key = os.environ['LLM_API_KEY'].strip()
+        request_model = os.environ['LLM_MODEL'].strip()
     if provider == 'moma':
-        require_https_endpoint(os.environ['LLM_API_BASE'].strip())
+        require_https_endpoint(base_url)
     return OpenAICompatibleClient(
-        base_url=os.environ['LLM_API_BASE'].strip(), api_key=os.environ['LLM_API_KEY'].strip(),
-        model=os.environ['LLM_MODEL'].strip(), enable_thinking=enable_thinking,
+        base_url=base_url, api_key=api_key,
+        model=request_model, enable_thinking=enable_thinking,
         prompt_cache_key=prompt_cache_key, timeout=float(os.environ.get('LLM_TIMEOUT_SECONDS', '120')),
         max_retries=max_retries, provider=provider)
 

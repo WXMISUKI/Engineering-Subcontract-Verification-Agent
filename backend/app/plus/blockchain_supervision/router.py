@@ -18,10 +18,10 @@ from ...limiter import limiter
 from ...utils.download import attachment_disposition
 from . import (access, admission, ai_advisory_snapshots, checklist, contract_party_evidence as contract_party_evidence_module, export, reporting, service,
                severity, zip_ingestion, knowledge_runs, reference_snapshots, rules, ruleset)
-from . import source_manifest, finding_text, background_ai_review
+from . import source_manifest, finding_text, background_ai_review, execution_summary
 from . import reference_visibility
 from . import material_versions, supplement_generation, section_projection, material_confirmation, report_basic_facts
-from . import parsing, report_policy, report_template_render, report_template_v13, report_template_v14
+from . import parsing, page_text_candidates, report_policy, report_template_render, report_template_v13, report_template_v14
 from .rules import load_report_checklist
 from .basis_subject_projection import subject_basis_view
 from .reference_access import read_reference_original
@@ -100,9 +100,13 @@ def source_admission_audit(target_scope: str = "road_mvp",
     )
 
 
+from . import review_mode as task_review_mode
+
+
 class TaskCreateIn(BaseModel):
     conversation_id: int
     title: str
+    review_mode: str = task_review_mode.ADMISSION
     scope_a1: bool = False
     scope_a3: bool = False
     # A-03（B1）标段锚点：可选（历史「一会话一核查」流程不强制填）
@@ -195,6 +199,24 @@ class SupplementPlanIn(BaseModel):
 class PageTextRefreshIn(BaseModel):
     material_id: StrictInt
     page_nos: list[StrictInt]
+
+
+class PageTextCandidateIn(BaseModel):
+    material_id: StrictInt
+    page_no: StrictInt
+
+
+class PageTextCandidateConfirmIn(BaseModel):
+    expected_candidate_version: StrictInt
+    corrected_text: Optional[str] = None
+
+
+class PageTextCandidateBatchItemIn(PageTextCandidateConfirmIn):
+    candidate_id: str
+
+
+class PageTextCandidateBatchConfirmIn(BaseModel):
+    items: list[PageTextCandidateBatchItemIn]
 
 
 class ReadingQualityReviewIn(BaseModel):
@@ -324,6 +346,7 @@ def list_tasks(conversation_id: int, db: Session = Depends(get_db), user=Depends
              .all())
     return {"tasks": [
         {"task_id": t.id, "title": t.title, "state": t.state,
+         "review_mode": task_review_mode.of(t),
          "scope": {"A1": t.scope_a1, "A3": t.scope_a3}, "scale": t.scale,
          "section": _section_dto(t),
          "routing": _routing_dto(t),
@@ -345,10 +368,12 @@ def create_task(body: TaskCreateIn, db: Session = Depends(get_db), user=Depends(
             project_name=body.project_name, contract_section=body.contract_section,
             baseline_date=body.baseline_date,
             jurisdiction=body.jurisdiction, profile_code=body.profile_code,
+            review_mode=body.review_mode,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"task_id": task.id, "state": task.state, "scale": task.scale,
+            "review_mode": task_review_mode.of(task),
             "section": _section_dto(task), "routing": _routing_dto(task)}
 
 
@@ -633,9 +658,11 @@ def get_task(task_id: int, db: Session = Depends(get_db), user=Depends(get_curre
         contract_party_evidence.get("employer"), report_basic_facts.latest_employer_confirmation(db, task.id))
     basic_facts["project_name"] = report_basic_facts.project_task_fact(task.project_name, basic_facts.get("project_name"), project_name=True)
     basic_facts["contract_section"] = report_basic_facts.project_task_fact(task.contract_section, basic_facts.get("contract_section"))
+    readiness = service.build_report_readiness(db, task, user=user)
     return {
         "task_id": task.id,
         "baseline_date_source": service.baseline_date_source(task),
+        "review_mode": task_review_mode.of(task),
         "title": task.title,
         "state": task.state,
         "scope": {"A1": task.scope_a1, "A3": task.scope_a3},
@@ -666,7 +693,10 @@ def get_task(task_id: int, db: Session = Depends(get_db), user=Depends(get_curre
         "zip_preparation": zip_preparation,
         # P8-00：人工复核页直接消费任务级读取覆盖投影，避免只在 finding 文案里间接提示未读页。
         "reading_coverage": reading_coverage,
-        "report_readiness": service.build_report_readiness(db, task, user=user),
+        "report_readiness": readiness,
+        # 只读执行摘要：工作台头部统一消费执行/读取/人工处置口径，不另立门禁。
+        "execution_summary": execution_summary.build(
+            db, task, readiness=readiness, reading=reading_coverage),
         "progress": service.task_progress(
             db, task, materials=materials, snapshot=reference_snapshot,
             zip_summary=zip_preparation,
@@ -1156,7 +1186,8 @@ def start_review(task_id: int, response: Response,
     """
     task = _get_task(db, task_id, user)
     # 新环境映射缺失时，在后台准备及任务状态变更前给出可理解的提示。
-    knowledge_runs.load_reference_package(as_of=task.baseline_date)
+    if not task_review_mode.is_retrospective(task):
+        knowledge_runs.load_reference_package(as_of=task.baseline_date)
     # 契约 v3 §三：启动锁定事件的 operator 必须是当前认证用户（不得为 None）
     try:
         result = service.start_review(db, task, operator=user.id)
@@ -1591,6 +1622,88 @@ def page_text_refresh_status(task_id: int, response: Response, db: Session = Dep
         raise HTTPException(status_code=404, detail="功能暂不可用")
     response.headers["Cache-Control"] = "private, no-store"
     return {"refresh": service.get_page_text_refresh(db, task_id)}
+
+
+@router.post("/tasks/{task_id}/page-text-candidates", status_code=202)
+@limiter.limit("6/minute")
+def create_page_text_candidate(task_id: int, body: PageTextCandidateIn, request: Request,
+                               response: Response, db: Session = Depends(get_db),
+                               user=Depends(get_current_any_user)):
+    """生成单页补读候选；生成结果只待人工确认，不自动生效。"""
+    task = _get_task(db, task_id, user)
+    if os.getenv("BS_PAGE_TEXT_REFRESH_ENABLED") != "1":
+        raise HTTPException(status_code=404, detail="功能暂不可用")
+    try:
+        result = service.start_page_text_candidate_preparation(
+            db, task, body.material_id, body.page_no)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    response.status_code = 202 if result["accepted"] else 200
+    return result
+
+
+@router.get("/tasks/{task_id}/page-text-candidates")
+def list_page_text_candidate(task_id: int, status: str | None = Query(default=None),
+                             db: Session = Depends(get_db),
+                             user=Depends(get_current_any_user)):
+    _get_task(db, task_id, user)
+    if os.getenv("BS_PAGE_TEXT_REFRESH_ENABLED") != "1":
+        raise HTTPException(status_code=404, detail="功能暂不可用")
+    allowed = page_text_candidates.ACTIVE_STATES | page_text_candidates.TERMINAL_STATES
+    if status and status not in allowed:
+        raise HTTPException(status_code=400, detail="候选状态无效")
+    return {"candidates": service.list_page_text_candidates(db, task_id, status)}
+
+
+@router.get("/tasks/{task_id}/page-text-candidates/{candidate_id}")
+def get_page_text_candidate(task_id: int, candidate_id: str, response: Response,
+                            db: Session = Depends(get_db), user=Depends(get_current_any_user)):
+    _get_task(db, task_id, user)
+    if os.getenv("BS_PAGE_TEXT_REFRESH_ENABLED") != "1":
+        raise HTTPException(status_code=404, detail="功能暂不可用")
+    candidate = service.get_page_text_candidate(db, task_id, candidate_id)
+    if candidate is None:
+        raise HTTPException(status_code=404, detail="候选不存在")
+    response.headers["Cache-Control"] = "private, no-store"
+    return {"candidate": candidate}
+
+
+@router.post("/tasks/{task_id}/page-text-candidates/{candidate_id}/confirm")
+@limiter.limit("12/minute")
+def confirm_page_text_candidate(task_id: int, candidate_id: str,
+                                body: PageTextCandidateConfirmIn, request: Request,
+                                db: Session = Depends(get_db), user=Depends(get_current_any_user)):
+    task = _get_task(db, task_id, user)
+    if os.getenv("BS_PAGE_TEXT_REFRESH_ENABLED") != "1":
+        raise HTTPException(status_code=404, detail="功能暂不可用")
+    try:
+        return service.confirm_page_text_candidates(
+            db, task, [{"candidate_id": candidate_id,
+                        "expected_candidate_version": body.expected_candidate_version,
+                        "corrected_text": body.corrected_text}], operator=user)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+
+
+@router.post("/tasks/{task_id}/page-text-candidates/batch-confirm")
+@limiter.limit("12/minute")
+def confirm_page_text_candidate_batch(task_id: int, body: PageTextCandidateBatchConfirmIn,
+                                      request: Request, db: Session = Depends(get_db),
+                                      user=Depends(get_current_any_user)):
+    """批量确认同一材料的候选页；全部校验通过后一次消费、一次重跑。"""
+    task = _get_task(db, task_id, user)
+    if os.getenv("BS_PAGE_TEXT_REFRESH_ENABLED") != "1":
+        raise HTTPException(status_code=404, detail="功能暂不可用")
+    if not body.items or len(body.items) > 20:
+        raise HTTPException(status_code=400, detail="一次最多确认 20 页")
+    try:
+        return service.confirm_page_text_candidates(
+            db, task, [item.model_dump() for item in body.items], operator=user)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from None
 
 
 @router.post("/tasks/{task_id}/materials/{material_id}/reading-quality-review")

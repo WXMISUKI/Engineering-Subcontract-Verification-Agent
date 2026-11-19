@@ -1,6 +1,7 @@
 """独立应用的认证、会话和分包审查入口。"""
 
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timedelta, timezone
 import hashlib
 import logging
@@ -34,6 +35,10 @@ class Login(BaseModel):
     password: str = Field(min_length=1, max_length=1000)
 
 
+class ModelChoice(BaseModel):
+    model_code: str = Field(min_length=1, max_length=64)
+
+
 @limiter.limit('10/minute', key_func=get_remote_address)
 def login(request: Request, body: Login, response: Response, db: Session = Depends(get_db)):
     user = db.scalar(select(User).where(User.username == body.username))
@@ -61,10 +66,20 @@ def create_app(engine, secret_key: str, *, cookie_secure: bool = True, include_s
             return
         from . import runtime
         from ..plus.blockchain_supervision.service import recover_interrupted_ingests
+        from ..plus.blockchain_supervision import background_ai_review
         with runtime.exclusive_instance(runtime_lock_dir):
             with Session(engine) as db:
                 recover_interrupted_ingests(db)
-            yield
+            # AI 核查任务表是调度事实源：启动时接管过期租约并续跑排队任务，
+            # 运行期由巡检覆盖进程内崩溃/长任务租约过期。
+            await background_ai_review.resume_queued_jobs(engine)
+            maintenance = asyncio.create_task(background_ai_review.maintenance_loop(engine))
+            try:
+                yield
+            finally:
+                maintenance.cancel()
+                with suppress(asyncio.CancelledError):
+                    await maintenance
 
     app = FastAPI(title='工程分包审查智能体', lifespan=lifespan)
     SessionLocal.configure(bind=engine)
@@ -107,9 +122,50 @@ def create_app(engine, secret_key: str, *, cookie_secure: bool = True, include_s
     def session(user: User = Depends(get_current_any_user)):
         return {'username': user.username}
 
+    def _current_model_code(db: Session) -> str:
+        """目录默认模型优先；旧库/未初始化计费目录时回退环境变量。"""
+        try:
+            from ..services.billing.registry import get_default_model
+            model = get_default_model(db)
+            if model is not None:
+                return model.code
+        except Exception:  # noqa: BLE001 —— 只读展示，目录不可用不阻断页面
+            logger.warning('读取模型目录失败，回退 LLM_MODEL', exc_info=True)
+        return os.environ.get('LLM_MODEL', '').strip()
+
     @app.get('/api/model')
-    def model_status(user: User = Depends(get_current_any_user)):
-        return {'model': os.environ.get('LLM_MODEL', '').strip()}
+    def model_status(db: Session = Depends(get_db), user: User = Depends(get_current_any_user)):
+        return {'model': _current_model_code(db)}
+
+    @app.get('/api/models')
+    def list_models(db: Session = Depends(get_db), user: User = Depends(get_current_any_user)):
+        """当前部署可切换的对话模型；只读目录，不触发任何模型调用。"""
+        from ..services.billing import bindings
+        try:
+            models = bindings.available_models(db)
+        except Exception:  # noqa: BLE001 —— 旧库无计费目录时保持可打开
+            logger.warning('读取可选模型目录失败', exc_info=True)
+            models = []
+        return {
+            'current': _current_model_code(db),
+            'models': [{'code': row['code'], 'display_name': row['display_name']} for row in models],
+        }
+
+    @app.put('/api/model')
+    def switch_model(body: ModelChoice, db: Session = Depends(get_db),
+                     user: User = Depends(get_current_any_user)):
+        """切换部署级默认模型；只接受目录内可选、启用且已定价的对话模型。"""
+        from ..services.billing import billing_settings, bindings
+        from ..services.billing.registry import get_model
+        available = {row['code'] for row in bindings.available_models(db)}
+        if body.model_code not in available:
+            raise HTTPException(status_code=409, detail='该模型当前不可选：未启用、未开放或尚未配置价格')
+        model = get_model(db, body.model_code)
+        if model is None:
+            raise HTTPException(status_code=404, detail='模型不在目录中')
+        billing_settings.update_settings(db, {'default_model_id': model.id}, operator_id=user.id)
+        db.commit()
+        return {'model': model.code}
 
     @app.post('/api/conversations')
     def create_conversation(user: User = Depends(get_current_any_user), db: Session = Depends(get_db)):

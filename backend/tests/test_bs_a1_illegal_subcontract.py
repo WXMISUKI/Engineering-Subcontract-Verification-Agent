@@ -562,6 +562,18 @@ def test_v16_02_missing_contract_comparison_undecidable():
     assert "缺" in f.message
 
 
+def test_v16_02_self_titled_construction_contract_counts_as_comparison_source():
+    """总包合同自称「施工合同」时仍在场，不能因缺「总包合同」字样判缺合同对照。"""
+    mats = [
+        _mat(1, "嘉松合同.pdf", "建设工程施工合同。发包人：甲公司；承包人：乙公司。", role="general"),
+        _mat(2, "专业分包合同.pdf", "分包工程承包范围和内容：预制构件安装。", role="sub"),
+    ]
+    f = _find("V16-02", mats)
+    assert f.status == STATUS_UNDECIDABLE
+    assert "缺原则对照" in f.message
+    assert "缺合同对照" not in f.message
+
+
 # ==================== V16-03 未设现场管理机构和派驻人员 ====================
 
 def test_v16_03_hit_no_org_no_personnel_statement():

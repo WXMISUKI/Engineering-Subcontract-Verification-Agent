@@ -6,13 +6,21 @@ import time
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from app.database import Base
-from app.plus.blockchain_supervision.models import BsTask
+from app.plus.blockchain_supervision.models import BsAiReviewJob, BsTask
 from app.plus.blockchain_supervision import reference_snapshots, service
 from app.standalone.identity import create_account
 from app.standalone.main import create_app
 from fastapi.testclient import TestClient
 
 from app.plus.blockchain_supervision import background_ai_review as jobs
+
+
+def seed_job(engine, groups, review_run_id='review-1', job_id='job-1'):
+    """持久队列上线后，直接驱动 worker 必须先有可领取的任务行。"""
+    with Session(engine) as db:
+        db.add(BsAiReviewJob(id=job_id, task_id=1, review_run_id=review_run_id,
+                             groups_json=list(groups), state='queued', attempt=1))
+        db.commit()
 
 
 def test_running_job_is_not_declared_running_after_worker_process_restart():
@@ -283,6 +291,7 @@ def test_worker_completes_no_signal_candidates_with_a_neutral_warning(tmp_path, 
         raise AssertionError('no-signal candidates must not trigger a model call')
     monkeypatch.setattr(service, 'run_linked_batch_ai_advisory', unexpected_model_call)
     monkeypatch.setattr(service, 'run_negative_candidate_ai_advisory', unexpected_model_call)
+    seed_job(engine, ['a1'])
 
     asyncio.run(jobs._run_background(engine, 1, 1, 'web', 'review-1', 'job-1', ['a1'], False))
 
@@ -381,6 +390,9 @@ def test_http_submit_is_nonblocking_deduplicated_and_owner_scoped(tmp_path, monk
         while not release.is_set():
             await asyncio.sleep(.01)
         with Session(bind) as worker_db:
+            claimed = jobs.ai_review_jobs.claim(worker_db, job_id)
+            worker_db.commit()
+            jobs.ai_review_jobs.finish(worker_db, job_id, claimed['lease_token'], 'completed')
             service.add_event(worker_db, task_id, jobs.COMPLETED, stage='check', payload={
                 'job_id': job_id, 'review_run_id': review_run_id, 'instance_id': jobs.INSTANCE_ID})
     monkeypatch.setattr(jobs, '_run_background', worker)
@@ -481,6 +493,7 @@ def test_worker_processes_all_groups_and_preserves_completed_partial(tmp_path, m
         calls.append('negative')
     monkeypatch.setattr(service, 'run_linked_batch_ai_advisory', linked)
     monkeypatch.setattr(service, 'run_negative_candidate_ai_advisory', negative)
+    seed_job(engine, groups)
     asyncio.run(jobs._run_background(engine, 1, 1, 'web', 'review-1', 'job-1', groups, False))
     assert calls == ['a2', 'internal_records']
     with Session(engine) as db:
@@ -533,6 +546,7 @@ def test_worker_continues_only_identified_reading_gaps(tmp_path, monkeypatch, sc
     async def negative(*_args, **_kwargs):
         calls.append('negative')
     monkeypatch.setattr(service, 'run_negative_candidate_ai_advisory', negative)
+    seed_job(engine, groups)
     asyncio.run(jobs._run_background(engine, 1, 1, 'web', 'review-1', 'job-1', groups, retry))
     assert calls == expected_calls
     with Session(engine) as db:
@@ -561,6 +575,7 @@ def test_worker_failure_never_records_completion(tmp_path, monkeypatch, caplog):
     async def fail(*_args, **_kwargs):
         raise TimeoutError('synthetic timeout')
     monkeypatch.setattr(service, 'run_linked_batch_ai_advisory', fail)
+    seed_job(engine, ['a2'])
     asyncio.run(jobs._run_background(engine, 1, 1, 'web', 'review-1', 'job-1', ['a2'], False))
     with Session(engine) as db:
         event = jobs._latest(db, 1, 'review-1')

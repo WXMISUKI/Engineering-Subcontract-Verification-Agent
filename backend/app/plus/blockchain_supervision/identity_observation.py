@@ -5,11 +5,11 @@ from . import pinning
 from .attachment_source import is_attachment_source
 from .models import BsFinding, STATUS_UNDECIDABLE
 from .parsing import material_page_readable
+from .personnel_evidence import IDENTITY_NUMBER_RE
 
 ITEM_ID = "A2-06"
 SOURCE = "对照同名人员身份证资料中的姓名和号码原文"
 _NAME = re.compile(r"姓\s*名(?:[ \t]*\|[ \t]*|\s*[:：]?\s*)([\u4e00-\u9fa5]{2,4})(?=\s|[|，,;；]|$)")
-_NUMBER = re.compile(r"(?:公民身份号码|身份证号码|身份证号)(?:[ \t]*\|[ \t]*|\s*[:：]?\s*)([0-9]{17}[0-9Xx])(?![0-9A-Za-z])")
 
 
 def run_identity_observations(task, materials):
@@ -23,7 +23,7 @@ def run_identity_observations(task, materials):
             text = page.get("text") or ""
             if "身份证" not in text or re.search(r"附件目录|模板|填写示例", text[:100]):
                 continue
-            names, numbers = list(_NAME.finditer(text)), list(_NUMBER.finditer(text))
+            names, numbers = list(_NAME.finditer(text)), list(IDENTITY_NUMBER_RE.finditer(text))
             if len(names) != 1 or len(numbers) != 1:
                 continue
             grouped.setdefault(names[0].group(1), []).append({

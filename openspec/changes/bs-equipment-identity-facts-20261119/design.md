@@ -1,0 +1,7 @@
+# 设计
+
+明确设备清单、检验报告、使用登记、权属证明和租赁合同独立文档。以设备名称显式段或表格行为记录边界，原文编号按internal/factory/registration分开，证号不冒充设备标识，名称不作为唯一键。同文档多台设备的公共字段只在唯一记录时允许使用，不跨页补齐。
+
+逐台关联需要同主体、同编号体系且唯一值一致；候选有冲突或无编号不自动连接；不同姓名/型号等字段差异只提示核原件。清单中的“已检验”文字不替代独立报告。检验日期/下次检验日期/租赁期间保留原值，未明类型和参数时不猜特种设备适用性或检验周期。
+
+新增A2-12挂run_personnel_staffing现有personnel_adequacy kind和A2重跑目录，输出manual_prompt而非新执行组，既有主体冲突门禁仍保留。报告复用独立人工提示明细，equipment_facts新增records并补material_id/subject_id来源，不扩大原附件16/14分母。material-facts.v7追加equipment.records批次，不改写历史。

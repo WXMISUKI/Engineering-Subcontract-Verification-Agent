@@ -1,4 +1,6 @@
-export const REVIEWABLE_STATUSES = new Set(['hit', 'undecidable'])
+// 可人工处置状态：不符合 / 无法核实 / 缺项。
+// 缺项（not_included）同样需要人工补正，必须能进入复核队列；不适用（not_applicable）不进入。
+export const REVIEWABLE_STATUSES = new Set(['hit', 'undecidable', 'not_included'])
 
 export function isOpenTerm(item) {
   return item?.open_term === true || item?.openTerm === true

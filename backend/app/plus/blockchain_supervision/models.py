@@ -277,6 +277,71 @@ class BsTaskEvent(Base):
     stage = Column(String(40), nullable=True)
     payload_json = Column(JSON, nullable=True, default=dict)
     created_at = Column(DateTime, server_default=func.now())
+    # 事件写入时的数据库时区偏移（分钟）；NULL=历史事件未知，不猜。
+    created_at_utc_offset_minutes = Column(Integer, nullable=True)
+
+
+class BsAiReviewJob(Base):
+    """AI 辅助核查的持久调度状态；业务结果仍以事件和 finding 为准。"""
+
+    __tablename__ = "bs_ai_review_job"
+    __table_args__ = (
+        Index("uq_bs_ai_review_job_task_run", "task_id", "review_run_id", unique=True),
+        Index("ix_bs_ai_review_job_state_lease", "state", "lease_expires_at"),
+    )
+
+    id = Column(String(32), primary_key=True)
+    task_id = Column(Integer, ForeignKey("bs_task.id", ondelete="CASCADE"), nullable=False)
+    review_run_id = Column(String(100), nullable=False)
+    groups_json = Column(JSON, nullable=False, default=list)
+    state = Column(String(20), nullable=False, default="queued")
+    attempt = Column(Integer, nullable=False, default=1)
+    lease_token = Column(String(32), nullable=True)
+    lease_expires_at = Column(DateTime, nullable=True)
+    last_error = Column(Text, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class BsPageTextCandidate(Base):
+    """单页补读候选；候选不是业务结论，必须经人工确认后才会被消费。"""
+
+    __tablename__ = "bs_page_text_candidate"
+    __table_args__ = (
+        Index("ix_bs_page_candidate_task_material_page", "task_id", "material_id", "page_no"),
+        Index("ix_bs_page_candidate_task_status_lease", "task_id", "status", "lease_expires_at"),
+        Index("ix_bs_page_candidate_input", "task_id", "material_id", "page_no", "review_run_id"),
+    )
+
+    id = Column(String(32), primary_key=True)
+    task_id = Column(Integer, ForeignKey("bs_task.id", ondelete="CASCADE"), nullable=False)
+    material_id = Column(Integer, ForeignKey("bs_material.id", ondelete="CASCADE"), nullable=False)
+    page_no = Column(Integer, nullable=False)
+    status = Column(String(24), nullable=False, default="requested")
+    candidate_version = Column(Integer, nullable=False, default=1)
+    review_run_id = Column(String(100), nullable=True)
+    source_sha256 = Column(String(64), nullable=False)
+    input_material_fingerprint = Column(String(128), nullable=False)
+    input_rule_fingerprint = Column(String(128), nullable=False)
+    candidate_text = Column(Text, nullable=True)
+    # 人工校对后的正文；candidate_text 保留机器原始候选，便于对照追责。
+    reviewed_text = Column(Text, nullable=True)
+    reviewed_by = Column(Integer, nullable=True)
+    reviewed_by_type = Column(String(20), nullable=True)
+    reviewed_at = Column(DateTime, nullable=True)
+    candidate_meta_json = Column(JSON, nullable=True, default=dict)
+    candidate_signature = Column(String(64), nullable=True)
+    lease_token = Column(String(32), nullable=True)
+    lease_expires_at = Column(DateTime, nullable=True)
+    expires_at = Column(DateTime, nullable=True)
+    confirmed_by = Column(Integer, nullable=True)
+    confirmed_by_type = Column(String(20), nullable=True)
+    confirmed_at = Column(DateTime, nullable=True)
+    consumed_at = Column(DateTime, nullable=True)
+    rerun_version_no = Column(Integer, nullable=True)
+    reason = Column(Text, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
 class BsMaterialConfirmation(Base):
@@ -316,8 +381,39 @@ class BsReviewVersion(Base):
 
 # 三态词全站统一（BS-P1-15 / 设计 100 §2）：状态码的唯一来源。
 STATUS_HIT, STATUS_MISS, STATUS_UNDECIDABLE = "hit", "miss", "undecidable"
+# 判定四分类：在旧三态之外补「缺项」与「不适用」。二者必须与旧三态同源描述，
+# 否则报告会出现「已提供却判未提供」「本次未涉及却判无法核实」两类口径错误。
+# - not_included：应有未提供（材料未上传/页面未读/字段未提取），处置是补正；
+# - not_applicable：本次不构成本项义务（如劳务分包不查资质等级），无需处理。
+STATUS_NOT_INCLUDED, STATUS_NOT_APPLICABLE = "not_included", "not_applicable"
+# 计数口径仍是三态（STATUS_CODES 不扩容）：缺项折入 undecidable、不适用折入 miss，
+# 避免污染历史 API 形状与既有报告快照；需要区分时直接读 finding.status。
 STATUS_CODES = (STATUS_HIT, STATUS_MISS, STATUS_UNDECIDABLE)
-STATUS_LABELS = {STATUS_HIT: "不符合", STATUS_MISS: "符合", STATUS_UNDECIDABLE: "无法核实"}
+STATUS_LABELS = {
+    STATUS_HIT: "不符合", STATUS_MISS: "符合", STATUS_UNDECIDABLE: "无法核实",
+    STATUS_NOT_INCLUDED: "缺项", STATUS_NOT_APPLICABLE: "不适用",
+}
+_STATUS_TO_COUNTED = {STATUS_NOT_INCLUDED: STATUS_UNDECIDABLE,
+                      STATUS_NOT_APPLICABLE: STATUS_MISS}
+# 处置映射：action 是下一步动作，severity 是处置等级（阻断/条件/提示），
+# 与 BsFinding.severity 的风险档（high/medium/low）是两个维度，不共列。
+STATUS_DISPOSITIONS = {
+    STATUS_HIT: {"action": "补正", "severity": "阻断"},
+    STATUS_NOT_INCLUDED: {"action": "补正", "severity": "条件"},
+    STATUS_UNDECIDABLE: {"action": "人工核对", "severity": "条件"},
+    STATUS_NOT_APPLICABLE: {"action": "无需处理", "severity": "提示"},
+    STATUS_MISS: {"action": "无需处理", "severity": None},
+}
+
+
+def counted_status(status):
+    """新判定态 → 三态计数口径；未知值原样返回，由调用方决定是否忽略。"""
+    return _STATUS_TO_COUNTED.get(status, status)
+
+
+def status_disposition(status) -> dict:
+    """判定态 → 处置动作与处置等级（唯一取词点，报告/接口共用）。"""
+    return dict(STATUS_DISPOSITIONS.get(status) or {"action": "人工核对", "severity": "条件"})
 
 
 class BsFinding(Base):

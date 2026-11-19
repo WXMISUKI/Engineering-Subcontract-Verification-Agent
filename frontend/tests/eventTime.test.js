@@ -8,6 +8,7 @@ describe('事件时间使用北京时间', () => {
   })
   it('尊重 UTC 和明确时区偏移，避免重复加八小时', () => {
     expect(formatEventTime('2026-11-06T01:00:30Z')).toBe('09:00:30')
+    expect(formatEventTime('2026-11-06T01:00:30+00:00')).toBe('09:00:30')
     expect(formatEventTime('2026-11-06T09:00:30+08:00')).toBe('09:00:30')
     expect(formatEventTime('2026-11-06T02:00:30+01:00')).toBe('09:00:30')
   })

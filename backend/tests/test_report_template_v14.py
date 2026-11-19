@@ -98,7 +98,7 @@ def test_v14_builds_conclusion_sections_and_eight_attachments():
     assert document["template_id"] == "v1.4"
     assert document["available"] is True
     assert document["title"] == "测试施工专业分包审查意见"
-    assert document["conclusion"]["suggested"] == "附条件同意"
+    assert document["conclusion"]["suggested"] == "原则同意，附条件通过"
     assert document["conclusion"]["risk_counts"]["缺项"] == 1
     assert document["conclusion"]["approval_opinion"] == ""
 
@@ -122,8 +122,8 @@ def test_v14_builds_conclusion_sections_and_eight_attachments():
     assert "八、综合审查结论" in text
     assert "附件三" not in text
     assert "以上 8 表" not in text
-    assert "暂缓签订该分包合同" in text
-    assert "补正后重新报审" in text
+    assert "原则同意，附条件通过" in text
+    assert "补正并复核后方可签订" in text
     assert "指挥部/建设单位（章）" in text
     assert "R10" not in text and "R4" not in text
     assert "未形成机器结论" not in text
@@ -137,6 +137,55 @@ def test_v14_appendix_does_not_prefill_compliant():
                for row in appendix["auto_rows"])
     assert appendix["manual_rows"]
     assert any("请核对" in row[3] for row in appendix["manual_rows"])
+
+
+def test_v14_contract_condition_skipped_when_contract_pages_located():
+    item = {"item_id": "RC-C01", "kind": "contract", "status": "undecidable",
+            "material_missing": False, "material_only": False,
+            "label": "合同条款", "message": "合同计价条款需核对"}
+    assert v14._condition_for_item(item, {}, {"pages": [46, 48]}) == ""
+    assert "补交完整分包合同" in v14._condition_for_item(item, {}, {})
+
+
+def test_v14_safety_summary_marks_unidentified_certificate():
+    text = "\n".join(v14._safety_summary_lines({}, None))
+    assert "提及安全生产许可证" in text
+    assert "未识别证号与有效期" in text
+
+
+def test_certificate_facts_ignore_contract_mentions_without_fields():
+    from app.plus.blockchain_supervision import certificate_facts
+
+    material = SimpleNamespace(file_name="分包合同.pdf", pages_json=[
+        {"page": 10, "text": "分包人应持有营业执照、建筑业企业资质证书和安全生产许可证，"
+                              "许可范围应覆盖本工程。"},
+    ])
+    facts = certificate_facts.extract_certificate_facts([material])
+    assert facts["business_license"] == {}
+    assert facts["qualification"] == {}
+    assert facts["safety_license"] == {}
+    assert facts["qualifications"] == []
+    assert certificate_facts.qualification_evidence(facts) == {
+        "business_license": False, "qualification": False, "safety_permit": False}
+
+
+def test_certificate_facts_keep_pages_with_substantive_fields():
+    from app.plus.blockchain_supervision import certificate_facts
+
+    material = SimpleNamespace(file_name="证照.pdf", pages_json=[
+        {"page": 1, "text": "营业执照 统一社会信用代码:91310000MA1K000000 "
+                            "法定代表人:张三 经营范围:建设工程施工"},
+        {"page": 2, "text": "建筑业企业资质证书 证书编号:D123456 "
+                            "有效期至:2028年12月31日 资质类别:地基基础工程专业承包"},
+        {"page": 3, "text": "安全生产许可证 安全生产许可证编号:（沪）JZ安许证字[2024]001 "
+                            "许可证有效日期:2024年1月1日至2027年1月1日 许可范围:建筑施工"},
+    ])
+    facts = certificate_facts.extract_certificate_facts([material])
+    assert facts["business_license"]["uscc"] == "91310000MA1K000000"
+    assert facts["qualification"]["cert_no"] == "D123456"
+    assert facts["safety_license"]["cert_no"] == "（沪）JZ安许证字[2024]001"
+    assert certificate_facts.qualification_evidence(facts) == {
+        "business_license": True, "qualification": True, "safety_permit": True}
 
 
 def test_v14_reads_labor_certificate_and_expired_safety_license():
@@ -215,9 +264,16 @@ def test_v14_replaces_internal_signature_terms_and_sources():
     document = v14.build_document(report)
     text = "\n".join(block.get("text", "") for block in document["blocks"])
     assert "法定签字链" not in text
-    assert "监理及发包人签署" in text
+    assert "报审表法定签署" in text
     item = next(row for row in v14._raw_items(report) if row["item_id"] == "A3-02-legal")
     assert "沪交行规〔2026〕8号" in item["source"]
+
+
+def test_v14_preserves_single_attachment_signature_source():
+    for attachment in ("附件3", "附件4"):
+        source = v14._plain_source("A3-02-legal", "《上海市公路工程施工分包管理实施细则》%s签署栏" % attachment)
+        assert attachment in source
+        assert ("附件4" if attachment == "附件3" else "附件3") not in source
 
 
 def test_v14_contract_section_uses_extracted_clause_pages():
@@ -302,20 +358,124 @@ def test_v14_negative_list_coverage_is_not_reported_as_checked():
     item = {"kind": "illegal_subcontract", "item_id": "W16-02", "status": "undecidable",
             "material_missing": False, "material_only": False,
             "label": "分包负面清单主体或关键性工作",
-            "message": "不可判定：负面清单核查覆盖不足，已评估1/21条（当前负面清单目录）"}
+            "message": "发现 1 项需补充确认的问题"}
     negative = {"kind": "negative_list", "item_id": "NL-R-01", "status": "miss",
                 "material_missing": False, "material_only": False,
                 "label": "省级负面清单增补", "message": "未触发"}
     lines = v14._section_summary_lines("legality", [negative, item])
-    assert any("1/21" in line and "不能认定未命中" in line for line in lines)
+    assert any("需补充确认" in line for line in lines)
+    assert not any("1/21" in line for line in lines)
     conclusion = v14._section_summary_conclusion("legality", [item], "fallback")
-    assert "1/21" in conclusion and "不能认定未命中" in conclusion
+    assert "需补充确认" in conclusion and "1/21" not in conclusion
     condition = v14._condition_for_item(item)
-    assert "1/21" in condition and "逐条对照" in condition
+    assert "补充负面清单相关参数" in condition
 
     variant = dict(item, message="无法核实：现有核查结果尚不足以确认是否涉及负面清单；共有 20 项未完成或仍需核实")
-    assert "覆盖不足" in v14._section_summary_conclusion("legality", [negative, variant], "fallback")
+    assert "需补充确认" in v14._section_summary_conclusion("legality", [negative, variant], "fallback")
     assert "覆盖不足" in v14._condition_for_item(variant)
+
+
+def test_v14_conclusion_is_three_tier():
+    assert v14._suggested_conclusion({"dimensions": []}, [
+        {"status": "miss", "material_missing": False}]) == "同意"
+    assert v14._suggested_conclusion({"dimensions": []}, [
+        {"status": "undecidable", "material_missing": False}]) == "原则同意，附条件通过"
+    assert v14._suggested_conclusion(
+        {"dimensions": [{"code": "compliance", "verdict": "不符合"}]},
+        [{"status": "hit", "material_missing": False}]) == "不同意"
+
+
+def test_v14_issue_row_has_four_segments_and_evidence_location():
+    raw = v14._raw_items({"sections": [{"kind": "transfer_scope", "items": [{
+        "item_id": "T15-01", "status": "hit", "material_missing": False, "material_only": False,
+        "label": "转包情形", "message": "未命中：未见项目管理机构派驻记录",
+        "source": "《沪交行规〔2026〕8号》第十五条（一）", "recommendation": "",
+        "evidence": {"file_name": "分包合同.pdf", "page": 12, "quote": "分包人自行组织施工并自负盈亏"},
+    }]}]})
+    rows = v14._issue_rows(raw)
+    assert len(rows) == 1
+    assert rows[0]["impact"]
+    assert "分包合同.pdf" in rows[0]["fact"] and "第12页" in rows[0]["fact"]
+    assert "未命中" not in rows[0]["fact"]
+    assert rows[0]["reason"].startswith("《沪交行规〔2026〕8号》")
+
+
+def test_v14_special_operation_issue_uses_work_qualification_impact():
+    raw = v14._raw_items({"sections": [{"kind": "personnel_adequacy", "items": [{
+        "item_id": "A2-08", "status": "not_included", "material_missing": True,
+        "label": "特种作业工种覆盖", "message": "缺少焊工实填工种名单",
+        "evidence": {"file_name": "名单.pdf", "page": 2, "quote": "李四 焊工"},
+    }]}]})
+    row, = v14._issue_rows(raw)
+    assert "特种作业工种或证书类型" in row["impact"]
+    assert "关键岗位人员不足" not in row["impact"]
+
+
+def test_v14_scope_status_survives_safety_certificate_expiry_summary():
+    for state, verdict in (("not_included", "缺项"), ("undecidable", "待核实")):
+        raw = v14._raw_items({"sections": [{"kind": "cert_validity", "items": [{
+            "item_id": "A2-09", "status": state, "material_missing": state == "not_included",
+            "label": "安全生产许可证许可范围", "message": "安全生产许可证许可范围需核对",
+        }]}]})
+        sections = v14._sections({}, raw, certificate_facts={"safety_license": {
+            "name": "合成公司", "cert_no": "合成001", "scope": "建筑施工", "valid_until": "2028-01-01"}},
+            baseline=v14._parse_date("2026-11-19"))
+        section = next(row for row in sections if row["code"] == "safety_permit")
+        assert section["status"] == verdict
+        assert "许可行业核查结果：%s" % verdict in section["summary_conclusion"]
+        assert any("许可范围需核对" in line for line in section["summary_lines"])
+
+
+def test_v14_permit_scope_recommendations_distinguish_missing_sources_and_mapping():
+    for message, expected in (
+        ("未取得可核对的安全生产许可证原页，请补充证照", "补交本分包单位"),
+        ("安全生产许可证已见，许可范围字段未提取，请核对证照原页", "补充可读的许可范围字段"),
+        ("安全生产许可证许可范围为建筑施工；许可范围对应规则尚未验证", "对应关系"),
+    ):
+        item = {"item_id": "A2-09", "message": message, "label": "安全生产许可证许可范围"}
+        assert expected in v14._condition_for_item(item)
+
+
+def test_v14_wording_guard_blocks_internal_state_words():
+    assert v14.wording_violations({"text": "本次共核查 12 项，1/21 通过"})
+    assert v14.wording_violations({"text": "该事项未命中"})
+    assert v14.wording_violations({"text": "材料齐备，未见异常"}) == []
+
+
+def test_v14_reading_statement_is_rendered_in_blocks():
+    report = sample_report()
+    report["reading_coverage"] = [{
+        "material_id": 7, "file_name": "扫描件.pdf", "total_pages": 310,
+        "unread_pages": list(range(1, 41)), "over_limit_pages": [],
+        "blank_pages": [41, 42], "suspect_pages": [43, 44, 45, 46, 47, 48],
+        "affected_findings": 3,
+    }]
+    document = v14.build_document(report)
+    text = "\n".join(block.get("text", "") for block in document["blocks"])
+    assert "扫描件.pdf" in text
+    assert "未读 40 页" in text
+    assert "本次共 1 份材料存在阅读受限" in document["reading_statement"]
+
+
+def test_v14_negative_list_pass_is_concise():
+    item = {"kind": "illegal_subcontract", "item_id": "W16-02", "status": "miss",
+            "material_missing": False, "material_only": False,
+            "label": "分包负面清单主体或关键性工作", "message": "通过"}
+    lines = v14._section_summary_lines("legality", [item])
+    assert lines[0] == "负面清单：通过。"
+    assert not any("1/21" in line for line in lines)
+    conclusion = v14._section_summary_conclusion("legality", [item], "fallback")
+    assert "负面清单：通过" in conclusion
+
+
+def test_v14_negative_list_hit_is_concise():
+    item = {"kind": "illegal_subcontract", "item_id": "W16-02", "status": "hit",
+            "material_missing": False, "material_only": False,
+            "label": "分包负面清单主体或关键性工作", "message": "发现 1 项问题"}
+    lines = v14._section_summary_lines("legality", [item])
+    assert lines[0] == "负面清单：发现问题，见下列注意事项。"
+    assert not any("1/21" in line for line in lines)
+    # 命中时 _section_summary_conclusion 返回调用方 fallback；主文结论由 lines 展示。
 
 
 def test_v14_negative_coverage_uses_ratio_when_wording_changes():

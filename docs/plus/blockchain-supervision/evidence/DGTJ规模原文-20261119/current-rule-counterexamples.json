@@ -1,0 +1,53 @@
+[
+  {
+    "case": "一级公路路基6km",
+    "category": "highway_first_class",
+    "params": {
+      "roadbed_km": 6
+    },
+    "current": {
+      "scale": "medium",
+      "reason": "命中中型条件",
+      "interpreted": false,
+      "matched": [
+        {
+          "field": "roadbed_km",
+          "op": ">=",
+          "value": 5
+        }
+      ]
+    },
+    "proposed_expected": "large",
+    "validation_type": "existing pure function diagnostic; proposed rule not enabled"
+  },
+  {
+    "case": "二级公路路基12km",
+    "category": "highway_secondary",
+    "params": {
+      "roadbed_km": 12
+    },
+    "current": {
+      "scale": "small",
+      "reason": "原文固定档：二级及以下公路",
+      "interpreted": true,
+      "matched": []
+    },
+    "proposed_expected": "large",
+    "validation_type": "existing pure function diagnostic; proposed rule not enabled"
+  },
+  {
+    "case": "桥梁低合同额但跨度未知",
+    "category": "bridge",
+    "params": {
+      "contract_amount_yi": 0.1
+    },
+    "current": {
+      "scale": "small",
+      "reason": "未达中型/大型阈值",
+      "interpreted": false,
+      "matched": []
+    },
+    "proposed_expected": null,
+    "validation_type": "existing pure function diagnostic; proposed rule not enabled"
+  }
+]

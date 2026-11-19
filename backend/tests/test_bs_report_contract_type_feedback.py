@@ -156,5 +156,6 @@ def test_report_contract_projection_preserves_rule_extractor():
     material = SimpleNamespace(id=1, file_name='劳务分包合同.pdf', role='labor', pages_json=[])
     original = extract.extract_contract_fields(material)['fields']['contract_type']
     fields = reporting.contract_facts_for_materials([material])[0]['fields']
-    assert original['value'] == '专业分包'
+    # 规则抽取已修复“分包”短词抢先命中；报告仍保留其独立展示标签。
+    assert original['value'] == '劳务合作'
     assert fields['contract_type']['value'] == '劳务分包'

@@ -113,6 +113,19 @@ def test_amount_extract_mixed_tax_clause_keeps_first_amount_label():
     assert amt["value_wan"] == pytest.approx(4173.0485)
 
 
+def test_amount_extract_upper_case_gross_before_exclusive_clause_is_inclusive():
+    mat = _mat(
+        102,
+        "专业分包合同.pdf",
+        "1. 签约合同价为:人民币(大写)肆佰伍拾伍万柒仟伍佰玖拾捌元柒角壹分(¥4557598.71元);"
+        "不含增值税的签约合同价为:大写:肆佰壹拾捌万壹仟贰佰捌拾叁元贰角贰分(¥4181283.22元)。",
+        role="sub",
+    )
+    amt = a1_check.extract_contract_amount(mat)
+    assert amt["found"] and amt["tax"] == "incl"
+    assert amt["value_wan"] == pytest.approx(455.759871)
+
+
 def test_contract_amount_cannot_use_unread_page():
     material = _mat(97, "总包合同.pdf", "合同金额：人民币12,000万元（含税）。", role="general")
     material.degradations_json = [{"kind": "parse_incomplete", "unread_pages": [1]}]
@@ -492,7 +505,8 @@ def test_a1_02_not_recalled_no_finding():
     """未召回的条目不出逐条结论（报告汇总说明覆盖面），只余省级授权条目。"""
     mats = [_mat(9, "分包合同-壬.pdf", "分包范围：路基土石方填筑与边坡防护。", role="sub")]
     findings = a1_check.run_negative_list_check(_task(), mats)
-    assert [f.item_id for f in findings] == ["NL-R-01"]
+    assert [f.item_id for f in findings] == ["NL-R-01", "NL-SCOPE"]
+    assert next(f for f in findings if f.item_id == "NL-SCOPE").message == "通过"
 
 
 def test_a1_02_keyword_across_line_breaks():

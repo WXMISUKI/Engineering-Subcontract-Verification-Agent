@@ -266,6 +266,16 @@
     "RC-L14": {
       "clause_id": "ZHB-2025-0620#二、14",
       "doc_id": "ZHB-2025-0620"
+    },
+    "A2-09": {
+      "clause_id": "MOHURD-128-2015#第二条",
+      "doc_id": "MOHURD-128-2015",
+      "subject": "subcontractor"
+    },
+    "A2-14": {
+      "clause_id": "DG-TJ08-2225-ARCHIVE#4.2.2",
+      "doc_id": "DG-TJ08-2225-ARCHIVE",
+      "subject": "subcontractor"
     }
   }
 }

@@ -55,6 +55,12 @@ def load_negative_matchers() -> dict:
         return json.load(f)
 
 
+def load_negative_applicability() -> dict:
+    """负面清单 21 叶的适用范围/结构部位/参数要求（外置，不改原文）。"""
+    with open(_DATA_DIR / "negative_list_applicability.json", encoding="utf-8") as f:
+        return json.load(f)
+
+
 def load_extract_matchers() -> dict:
     """A-15 合同字段统一抽取层匹配器（字段正则/词表外置为数据；纯正则/词表，零 LLM）。
 
@@ -89,9 +95,40 @@ def load_signature_chains() -> list:
         return json.load(f)["chains"]
 
 
+def load_signature_form_matrices() -> list:
+    """附件3/4各自的签字与章要求，不与集团链合并。"""
+    with open(_DATA_DIR / "signature_chains.json", encoding="utf-8") as f:
+        return json.load(f)["form_matrices"]
+
+
 def load_qualification_matchers() -> dict:
     """A2-04 资质匹配词表（分包施工内容类别 × 经营范围标签，出处见 meta.source_note）。"""
     with open(_DATA_DIR / "qualification_matchers.json", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def load_qualification_scope() -> dict:
+    """A2-04 第二段：资质类别 → 等级 → 承包工程范围阈值（双版本并存）。
+
+    只登记有原文数字支撑的阈值；未归档的等级以 verified=false 标记，
+    判定侧据此输出待核实，不按旧版等级换算。
+    """
+    with open(_DATA_DIR / "qualification_scope.json", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def load_personnel_adequacy() -> dict:
+    """DG/TJ 08-2225 人员配置表（专业分包/劳务分包/规模划分/任职条件）。
+
+    出处与解释说明在 meta 中；本文件只提供数据，判定由 personnel_adequacy 模块执行。
+    """
+    with open(_DATA_DIR / "personnel_adequacy.json", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def load_special_operation_catalog() -> dict:
+    """特种作业工种 → 可接受证书类型（按工种匹配，不绑定单一证书）。"""
+    with open(_DATA_DIR / "special_operation_catalog.json", encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -117,7 +154,13 @@ def load_review_flow() -> dict:
     由 `backend/scripts/render_review_flow.py` 渲染成《审查流程与依据对照表》与流程图；
     `tests/test_bs_review_flow.py` 把它的声明钉在源码坐标上（内核函数、报告分区、条款库），
     因此新增或改名内核后跑测试即知图是否需要同步。
+
+    加载期先过依据闸门（`basis_validation.ruleset_gate`）：登记表/索引/流程/附件映射
+    任一错配直接失败，不带着错依据进入核查。
     """
+    from . import basis_validation
+
+    basis_validation.ruleset_gate()
     with open(_DATA_DIR / "review_flow.json", encoding="utf-8") as f:
         return json.load(f)
 

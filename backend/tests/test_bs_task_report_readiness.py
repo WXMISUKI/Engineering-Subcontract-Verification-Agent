@@ -36,6 +36,9 @@ def test_readiness_is_read_only_and_separates_three_permissions(db_session):
     assert (dto["draft_readable"], dto["confirmed_output_ready"], dto["task_close_ready"]) == (True, True, True), dto
     assert dto["reading_quality"]["state"] == "complete"
     assert dto["execution"]["state"] == "completed"
+    assert dto["finding_review"]["accepted"] == 1
+    assert dto["finding_review"]["pending_machine_review"] == 0
+    assert dto["finding_review"]["pending_actions"] == 0
     assert (task.options_snapshot_json, material.degradations_json, finding.review_json) == before
     assert db.query(BsTaskEvent).count() == event_count
     assert db.query(BsReviewVersion).count() == 0
@@ -83,6 +86,36 @@ def test_pending_review_blocks_formal_but_not_draft(db_session):
     assert dto["draft_readable"] is True
     assert dto["confirmed_output_ready"] is dto["task_close_ready"] is False
     assert dto["finding_review"]["blocking"][0]["finding_id"] == finding.id
+    assert dto["finding_review"]["pending_machine_review"] == 1
+    assert dto["finding_review"]["pending_actions"] == 1
+
+
+def test_manual_prompt_is_counted_separately_from_machine_review(db_session):
+    db = db_session
+    task, _, _ = seed_task(db)
+    db.add(BsFinding(task_id=task.id, item_id="RC-L11", kind="person_consistency",
+                     status="undecidable", finding_semantics="manual_prompt",
+                     message="请人工核对证件原件"))
+    db.commit()
+    dto = service.build_report_readiness(db, task)
+    assert dto["finding_review"]["pending_manual_prompt"] == 1
+    assert dto["finding_review"]["pending_machine_review"] == 0
+
+
+def test_legacy_plaza_event_labels_remain_readable():
+    assert service.EVENT_LABELS["check.ai_job_recovered"] == "辅助核查已恢复"
+    assert service.EVENT_LABELS["check.negative_list_failed"] == "负面清单核查失败"
+
+
+def test_event_dto_records_database_offset(db_session):
+    db = db_session
+    task, _, _ = seed_task(db)
+    seq = service.add_event(db, task.id, "task.created", payload={})
+    event = db.query(BsTaskEvent).filter_by(task_id=task.id, sequence=seq).one()
+    assert event.created_at_utc_offset_minutes == 0
+    dto = service.event_dto(event)
+    assert dto["created_at_utc_offset_minutes"] == 0
+    assert dto["created_at"].endswith("+00:00")
 
 
 def test_execution_failure_is_not_cleared_by_review(db_session, monkeypatch):

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { getBsReviewVersion } from '../lib/api'
 
-const labels = { hit: '不符合', miss: '符合', undecidable: '无法核实' }
+const labels = { hit: '不符合', miss: '符合', undecidable: '无法核实', not_included: '缺项', not_applicable: '不适用' }
 
 /** Read-only baseline: never mix an in-progress supplement with current findings. */
 export default function PreviousSupplementReview({ taskId, versionNo }) {

@@ -1,0 +1,77 @@
+{
+  "schema_version": "bs-special-operation-catalog.v1",
+  "meta": {
+    "confirmed_at": "2026-11-18",
+    "confirmed_by": "user",
+    "version": "2026-11-18.3",
+    "effective_from": "2026-11-18",
+    "basis_ids": [
+      "MOT-2017-25#第十六条",
+      "JTG-F90-2015#5.5.1",
+      "JTG-F90-2015#5.6.2",
+      "SAMR-TSG-Z6001-2019",
+      "MEM-2026-19",
+      "MEM-2026-45",
+      "MOHURD-2025-60"
+    ],
+    "version_notes": [
+      "2026-06-01 起，应急管理部令第19号、应急〔2026〕45号《特种作业目录》施行",
+      "住建部令2025年第60号自2026-06-01施行，替代建质〔2008〕75号，适用于房屋市政工程",
+      "公路工程特种作业同时受 JTG F90-2015 与交安25号令约束"
+    ],
+    "notes": [
+      "证书类型按工种匹配，不绑定单一证书；不在可接受清单内时输出“需补充确认证书类型”，不直接判不符合",
+      "同一工种存在多套证书时，报告注明实际证书类型"
+    ]
+  },
+  "work_types": {
+    "mobile_crane_driver": {
+      "label": "汽车吊/履带吊司机",
+      "scope_keywords": ["汽车吊", "履带吊", "流动式起重机"],
+      "roster_aliases": ["汽车吊司机", "履带吊司机", "流动式起重机司机"],
+      "certificate_markers": [["Q2", "流动式起重机"]],
+      "accepted_cert_types": ["特种设备作业人员证Q2（限流动式起重机）"],
+      "preferred": "特种设备作业人员证Q2（限流动式起重机）",
+      "excluded_cert_types": ["建筑起重机械司机（塔式/门式等）"],
+      "basis": ["特种设备安全法", "TSG Z6001-2019", "JTG F90-2015 5.6.2"]
+    },
+    "signal_slinger": {
+      "label": "信号工/司索工",
+      "scope_keywords": ["汽车吊", "履带吊", "流动式起重机", "吊装", "起重作业"],
+      "roster_aliases": ["信号司索工", "信号工", "司索工", "起重指挥"],
+      "certificate_markers": [["Q1"], ["建筑起重信号司索工"]],
+      "accepted_cert_types": ["起重指挥（Q1）", "建筑起重信号司索工"],
+      "preferred": "起重指挥（Q1）",
+      "equivalence_note": "交通运输部答复：JTG F90-2015 附录D 的起重信号司索工与 TSG Z6001-2019 的起重指挥含义相同；起重指挥培训包含司索内容",
+      "basis": ["JTG F90-2015 5.6.2", "TSG Z6001-2019", "住建部令2025年第60号"]
+    },
+    "welder": {
+      "label": "焊工",
+      "scope_keywords": ["焊接", "电焊", "热切割"],
+      "roster_aliases": ["焊工", "电焊工", "气焊工"],
+      "certificate_markers": [["熔化焊接与热切割"], ["建筑焊工"]],
+      "accepted_cert_types": ["熔化焊接与热切割作业", "建筑焊工"],
+      "preferred": "熔化焊接与热切割作业",
+      "basis": ["JTG F90-2015 5.5.1", "应急管理部令第19号", "应急〔2026〕45号"]
+    },
+    "work_at_height": {
+      "label": "高处作业",
+      "scope_keywords": ["高处作业", "登高架设", "脚手架搭设", "吊篮安装", "吊篮拆卸"],
+      "roster_aliases": ["架子工", "登高架设工", "高处作业工", "吊篮安装拆卸工"],
+      "certificate_markers": [["登高架设作业"], ["高处作业吊篮安装拆卸工"]],
+      "accepted_cert_types": ["登高架设作业", "高处作业吊篮安装拆卸工"],
+      "preferred": "按实际作业类型",
+      "match_rule": "by_actual_work_type",
+      "basis": ["应急〔2026〕45号", "住建部令2025年第60号"]
+    },
+    "crane_installer": {
+      "label": "起重机械安装拆卸工",
+      "scope_keywords": ["起重机械安装", "起重机械拆卸", "起重机械拆除"],
+      "roster_aliases": ["起重机械安装拆卸工", "建筑起重机械安装拆卸工"],
+      "certificate_markers": [["建筑起重机械安装拆卸工"]],
+      "accepted_cert_types": ["特种设备作业人员证（按设备类型）", "建筑起重机械安装拆卸工"],
+      "preferred": "按设备类型",
+      "basis": ["JTG F90-2015 5.6.2", "特种设备安全法"]
+    }
+  }
+}

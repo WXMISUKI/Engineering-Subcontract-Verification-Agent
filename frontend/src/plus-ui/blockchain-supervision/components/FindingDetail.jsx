@@ -1,6 +1,7 @@
 // 中栏：当前结论详情（纯只读）。
 // 固定顺序（契约 §U1）：结论标识 → 核查说明(message) → 参考依据(source)
 //                     → 证据摘要(quote) → 缺失字段/无法核实原因。
+import PersonnelEvidenceClues from './PersonnelEvidenceClues'
 
 function Block({ title, children }) {
   if (!title) return children
@@ -94,6 +95,13 @@ export default function FindingDetail({ finding, item, evidence = [], materialsB
             {finding.message}
           </p>
         </Block>
+
+        <PersonnelEvidenceClues
+          evidence={finding.evidence}
+          materialsById={materialsById}
+          onOpenSource={onOpenSource}
+          findingId={finding.id ?? finding.findingId}
+        />
 
         {finding.source && (
           <Block title="参考依据">

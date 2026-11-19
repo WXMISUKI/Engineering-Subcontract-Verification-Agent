@@ -423,3 +423,16 @@ def test_server_scope_flag_does_not_change_deterministic_transfer_findings(monke
     candidate = snapshot()
 
     assert candidate == baseline
+
+
+def test_t15_02_contract_range_label_counts_as_subcontract_scope():
+    """「分包工程承包范围和内容」是合同的分包范围证据，不得判为缺分包范围。"""
+    materials = [
+        _mat(1, "总包合同.pdf", "总承包范围：路基、路面工程。标段：1标。"
+                                "承包人将全部工程肢解后分别发包。", role="general"),
+        _mat(2, "分包一.pdf", "分包工程承包范围和内容：路基工程。"),
+        _mat(3, "分包二.pdf", "分包工程承包范围和内容：路面工程。"),
+    ]
+    finding = _find("T15-02", materials)
+    assert finding.status == STATUS_HIT
+    assert "subcontract_scopes" not in (finding.missing_json or [])

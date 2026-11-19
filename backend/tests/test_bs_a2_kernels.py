@@ -15,7 +15,7 @@ import pytest
 
 from app.plus.blockchain_supervision import a2_check, service
 from app.plus.blockchain_supervision.models import (
-    STATUS_HIT, STATUS_MISS, STATUS_UNDECIDABLE, BsFinding,
+    STATUS_HIT, STATUS_MISS, STATUS_NOT_INCLUDED, STATUS_UNDECIDABLE, BsFinding,
 )
 from app.plus.blockchain_supervision.rules import load_config
 from app.plus.startup_conditions_check import validity as oc_validity
@@ -752,13 +752,15 @@ def test_company_norm_ignores_parentheses_and_spaces():
     assert a2_check.norm_company("上海城建（集团）隧道 有限公司") == "上海城建隧道有限公司"
 
 
-def test_name_coverage_alone_is_undecidable_with_facts():
+def test_name_coverage_alone_is_not_included_with_facts():
     findings = a2_check.run_person_consistency_check(_task(), _mats(SOCIAL_COVERS_BOTH))
     assert len(findings) == 1
     f = findings[0]
-    assert f.kind == "person_consistency" and f.status == STATUS_UNDECIDABLE
-    assert f.item_id == "A2-01" and "2 名主要管理人员" in f.message
-    assert "同一人" in f.message and "劳动" in f.message
+    assert f.kind == "person_consistency" and f.status == STATUS_NOT_INCLUDED
+    assert f.item_id == "A2-01"
+    assert "王建国" in f.message and "李秀英" in f.message
+    assert "缺劳动合同" in f.message
+    assert "同一人" in f.message
     assert {ref["name"] for ref in f.evidence_json} == {"王建国", "李秀英"}
     assert {ref["evidence_side"] for ref in f.evidence_json} == {
         "management_roster", "social_record"
@@ -783,22 +785,22 @@ def test_person_evidence_keeps_same_name_subjects_separate():
 
 def test_missing_name_requires_supplement_not_automatic_violation():
     findings = a2_check.run_person_consistency_check(_task(), _mats(SOCIAL_COVERS_ONE))
-    assert len(findings) == 1 and findings[0].status == STATUS_UNDECIDABLE
+    assert len(findings) == 1 and findings[0].status == STATUS_NOT_INCLUDED
     assert findings[0].item_id == "A2-01"
-    assert "李秀英" in findings[0].message and "人工核实" in findings[0].message
+    assert "李秀英" in findings[0].message and "缺社保缴费记录" in findings[0].message
 
 
-def test_no_social_material_is_undecidable():
+def test_no_social_material_is_not_included():
     mats = [_mat(12, "主要管理人员名单.pdf", ROSTER_OK, role="packet")]
     findings = a2_check.run_person_consistency_check(_task(), mats)
-    assert len(findings) == 1 and findings[0].status == STATUS_UNDECIDABLE
+    assert len(findings) == 1 and findings[0].status == STATUS_NOT_INCLUDED
     assert "未能识别到社保缴费记录原文" in findings[0].message
 
 
-def test_no_roster_material_is_undecidable():
+def test_no_roster_material_is_not_included():
     mats = [_mat(11, "社保缴费证明.pdf", SOCIAL_COVERS_BOTH, role="packet")]
     findings = a2_check.run_person_consistency_check(_task(), mats)
-    assert len(findings) == 1 and findings[0].status == STATUS_UNDECIDABLE
+    assert len(findings) == 1 and findings[0].status == STATUS_NOT_INCLUDED
     assert "主要管理人员名单" in findings[0].message
 
 
@@ -810,23 +812,23 @@ def test_contract_role_not_used_as_roster():
                     role="general")
     soc = _mat(11, "社保缴费证明.pdf", SOCIAL_COVERS_BOTH, role="packet")
     findings = a2_check.run_person_consistency_check(_task(), [contract, soc])
-    assert len(findings) == 1 and findings[0].status == STATUS_UNDECIDABLE
+    assert len(findings) == 1 and findings[0].status == STATUS_NOT_INCLUDED
     assert "主要管理人员名单" in findings[0].message  # 落到「未上传名单」而非假命中
 
 
-def test_roster_without_names_is_undecidable():
-    """名单在场但抽不出姓名（如扫描件）→ 不可判定，绝不臆断名单为空。"""
+def test_roster_without_names_is_not_included():
+    """名单在场但抽不出姓名（如扫描件）→ 缺项，绝不臆断名单为空。"""
     mats = _mats(roster_text="主要管理人员名单及联系方式\n（内容为图片，未识别出文字）")
     findings = a2_check.run_person_consistency_check(_task(), mats)
-    assert len(findings) == 1 and findings[0].status == STATUS_UNDECIDABLE
+    assert len(findings) == 1 and findings[0].status == STATUS_NOT_INCLUDED
     assert "未能提取到人员姓名" in findings[0].message
 
 
-def test_social_without_names_is_undecidable():
-    """社保文本在场但未标注姓名 → 不可判定（区别于「无文字内容」）。"""
+def test_social_without_names_is_not_included():
+    """社保文本在场但未标注姓名 → 缺项（区别于「无文字内容」）。"""
     mats = _mats(social_text=SOCIAL_NO_NAME)
     findings = a2_check.run_person_consistency_check(_task(), mats)
-    assert len(findings) == 1 and findings[0].status == STATUS_UNDECIDABLE
+    assert len(findings) == 1 and findings[0].status == STATUS_NOT_INCLUDED
     assert "未提取到人员姓名" in findings[0].message
 
 
@@ -836,12 +838,89 @@ def test_scanned_social_requires_ingestion_result_before_review():
     soc.path = "uploads/bs/1/社保缴费证明.pdf"
     ros = _mat(12, "主要管理人员名单.pdf", ROSTER_OK, role="packet")
     findings = a2_check.run_person_consistency_check(_task(), [soc, ros])
-    assert len(findings) == 1 and findings[0].status == STATUS_UNDECIDABLE
+    assert len(findings) == 1 and findings[0].status == STATUS_NOT_INCLUDED
     assert "人工翻看" in findings[0].message
     soc.pages_json = [{"page": 1, "text": SOCIAL_COVERS_BOTH}]
     findings = a2_check.run_person_consistency_check(_task(), [soc, ros])
+    assert len(findings) == 1 and findings[0].status == STATUS_NOT_INCLUDED
+    assert "王建国" in findings[0].message and "缺劳动合同" in findings[0].message
+
+
+ROSTER_ONE = "主要管理人员名单\n姓名：王建国 岗位：项目经理\n身份证号：110101199001010011"
+LABOR_SAME = ("劳动合同\n姓名：王建国\n身份证号：110101199001010011\n用人单位：上海城建有限公司\n"
+              "合同期限：2025-01 至 2027-12")
+SOCIAL_FRESH = ("社会保险缴费证明\n姓名：王建国\n身份证号：110101199001010011\n参保单位：上海城建有限公司\n"
+                "缴费期间：2026-10 至 2026-11")
+SOCIAL_STALE = ("社会保险缴费证明\n姓名：王建国\n身份证号：110101199001010011\n参保单位：上海城建有限公司\n"
+                "缴费期间：2025-01 至 2025-06")
+
+
+def _relation_mats(social_text, labor_text=LABOR_SAME):
+    return [_mat(12, "主要管理人员名单.pdf", ROSTER_ONE, role="packet"),
+            _mat(13, "社保缴费证明.pdf", social_text, role="packet"),
+            _mat(14, "劳动合同书.pdf", labor_text, role="packet")]
+
+
+def _dated_task(baseline=date(2026, 11, 18)):
+    task = _task()
+    task.baseline_date = baseline
+    return task
+
+
+def test_person_relation_social_unit_mismatch_is_hit():
+    """社保单位与本单位不一致 → 不符合（不是待核实）。"""
+    findings = a2_check.run_person_consistency_check(
+        _dated_task(), _relation_mats(SOCIAL_FRESH.replace("上海城建有限公司", "上海某某劳务有限公司")),
+        expected_company="上海城建有限公司")
+    assert len(findings) == 1 and findings[0].status == STATUS_HIT
+    assert "不一致" in findings[0].message and "王建国" in findings[0].message
+
+
+def test_person_relation_period_not_covering_is_not_included():
+    """社保期间不覆盖基准月/上一自然月 → 缺项，要求补正。"""
+    findings = a2_check.run_person_consistency_check(
+        _dated_task(), _relation_mats(SOCIAL_STALE), expected_company="上海城建有限公司")
+    assert len(findings) == 1 and findings[0].status == STATUS_NOT_INCLUDED
+    assert "未覆盖基准月" in findings[0].message
+
+
+def test_person_relation_complete_is_miss():
+    """完整身份证交叉核对、同单位且期间覆盖 → 符合。"""
+    findings = a2_check.run_person_consistency_check(
+        _dated_task(), _relation_mats(SOCIAL_FRESH), expected_company="上海城建有限公司")
+    assert len(findings) == 1 and findings[0].status == STATUS_MISS
+    assert "同名尚不能证明" not in findings[0].message
+
+
+def test_person_relation_branch_without_proof_requires_supplement():
+    """仅名称包含母公司不足以证明隶属，需补登记及隶属关系证明。"""
+    findings = a2_check.run_person_consistency_check(
+        _dated_task(), _relation_mats(SOCIAL_FRESH.replace(
+            "参保单位：上海城建有限公司", "参保单位：上海城建有限公司上海分公司")),
+        expected_company="上海城建有限公司")
+    assert len(findings) == 1 and findings[0].status == STATUS_NOT_INCLUDED
+    assert "分公司登记或隶属关系证明缺项" in findings[0].message
+
+
+def test_person_relation_period_undecidable_without_baseline():
+    """基准日缺失时期间无法判定 → 待核实，不猜覆盖。"""
+    findings = a2_check.run_person_consistency_check(
+        _task(), _relation_mats(SOCIAL_FRESH), expected_company="上海城建有限公司")
     assert len(findings) == 1 and findings[0].status == STATUS_UNDECIDABLE
-    assert "2 名主要管理人员" in findings[0].message
+    assert "社保缴费期间不明" in findings[0].message
+
+
+def test_new_status_disposition_is_single_source():
+    """缺项/不适用并入三态计数，处置动作/等级由唯一映射给出。"""
+    from app.plus.blockchain_supervision.models import (
+        STATUS_LABELS, counted_status, status_disposition,
+    )
+    assert counted_status(STATUS_NOT_INCLUDED) == STATUS_UNDECIDABLE
+    assert counted_status("not_applicable") == STATUS_MISS
+    assert STATUS_LABELS[STATUS_NOT_INCLUDED] == "缺项"
+    assert status_disposition(STATUS_HIT) == {"action": "补正", "severity": "阻断"}
+    assert status_disposition(STATUS_NOT_INCLUDED) == {"action": "补正", "severity": "条件"}
+    assert status_disposition(STATUS_UNDECIDABLE) == {"action": "人工核对", "severity": "条件"}
 
 
 def test_service_person_consistency_replaces_on_rerun(db_session):
@@ -856,11 +935,14 @@ def test_service_person_consistency_replaces_on_rerun(db_session):
     db_session.commit()
     first = service.run_person_consistency(db_session, task)
     again = service.run_person_consistency(db_session, task)
-    assert len(first) == len(again) == 1
+    # 无已确认主体时，关系与在岗两条路径分别保留归属门禁，不借材料通过。
+    assert len(first) == len(again) == 2
+    assert all(f.status == STATUS_UNDECIDABLE and "归属" in f.message for f in again)
     from app.plus.blockchain_supervision.models import BsFinding as F
     rows = db_session.query(F).filter_by(task_id=task.id).all()
     assert {f.kind for f in rows} == {"person_consistency"}
-    assert {f.item_id for f in rows} == {"A2-01"}  # A2-01-P 已退休，不再产出
+    assert len(rows) == 2
+    assert {f.item_id for f in rows} == {"A2-01", "A2-11"}  # A2-01-P 已退休；在岗单独保留门禁。
 
 
 def test_report_person_section_registered(db_session):
@@ -938,6 +1020,29 @@ def test_qualification_all_covered_is_miss():
     assert "桥梁工程" in findings[0].message and "桩基工程" in findings[0].message
 
 
+@pytest.mark.parametrize("area,status", [(60, STATUS_MISS), (60.1, STATUS_HIT)])
+def test_qualification_entry_uses_both_tunnel_scope_limits(area, status):
+    materials = _qual_mats(
+        f"分包工程内容：隧道工程施工，断面面积{area}平方米，单洞长度1000米。",
+        "建筑业企业资质证书\n企业名称：核查测试企业\n资质类别及等级：隧道工程专业承包二级")
+    findings = a2_check.run_qualification_match_check(_task(), materials)
+    quantified = [finding for finding in findings if any(
+        ref.get("source_kind") == "qualification_certificate"
+        for ref in finding.evidence_json or [])]
+    assert len(quantified) == 1
+    assert quantified[0].status == status
+    assert "20.4.2" in quantified[0].message
+    assert "物理第111页" in quantified[0].message
+
+
+def test_qualification_entry_includes_first_class_road_for_second_grade():
+    materials = _qual_mats(
+        "分包工程内容：一级公路路面工程施工。",
+        "建筑业企业资质证书\n企业名称：核查测试企业\n资质类别及等级：公路路面工程专业承包二级")
+    findings = a2_check.run_qualification_match_check(_task(), materials)
+    assert findings and all(finding.status == STATUS_MISS for finding in findings)
+
+
 def test_qualification_uncovered_is_hit_with_quote_and_page():
     scope = "分包工程内容：桥梁工程桩基施工，含钻孔灌注桩与钢结构安装。"
     findings = a2_check.run_qualification_match_check(
@@ -970,6 +1075,8 @@ def test_qualification_labor_certificate_is_miss_without_professional_category()
     assert len(findings) == 1 and findings[0].status == STATUS_MISS
     assert "施工劳务备案证书" in findings[0].message
     assert "不适用专业承包类别匹配" in findings[0].message
+    assert findings[0].evidence_json[0]["source_kind"] == "labor_certificate"
+    assert findings[0].evidence_json[0]["page"] == 1
 
 
 def test_qualification_reads_labor_contract_scope_without_guessing_certificate():

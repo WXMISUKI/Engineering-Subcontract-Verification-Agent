@@ -33,7 +33,9 @@ def _validate(policy, *, require_complete_bindings=False):
             "signature_chain": {"签字盖章及审批资料"}, "qualification_match": {"分包性质与资质匹配"},
             "negative_list": {"拟分包内容与负面清单"}, "transfer_scope": {"转包与违法分包情形"},
             "illegal_subcontract": {"转包与违法分包情形"}, "a1_dependency": {"审批及责任约定"},
-            "person_consistency": {"劳动关系及社保"}, "cert_validity": {"证件信息一致性"},
+            "person_consistency": {"劳动关系及社保"},
+            "personnel_adequacy": {"岗位配置与人员配备"},
+            "cert_validity": {"证件信息一致性"},
             "internal_records": {"内部记录核查情况"},
         }
         if not isinstance(bindings, list):
@@ -66,7 +68,7 @@ def _validate(policy, *, require_complete_bindings=False):
                 "RC-P15", "RC-P16", "RC-L11", "RC-L12", "RC-L13", "RC-L14")}
         required_bindings.update((kind, "*") for kind in (
             "signature_chain", "qualification_match", "negative_list", "transfer_scope", "illegal_subcontract",
-            "a1_dependency", "person_consistency", "internal_records"))
+            "a1_dependency", "person_consistency", "personnel_adequacy", "internal_records"))
         required_bindings.update({("cert_validity", "A2-03"), ("cert_validity", "A2-05")})
         if require_complete_bindings and not required_bindings.issubset(seen_bindings):
             raise InvalidReportPolicy("报告要点映射缺少既有核查事项")

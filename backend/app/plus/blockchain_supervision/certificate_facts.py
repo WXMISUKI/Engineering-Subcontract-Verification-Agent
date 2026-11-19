@@ -137,7 +137,7 @@ def _qualification(text, page, file_name):
     }
 
 
-def _safety_license(text, page, file_name):
+def _safety_license(text, page, file_name, *, allow_business_scope=True):
     valid_until = _normalize_date(_field(
         text, "许可证有效日期", "有效期至", "有效期限", "营业期限", "有效期"))
     cert_no = (_field(text, "安全生产许可证编号", "许可证编号", "证书编号", "证号")
@@ -148,10 +148,29 @@ def _safety_license(text, page, file_name):
         "title": "安全生产许可证",
         "name": _field(text, "营业名称", "企业名称", "名称"),
         "uscc": _field(text, "统一社会信用代码"),
-        "scope": _field(text, "许可范围", "经营范围") or _html_cell(text, "许可范围"),
+        "scope": _field(text, *( ("许可范围", "经营范围") if allow_business_scope else ("许可范围",) )) or _html_cell(text, "许可范围"),
         "cert_no": cert_no,
         "valid_until": valid_until,
     }
+
+
+def extract_safety_permit_page(text, page, file_name):
+    """独立安许原页段事实：许可范围不借营业执照经营范围，调用方负责证照形态。"""
+    facts = _safety_license(text, page, file_name, allow_business_scope=False)
+    return facts if _has_substantive_fields("safety_license", facts) else {}
+
+
+def _has_substantive_fields(kind: str, facts: dict) -> bool:
+    """证照页须读到可核对字段才算“已提供”，仅出现名称/条款/类别不算。
+
+    比广场版更严格：资质和安全许可必须有证号或有效期，避免合同条款里的
+    “施工劳务备案证书”“许可范围”被当成证照页。
+    """
+    if kind == "business_license":
+        return bool(facts.get("uscc") or facts.get("business_scope") or facts.get("legal_rep"))
+    if kind in ("qualification", "safety_license"):
+        return bool(facts.get("cert_no") or facts.get("valid_until"))
+    return False
 
 
 def extract_certificate_facts(materials) -> dict:
@@ -170,6 +189,8 @@ def extract_certificate_facts(materials) -> dict:
                 candidate = _business_license(text, page, file_name)
             elif kind == "qualification":
                 candidate = _qualification(text, page, file_name)
+                if not _has_substantive_fields(kind, candidate):
+                    continue
                 identity = (candidate.get("cert_no"), candidate.get("category"), candidate.get("level"))
                 if any(identity) and not any(
                         (existing.get("cert_no"), existing.get("category"), existing.get("level")) == identity
@@ -178,6 +199,9 @@ def extract_certificate_facts(materials) -> dict:
             elif kind == "safety_license":
                 candidate = _safety_license(text, page, file_name)
             else:
+                continue
+            # 合同条款/清单里提到证照名称，不等于提供了证照页；无可核对字段不入库。
+            if kind != "qualification" and not _has_substantive_fields(kind, candidate):
                 continue
             result[kind] = _merge_facts(result.get(kind) or {}, candidate)
 

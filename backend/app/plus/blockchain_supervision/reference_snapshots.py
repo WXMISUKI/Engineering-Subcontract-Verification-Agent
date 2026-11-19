@@ -28,7 +28,8 @@ CHECK_GROUPS = {
     "signature_chain": {"scope": "a3", "kinds": ["signature_chain"], "label": "签字盖章核查"},
     "a1": {"scope": "a1", "kinds": ["negative_list", "transfer_scope", "illegal_subcontract"],
            "label": "分包内容合规性核查"},
-    "a2": {"scope": "a3", "kinds": ["cert_validity", "person_consistency", "qualification_match"],
+    "a2": {"scope": "a3", "kinds": ["cert_validity", "person_consistency", "personnel_adequacy",
+                                     "qualification_match"],
            "label": "资质、证照与人员核查"},
     "internal_records": {"scope": "a1", "kinds": ["internal_records"], "label": "内部信用与事故材料核查"},
 }

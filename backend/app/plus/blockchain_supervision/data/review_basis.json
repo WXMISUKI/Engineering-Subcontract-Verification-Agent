@@ -1,0 +1,2435 @@
+{
+  "schema_version": "bs-review-basis.v1",
+  "generated_at": "2026-11-18",
+  "note": "依据治理登记表：文档角色、强度、主体范围、有效期间、扫描件引用模式。条款原文只从 basis_clauses.json 抽取；外部文档未取得原文时 quote 为 null 且标记待核验。",
+  "documents": {
+    "SHCG-2025-118": {
+      "doc_id": "SHCG-2025-118",
+      "doc_no": "沪城公路〔2025〕118号",
+      "doc_title": "上海城投公路投资（集团）有限公司建设工程分包管理办法",
+      "issuer": "上海城投公路投资（集团）有限公司",
+      "authority_level": "group_rule",
+      "strength": "C",
+      "effective_from": "2025-12-10",
+      "effective_to": null,
+      "status": "in_force",
+      "document_role": "full_text",
+      "parent_doc_id": null,
+      "content_format": "scanned_pdf",
+      "ocr_companion": "05-沪城公路2025-118号-OCR.md",
+      "citation_mode": "pdf_page",
+      "knowledge_id": "f20c339f-c673-44c9-b341-5387af209633",
+      "human_verified": false
+    },
+    "SHCG-2025-118-ANNEX": {
+      "doc_id": "SHCG-2025-118-ANNEX",
+      "doc_no": "沪城公路〔2025〕118号",
+      "doc_title": "分包单位认可表（附件1）、合同备案情况汇总表（附件2）",
+      "issuer": "上海城投公路投资（集团）有限公司",
+      "authority_level": "group_rule_annex",
+      "strength": "C",
+      "effective_from": "2025-12-10",
+      "effective_to": null,
+      "status": "in_force",
+      "document_role": "attachment_notice",
+      "parent_doc_id": "SHCG-2025-118",
+      "content_format": "text_layer",
+      "ocr_companion": null,
+      "citation_mode": "clause",
+      "knowledge_id": "f20c339f-c673-44c9-b341-5387af209633",
+      "human_verified": true
+    },
+    "SHJT-2026-8": {
+      "doc_id": "SHJT-2026-8",
+      "doc_no": "沪交行规〔2026〕8号",
+      "doc_title": "上海市公路工程施工分包管理实施细则",
+      "issuer": "上海市交通委员会",
+      "authority_level": "municipal_rule",
+      "strength": "A",
+      "effective_from": "2026-08-08",
+      "effective_to": "2031-08-07",
+      "status": "in_force",
+      "document_role": "full_text",
+      "parent_doc_id": null,
+      "content_format": "scanned_pdf",
+      "ocr_companion": "01-上海市公路工程施工分包管理实施细则-OCR.md",
+      "citation_mode": "pdf_page",
+      "knowledge_id": "195d3663-8c46-4665-a39e-470a7f6614c1",
+      "human_verified": false
+    },
+    "MOT-NL-2024": {
+      "doc_id": "MOT-NL-2024",
+      "doc_no": "交办公路〔2024〕6号",
+      "doc_title": "公路工程施工分包负面清单（2024年版）",
+      "issuer": "交通运输部办公厅",
+      "authority_level": "national_rule",
+      "strength": "A",
+      "effective_from": null,
+      "effective_to": null,
+      "status": "in_force",
+      "document_role": "full_text",
+      "parent_doc_id": null,
+      "content_format": "docx_text",
+      "ocr_companion": null,
+      "citation_mode": "clause",
+      "knowledge_id": "b560a99b-711e-4378-8433-ae97df474c74",
+      "human_verified": true
+    },
+    "MOT-2024-2": {
+      "doc_id": "MOT-2024-2",
+      "doc_no": "交公路规〔2024〕2号",
+      "doc_title": "公路工程施工分包管理办法",
+      "issuer": "交通运输部",
+      "authority_level": "national_rule",
+      "strength": "A",
+      "effective_from": "2024-02-18",
+      "effective_to": null,
+      "status": "in_force",
+      "document_role": "full_text",
+      "parent_doc_id": null,
+      "content_format": "text_layer",
+      "ocr_companion": null,
+      "citation_mode": "clause",
+      "knowledge_id": "82795e77-e4bc-4eff-878f-62be22971e6c",
+      "human_verified": false
+    },
+    "ZHB-2025-0620": {
+      "doc_id": "ZHB-2025-0620",
+      "doc_no": null,
+      "doc_title": "2025年分包报审资料附件要求（第一现场指挥部，2025.6.20）",
+      "issuer": "第一现场指挥部",
+      "authority_level": "owner_requirement",
+      "strength": "C",
+      "effective_from": "2025-06-20",
+      "effective_to": null,
+      "status": "in_force",
+      "document_role": "full_text",
+      "parent_doc_id": null,
+      "content_format": "text_layer",
+      "ocr_companion": null,
+      "citation_mode": "clause",
+      "knowledge_id": "72eb6e64-aa40-4c8f-81a2-71ee57749b9c",
+      "human_verified": true
+    },
+    "SC-397-2014": {
+      "doc_id": "SC-397-2014",
+      "doc_no": "国务院令第397号（2014年第二次修正）",
+      "title": "安全生产许可证条例",
+      "issuer": "国务院",
+      "effective_from": "2014-07-29",
+      "effective_to": null,
+      "status": "official_revision_archived",
+      "authority_level": "administrative_regulation",
+      "source_kind": "text_layer",
+      "human_verified": false,
+      "source_file": "docs/plus/blockchain-supervision/evidence/安许官方正文-20261119/permit-regulation-397-mem-20140729.txt",
+      "physical_pages": [],
+      "clause_count": 1,
+      "source_url": "https://www.mem.gov.cn/fw/flfgbz/fg/201407/t20140729_233082.shtml",
+      "source_html_sha256": "b2f2c2c6ebc49e8aa2e718624a2026367689e1791075e91acfc2575f7d807a4a",
+      "source_text_sha256": "a0445a372417d8df8f7a474dff1d8b7798319095c3fe94363a69d0f54f7d3c24",
+      "verification": "official_local_text_reviewed",
+      "online_knowledge_verified": false,
+      "knowledge_id": null,
+      "verification_note": "已核官方HTML及本地文本；未作人工校对、未完成2026全行业效力核验、未修复线上知识库。",
+      "doc_title": "安全生产许可证条例",
+      "document_role": "full_text",
+      "parent_doc_id": null,
+      "content_format": "text_layer",
+      "ocr_companion": null,
+      "citation_mode": "clause",
+      "strength": "A"
+    },
+    "MOHURD-128-2015": {
+      "doc_id": "MOHURD-128-2015",
+      "doc_no": "建设部令第128号（2015年23号令修正）",
+      "title": "建筑施工企业安全生产许可证管理规定",
+      "issuer": "住房城乡建设部",
+      "effective_from": "2015-01-22",
+      "effective_to": null,
+      "status": "official_revision_archived",
+      "authority_level": "department_rule",
+      "source_kind": "text_layer",
+      "human_verified": false,
+      "source_file": "docs/plus/blockchain-supervision/evidence/安许官方正文-20261119/construction-permit-128-gov-20220125.txt",
+      "physical_pages": [],
+      "clause_count": 1,
+      "source_url": "https://www.gov.cn/zhengce/2022-01/25/content_5712013.htm",
+      "source_html_sha256": "6f1620e73cca4677bd8aa98634572968a9e3372ac2f5eb67471417e4d2ffe42e",
+      "source_text_sha256": "1df1e56774eb999f11d86eea20efb200b0d15f9155fd8c7212876ae90e8b33d3",
+      "verification": "official_local_text_reviewed",
+      "online_knowledge_verified": false,
+      "knowledge_id": null,
+      "verification_note": "已核官方HTML及本地文本；未作人工校对、未完成2026全行业效力核验、未修复线上知识库。",
+      "doc_title": "建筑施工企业安全生产许可证管理规定",
+      "document_role": "full_text",
+      "parent_doc_id": null,
+      "content_format": "text_layer",
+      "ocr_companion": null,
+      "citation_mode": "clause",
+      "strength": "B"
+    },
+    "JS-2014-159-ARCHIVE": {
+      "doc_id": "JS-2014-159-ARCHIVE",
+      "doc_no": "建市〔2014〕159号",
+      "title": "建筑业企业资质标准（2014原文，五类承包范围及总则选段）",
+      "issuer": "住房和城乡建设部",
+      "effective_from": "2015-01-01",
+      "effective_to": null,
+      "status": "official_original_archived",
+      "authority_level": "department_norm",
+      "source_kind": "text_layer",
+      "human_verified": false,
+      "source_file": "docs/plus/blockchain-supervision/evidence/资质官方原文-20261119/qualification-159-2014.pdf",
+      "source_url": "https://www.mohurd.gov.cn/file/old/2014/20141106/W020191022031714.pdf",
+      "source_sha256": "2d3dcf4484c604eb9e81a8308f32b81d19dea39318301380590b22d7a32ffc16",
+      "physical_pages": [
+        9,
+        10,
+        87,
+        88,
+        107,
+        111,
+        142,
+        147
+      ],
+      "clause_count": 6,
+      "verification": "official_local_text_reviewed",
+      "online_knowledge_verified": false,
+      "knowledge_id": null,
+      "verification_note": "仅所列2014原文选段核对；未人工校对，未完成2026全类别/地方/后续调整效力认证，不变更旧知识库条目。",
+      "doc_title": "建筑业企业资质标准（2014原文，五类承包范围及总则选段）",
+      "document_role": "full_text",
+      "parent_doc_id": null,
+      "strength": "A",
+      "content_format": "pdf",
+      "citation_mode": "clause",
+      "ocr_companion": null
+    },
+    "DG-TJ08-2225-ARCHIVE": {
+      "doc_id": "DG-TJ08-2225-ARCHIVE",
+      "doc_no": "DG/TJ 08-2225-2017",
+      "title": "建筑工程、公路与市政工程施工现场专业人员配备标准（2017原件）",
+      "issuer": "上海市住房和城乡建设管理委员会",
+      "effective_from": "2017-06-01",
+      "effective_to": null,
+      "status": "local_original_archived",
+      "authority_level": "local_standard",
+      "source_kind": "text_layer",
+      "human_verified": false,
+      "source_file": "docs/plus/blockchain-supervision/evidence/DGTJ规模原文-20261119/dgtj-08-2225-2017.pdf",
+      "source_url": null,
+      "source_sha256": "3ae2ff0dda06215ec32d44849f80fdc6fbd66200c10d8fa23eae84c7b3b6e905",
+      "physical_pages": [
+        12,
+        13,
+        15,
+        28,
+        29,
+        30,
+        31,
+        32
+      ],
+      "clause_count": 4,
+      "verification": "local_original_table_visual_reviewed",
+      "online_knowledge_verified": false,
+      "knowledge_id": null,
+      "verification_note": "复用既有授权原件，哈希与来源README相符；原件表格行列机器视觉核对，原始文本层可能串列，结构化阈值须对照原页图。未恢复精确下载URL，未人工校对或穷尽2026现行效力。 原件有文本层，按现有条款引用模式绑定并附物理页码；未生成或伪称OCR伴随文本。",
+      "doc_title": "建筑工程、公路与市政工程施工现场专业人员配备标准（2017原件）",
+      "document_role": "full_text",
+      "parent_doc_id": null,
+      "strength": "B",
+      "content_format": "pdf",
+      "citation_mode": "clause",
+      "ocr_companion": null
+    }
+  },
+  "clauses": {
+    "SHCG-2025-118#第一条": {
+      "clause_id": "SHCG-2025-118#第一条",
+      "doc_id": "SHCG-2025-118",
+      "strength": "C",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "第一条目的\n为进一步提升上海城投公路投资（集团）有限公司（以\n下简称“城投公路集团”）建设工程项目精细化管理水平，\n全面加强分包管理，依据《中华人民共和国建筑法》《中华\n人民共和国招标投标法》《建设工程质量管理条例》等国家\n法律法规、行业及上海市有关规定，特修订本办法。",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHCG-2025-118#第二条": {
+      "clause_id": "SHCG-2025-118#第二条",
+      "doc_id": "SHCG-2025-118",
+      "strength": "C",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "第二条适用范围\n本办法适用于城投公路集团所辖建设工程项目。",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHCG-2025-118#第三条": {
+      "clause_id": "SHCG-2025-118#第三条",
+      "doc_id": "SHCG-2025-118",
+      "strength": "C",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "第三条定义\n本办法所指“分包”包含专业分包、劳务分包（公路工\n程称作劳务合作，本办法统一称为“劳务分包”）。\n专业分包，是指施工总承包单位将其所承包工程中的专\n业工程发包给具有相应资质的其他建筑业企业完成的活动。\n劳务分包，是指施工总承包单位或者专业分包单位将其\n承包工程中的劳务作业发包给劳务分包单位完成的活动。",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHCG-2025-118#第四条": {
+      "clause_id": "SHCG-2025-118#第四条",
+      "doc_id": "SHCG-2025-118",
+      "strength": "C",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "第四条职责权限\n（一）城投公路集团\n1.工程综合管理部作为建设工程分包管理归口管理部\n门，负责指导直属单位开展建设工程分包管理，督查直属单\n位分包管理制度落实情况，负责“警示名单库”的统一管理。\n2. 其他职能部门依据其部门职责，协同开展建设工程分\n包管理工作。\n（二）直属单位\n1. 全面负责建设工程项目的分包管理工作，参考城投公\n路集团“警示名单库”，落实建设单位职责范围内的书面认\n可工作。\n2.负责督查监理单位审批工作质量，督促施工总承包单\n位按要求及时完成行业管理部门的合同信息报送、备案。\n3. 负责施工过程中分包管理行为的监督检查，重点核查\n关键岗位人员到岗履职情况、实名制管理情况、农民工工资\n支付情况以及实际进场作业的分包单位与报批单位是否一\n致等。针对行业管理部门及上级单位出具的整改单，督促施\n工总承包单位整改闭环。\n4. 负责建立分包管理台账，每季度末将分包书面认可情\n况（含履约担保）汇总并报城投公路集团工程综合管理部备\n案。",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHCG-2025-118#第四条（一）": {
+      "clause_id": "SHCG-2025-118#第四条（一）",
+      "doc_id": "SHCG-2025-118",
+      "strength": "C",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "城投公路集团",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHCG-2025-118#第四条（一）1": {
+      "clause_id": "SHCG-2025-118#第四条（一）1",
+      "doc_id": "SHCG-2025-118",
+      "strength": "C",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "工程综合管理部作为建设工程分包管理归口管理部门，负责指导直属单位开展建设工程分包管理，督查直属单位分包管理制度落实情况，负责“警示名单库”的统一管理。",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHCG-2025-118#第四条（一）2": {
+      "clause_id": "SHCG-2025-118#第四条（一）2",
+      "doc_id": "SHCG-2025-118",
+      "strength": "C",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "其他职能部门依据其部门职责，协同开展建设工程分包管理工作。",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHCG-2025-118#第四条（二）": {
+      "clause_id": "SHCG-2025-118#第四条（二）",
+      "doc_id": "SHCG-2025-118",
+      "strength": "C",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "直属单位",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHCG-2025-118#第四条（二）1": {
+      "clause_id": "SHCG-2025-118#第四条（二）1",
+      "doc_id": "SHCG-2025-118",
+      "strength": "C",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "全面负责建设工程项目的分包管理工作，参考城投公路集团“警示名单库”，落实建设单位职责范围内的书面认可工作。",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHCG-2025-118#第四条（二）2": {
+      "clause_id": "SHCG-2025-118#第四条（二）2",
+      "doc_id": "SHCG-2025-118",
+      "strength": "C",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "负责督查监理单位审批工作质量，督促施工总承包单位按要求及时完成行业管理部门的合同信息报送、备案。",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHCG-2025-118#第四条（二）3": {
+      "clause_id": "SHCG-2025-118#第四条（二）3",
+      "doc_id": "SHCG-2025-118",
+      "strength": "C",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "负责施工过程中分包管理行为的监督检查，重点核查关键岗位人员到岗履职情况、实名制管理情况、农民工工资支付情况以及实际进场作业的分包单位与报批单位是否一致等。针对行业管理部门及上级单位出具的整改单，督促施工总承包单位整改闭环。",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHCG-2025-118#第四条（二）4": {
+      "clause_id": "SHCG-2025-118#第四条（二）4",
+      "doc_id": "SHCG-2025-118",
+      "strength": "C",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "负责建立分包管理台账，每季度末将分包书面认可情况（含履约担保）汇总并报城投公路集团工程综合管理部备案。",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHCG-2025-118#第五条": {
+      "clause_id": "SHCG-2025-118#第五条",
+      "doc_id": "SHCG-2025-118",
+      "strength": "C",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "第五条分包单位申报材料\n（一）专业分包资料内容包括：\n1. 拟分包工程的内容和范围；\n2. 营业执照、资质证书、安全生产许可证、业绩证明材\n料、来沪企业备案手册等；\n3.管理体系网络图、现场主要管理人员名单、联系方式\n及社保关系等；\n4.企业负责人、项目负责人、安全总监（员）安全生产\n考核合格证书；项目负责人、专业管理人员职业资格证书、\n职称证书、岗位证书等；特种作业证书等；\n5. 拟签订的分包合同，拟提供的工程所需施工设备和辅\n助设施清单；\n-3-\n6.根据本办法第六条，施工总承包单位应于分包合同签\n订后一个月内将履约担保证明文件提交至直属单位备案。\n（二）劳务分包资料内容包括：\n1. 拟分包工程的内容和范围；\n2. 营业执照、资质证书、安全生产许可证、来沪企业备\n案手册等；\n3. 管理体系网络图、现场主要管理人员名单、联系方式\n及社保关系等材料；\n4.企业负责人、安全员安全生产考核合格证书；劳务员\n岗位证书、特种作业证书等；\n5. 拟签订的分包合同，拟提供的工程所需施工机具清\n单。",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHCG-2025-118#第五条（一）": {
+      "clause_id": "SHCG-2025-118#第五条（一）",
+      "doc_id": "SHCG-2025-118",
+      "strength": "C",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "专业分包资料内容包括：",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHCG-2025-118#第五条（一）1": {
+      "clause_id": "SHCG-2025-118#第五条（一）1",
+      "doc_id": "SHCG-2025-118",
+      "strength": "C",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "拟分包工程的内容和范围；",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHCG-2025-118#第五条（一）2": {
+      "clause_id": "SHCG-2025-118#第五条（一）2",
+      "doc_id": "SHCG-2025-118",
+      "strength": "C",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "营业执照、资质证书、安全生产许可证、业绩证明材料、来沪企业备案手册等；",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHCG-2025-118#第五条（一）3": {
+      "clause_id": "SHCG-2025-118#第五条（一）3",
+      "doc_id": "SHCG-2025-118",
+      "strength": "C",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "管理体系网络图、现场主要管理人员名单、联系方式及社保关系等；",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHCG-2025-118#第五条（一）4": {
+      "clause_id": "SHCG-2025-118#第五条（一）4",
+      "doc_id": "SHCG-2025-118",
+      "strength": "C",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "企业负责人、项目负责人、安全总监（员）安全生产考核合格证书；项目负责人、专业管理人员职业资格证书、职称证书、岗位证书等；特种作业证书等；",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHCG-2025-118#第五条（一）5": {
+      "clause_id": "SHCG-2025-118#第五条（一）5",
+      "doc_id": "SHCG-2025-118",
+      "strength": "C",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "拟签订的分包合同，拟提供的工程所需施工设备和辅助设施清单；-3-",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHCG-2025-118#第五条（一）6": {
+      "clause_id": "SHCG-2025-118#第五条（一）6",
+      "doc_id": "SHCG-2025-118",
+      "strength": "C",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "根据本办法第六条，施工总承包单位应于分包合同签订后一个月内将履约担保证明文件提交至直属单位备案。",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHCG-2025-118#第五条（二）": {
+      "clause_id": "SHCG-2025-118#第五条（二）",
+      "doc_id": "SHCG-2025-118",
+      "strength": "C",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "劳务分包资料内容包括：",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHCG-2025-118#第五条（二）1": {
+      "clause_id": "SHCG-2025-118#第五条（二）1",
+      "doc_id": "SHCG-2025-118",
+      "strength": "C",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "拟分包工程的内容和范围；",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHCG-2025-118#第五条（二）2": {
+      "clause_id": "SHCG-2025-118#第五条（二）2",
+      "doc_id": "SHCG-2025-118",
+      "strength": "C",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "营业执照、资质证书、安全生产许可证、来沪企业备案手册等；",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHCG-2025-118#第五条（二）3": {
+      "clause_id": "SHCG-2025-118#第五条（二）3",
+      "doc_id": "SHCG-2025-118",
+      "strength": "C",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "管理体系网络图、现场主要管理人员名单、联系方式及社保关系等材料；",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHCG-2025-118#第五条（二）4": {
+      "clause_id": "SHCG-2025-118#第五条（二）4",
+      "doc_id": "SHCG-2025-118",
+      "strength": "C",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "企业负责人、安全员安全生产考核合格证书；劳务员岗位证书、特种作业证书等；",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHCG-2025-118#第五条（二）5": {
+      "clause_id": "SHCG-2025-118#第五条（二）5",
+      "doc_id": "SHCG-2025-118",
+      "strength": "C",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "拟签订的分包合同，拟提供的工程所需施工机具清单。",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHCG-2025-118#第六条": {
+      "clause_id": "SHCG-2025-118#第六条",
+      "doc_id": "SHCG-2025-118",
+      "strength": "C",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "第六条分包履约\n首次或重新承揽城投公路集团范围内分包工程的专业\n分包单位，应向施工总承包单位提交与施工总承包合同担保\n比例一致的履约保函或保证金。履约保函的有效期须与分包\n合同约定的工期保持一致。",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHCG-2025-118#第七条": {
+      "clause_id": "SHCG-2025-118#第七条",
+      "doc_id": "SHCG-2025-118",
+      "strength": "C",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "第七条分包单位禁入机制\n存在下列情形之一的，城投公路集团将禁止该分包单位\n自认定之日起三年内承接集团所辖的任何建设工程项目，并\n将其列入“警示名单库”。\n(一)经政府或行业管理部门认定存在违法分包、转包、\n挂靠、肢解分包等行为的；\n-4-\n（二）在城投公路集团所辖建设工程项目一年内发生两\n起一般生产安全亡人事故或一起较大及以上生产安全事故\n的；\n（三）凡经政府或行业管理部门认定，因分包单位原因\n导致工程出现质量事故，造成严重不良影响的；\n（四）因贿赂、围猎城投公路集团工作人员，导致城投\n公路集团工作人员违法犯罪的；\n（五）不符合国家法律法规规定的准入条件的。",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHCG-2025-118#第七条（一）": {
+      "clause_id": "SHCG-2025-118#第七条（一）",
+      "doc_id": "SHCG-2025-118",
+      "strength": "C",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "经政府或行业管理部门认定存在违法分包、转包、挂靠、肢解分包等行为的；-4-",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHCG-2025-118#第七条（二）": {
+      "clause_id": "SHCG-2025-118#第七条（二）",
+      "doc_id": "SHCG-2025-118",
+      "strength": "C",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "在城投公路集团所辖建设工程项目一年内发生两起一般生产安全亡人事故或一起较大及以上生产安全事故的；",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHCG-2025-118#第七条（三）": {
+      "clause_id": "SHCG-2025-118#第七条（三）",
+      "doc_id": "SHCG-2025-118",
+      "strength": "C",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "凡经政府或行业管理部门认定，因分包单位原因导致工程出现质量事故，造成严重不良影响的；",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHCG-2025-118#第七条（四）": {
+      "clause_id": "SHCG-2025-118#第七条（四）",
+      "doc_id": "SHCG-2025-118",
+      "strength": "C",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "因贿赂、围猎城投公路集团工作人员，导致城投公路集团工作人员违法犯罪的；",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHCG-2025-118#第七条（五）": {
+      "clause_id": "SHCG-2025-118#第七条（五）",
+      "doc_id": "SHCG-2025-118",
+      "strength": "C",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "不符合国家法律法规规定的准入条件的。",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHCG-2025-118#第八条": {
+      "clause_id": "SHCG-2025-118#第八条",
+      "doc_id": "SHCG-2025-118",
+      "strength": "C",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "第八条分包单位恢复准入机制\n对于违反本办法第七条规定的分包单位，在禁止承接城\n投公路集团所辖建设工程项目期满后，可重新承接新业务。",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHCG-2025-118#第九条": {
+      "clause_id": "SHCG-2025-118#第九条",
+      "doc_id": "SHCG-2025-118",
+      "strength": "C",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "第九条附则\n1. 本办法由工程综合管理部负责解释。\n2. 本办法自发布之日起施行，原《建设项目分包管理办\n法》（沪城公路〔2021〕74号）同步废止。\n附件：1.分包单位认可表\n2. 合同备案情况汇总表\n城投公路集团行政办公室2025年12月10日印发\n-5-",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHCG-2025-118#第九条1": {
+      "clause_id": "SHCG-2025-118#第九条1",
+      "doc_id": "SHCG-2025-118",
+      "strength": "C",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "本办法由工程综合管理部负责解释。",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHCG-2025-118#第九条2": {
+      "clause_id": "SHCG-2025-118#第九条2",
+      "doc_id": "SHCG-2025-118",
+      "strength": "C",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "本办法自发布之日起施行，原《建设项目分包管理办法》（沪城公路〔2021〕74号）同步废止。附件：1.分包单位认可表",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHCG-2025-118#第九条2#r2": {
+      "clause_id": "SHCG-2025-118#第九条2#r2",
+      "doc_id": "SHCG-2025-118",
+      "strength": "C",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "合同备案情况汇总表城投公路集团行政办公室2025年12月10日印发-5-",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHCG-2025-118-ANNEX#附件1": {
+      "clause_id": "SHCG-2025-118-ANNEX#附件1",
+      "doc_id": "SHCG-2025-118-ANNEX",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "material_requirement",
+      "quote": "附件1\n上海城投公路投资（集团）有限公司\n分包单位认可表\n工程名称：\n施工总承包单位：\n致：（直属单位）\n我公司拟对下列工程实施专业分包、劳务分包，郑重承诺：该分包单位\n具备丰富的行业经验与扎实的履约能力，完全能够胜任相关施工任务。同时，我\n公司将严格监督该单位依照合同文件各项规定规范施工，确保各项工作符合要\n求。\n附件：\n1.拟分包工程的内容和范围；\n2.营业执照、资质证书、安全生产许可证、业绩证明材料（如需）、来沪企\n业备案手册等；\n3.管理体系网络图、现场主要管理人员名单、联系方式及社保关系等；\n4.三类人员安全生产考核合格证书；项目负责人、专业管理人员职业资格证\n书、职称证书、岗位证书等（如需）；特种作业证书等；\n5.拟签订的分包合同，拟提供的工程所需施工设备和辅助设施清单。\n6.履约担保证明文件（如需）。\n项目经理（签字、执业章、项目章）：\n年\n月\n日\n分包单位名称：\n序号\n拟分包工程内容\n拟分包范围\n专业资质等级\n拟分包金额\n（万元）\n总监理工程师意见（盖章）：\n总监理工程师（签字）：\n年\n月\n日\n直属单位意见（盖章）：\n经审查，该分包报审流程符合相关规定，同意监理审核意见。\n经审查，该分包不符合相关规定，不同意监理审核意见。\n\n直属单位负责人（签字）：\n年\n月\n日\n2",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "SHCG-2025-118-ANNEX#附件2": {
+      "clause_id": "SHCG-2025-118-ANNEX#附件2",
+      "doc_id": "SHCG-2025-118-ANNEX",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "material_requirement",
+      "quote": "附件2\n合同备案情况汇总表\n序号\n直属单位\n项目名称\n施工总承包单位\n分包单位名称\n分包性质\n分包单位资质\n分包内容\n分包金额\n（万元）\n行业管理部门\n备案时间\n履约担保\n情况\n备注",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "SHJT-2026-8#第七条": {
+      "clause_id": "SHJT-2026-8#第七条",
+      "doc_id": "SHJT-2026-8",
+      "strength": "A",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "第七条 承包人、分包人应当分别设立现场管理机构，并按照\n要求配备现场专业管理人员，对所承包或者分包工程的施工活动实\n施管理。\n现场管理机构应当具有与承包或者分包工程的规模、技术复杂\n程度相适应的技术、经济管理人员，其中项目负责人和技术、财务、\n计量、质量、安全等主要管理人员必须是本单位人员。",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHJT-2026-8#第九条": {
+      "clause_id": "SHJT-2026-8#第九条",
+      "doc_id": "SHJT-2026-8",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "第九条 公路工程施工分包负面清单所列主体和关键性工作\n不得进行施工分包，本市负面清单中桥梁工程和隧道工程按照交通\n运输部《公路工程施工分包负面清单》执行，路基和路面暂不增补。\n后续根据交通运输部工作要求及本市公路工程建设实际情况动态\n更新。\n分包人不得将承接的分包工程再进行分包和转包，但经监理人\n—4—\n书面审查并报发包人，可将劳务作业分包给具有施工劳务资质的劳\n务合作企业。",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHJT-2026-8#第十条": {
+      "clause_id": "SHJT-2026-8#第十条",
+      "doc_id": "SHJT-2026-8",
+      "strength": "A",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "第十条分包人应当具备如下条件：\n（一）具有经依法登记的法人资格；\n(二）具有与工程规模、技术复杂程度相适应的，从事类似工\n程经验的管理与技术人员。大中型分包工程的项目负责人必须由注\n册建造师担任，注册建造师的执业工程范围按照《注册建造师执业\n管理办法》执行，工程规模标准按照《注册建造师执业工程规模标\n准》执行；\n（三）具有（自有或者租赁）分包工程所需的施工设备和辅助\n设施；\n（四）单位工程设有资质要求的，单位工程及所含分部工程、\n分项工程的分包人应当具备国家规定的相应专业承包资质条件。其\n中，本市服务区、收费站等公路管理服务设施中房屋建筑工程的分\n包人应当具备房屋建筑工程相应专业承包资质条件。",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHJT-2026-8#第十二条": {
+      "clause_id": "SHJT-2026-8#第十二条",
+      "doc_id": "SHJT-2026-8",
+      "strength": "A",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "第十二条 承包人和分包人可参照《上海市公路工程施工分包\n合同（示范格式文本)》（附件1）《上海市公路工程劳务合作合同\n(示范格式文本)》(附件2)依法签订分包合同或者劳务合作合同，\n-5-\n并履行合同约定的义务。承包人、分包人等应当按照本市规定及时\n报送施工分包合同信息和劳务合作合同信息。\n分包合同应当遵循承包合同的各项原则，满足承包合同中的质\n量、安全、进度、环保、农民工工资管理以及其他技术、经济等要\n求。分包合同应当约定工程款计量周期、工程款进度结算办法以及\n保证按期支付的相应措施，确保工程款和农民工工资的支付。\n承包人应当在分包工程实施前，将拟分包的工程内容和范围，\n拟选定分包人的条件，拟提供签订的分包合同，拟投入的管理人员\n和特种作业人员清单，拟投入的工程所需施工设备和辅助设施清\n单，以及经监理人审查同意后的《公路工程施工分包合同信息表》\n(附件3)，报发包人书面同意。监理人、发包人应当及时认真审\n查分包合同内容。\n承包人、分包人应当将拟劳务作业内容和范围，拟选定劳务合\n作企业的施工资质，拟提供签订的劳务合作合同，拟投入的管理人\n员和特种作业人员清单，拟投入的施工机具清单，以及《公路工程\n劳务合作合同信息表》（附件4)，报监理人审查同意后报发包人。\n监理人应当及时认真审查劳务合作合同内容。\n分包人和劳务合作企业在实施过程中，可根据工程的具体情\n况，在双方协商一致的情形下，重新签订合同或者补充合同条款，\n并重新完成书面报审。",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHJT-2026-8#第十四条": {
+      "clause_id": "SHJT-2026-8#第十四条",
+      "doc_id": "SHJT-2026-8",
+      "strength": "A",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "第十四条分包人应当自行编制分包工程的施工方案，经承包\n人审查同意后报监理人书面同意。分包人应当依据分包合同的约\n定，自行组织分包工程的施工，并对分包工程的质量、安全和进度\n等实施有效控制。\n分包人对其分包的工程向承包人负责，并就所分包的工程向发\n包人承担连带责任。分包人应当配合承包人对分包工程的统一协\n调、管理。",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHJT-2026-8#第十五条": {
+      "clause_id": "SHJT-2026-8#第十五条",
+      "doc_id": "SHJT-2026-8",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "第十五条禁止将承包的公路工程进行转包。\n有下列情形之一的，属于转包：\n（一）承包人将承包的全部工程发包给他人的（包括母公司承\n接公路工程后将所承接全部工程交由具有独立法人资格的子公司\n施工的情形);\n(二)承包人将承包的全部工程肢解后以分包的名义分别发包\n给他人的；\n(三）合同明确约定由承包人负责采购的主要建筑材料、构配\n件及工程设备或者租赁的施工机械设备，全部由其他单位或者个人\n-7-\n采购、租赁，或者承包人不能提供有关采购、租赁合同及发票等证\n明，又不能进行合理解释并提供相应证明的；\n(四)承包人未在施工现场设立现场管理机构和派驻相应人员\n对全部工程的施工活动实施有效管理，或者派驻的项目负责人和其\n他主要管理人员中一人及以上与承包人没有订立劳动合同且没有\n建立劳动工资和社会养老保险关系，或者派驻的项目负责人未对全\n部工程的施工活动进行组织管理，又不能进行合理解释并提供相应\n证明的；\n(五)劳务合作企业承包的范围是承包人承包的全部工程，劳\n务合作企业计取的是除上缴给承包人“管理费”之外的全部工程价\n款的；\n(六)承包人通过采取合作、联营、个人承包等形式或者名义，\n直接或者变相将其承包的全部工程转给他人的；\n（七）施工分包发包单位不是承包人且不属于违法分包的；\n(八)发包人与承包人之间没有工程款收付关系，或者承包人\n收到款项扣除“管理费”后将剩余全部款项转拨给其他单位或者个\n人的；\n(九）两个以上的单位组成联合体承包人，在联合体分工协议\n中约定或者在项目实际实施过程中，联合体一方不进行施工也未对\n施工活动进行组织管理的，并且向联合体其他方收取“管理费”或\n者其他类似费用的，视为联合体一方将承包的工程转包给联合体其\n—8—\n他方；\n（十）法律、法规规定的其他转包行为。\n分包人有前款第一项、第二项、第三项、第五项、第八项规定\n行为的，也属于转包。",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHJT-2026-8#第十五条（一）": {
+      "clause_id": "SHJT-2026-8#第十五条（一）",
+      "doc_id": "SHJT-2026-8",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "承包人将承包的全部工程发包给他人的（包括母公司承接公路工程后将所承接全部工程交由具有独立法人资格的子公司施工的情形);",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHJT-2026-8#第十五条（二）": {
+      "clause_id": "SHJT-2026-8#第十五条（二）",
+      "doc_id": "SHJT-2026-8",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "承包人将承包的全部工程肢解后以分包的名义分别发包给他人的；",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHJT-2026-8#第十五条（三）": {
+      "clause_id": "SHJT-2026-8#第十五条（三）",
+      "doc_id": "SHJT-2026-8",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "合同明确约定由承包人负责采购的主要建筑材料、构配件及工程设备或者租赁的施工机械设备，全部由其他单位或者个人采购、租赁，或者承包人不能提供有关采购、租赁合同及发票等证明，又不能进行合理解释并提供相应证明的；",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHJT-2026-8#第十五条（四）": {
+      "clause_id": "SHJT-2026-8#第十五条（四）",
+      "doc_id": "SHJT-2026-8",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "承包人未在施工现场设立现场管理机构和派驻相应人员对全部工程的施工活动实施有效管理，或者派驻的项目负责人和其他主要管理人员中一人及以上与承包人没有订立劳动合同且没有建立劳动工资和社会养老保险关系，或者派驻的项目负责人未对全部工程的施工活动进行组织管理，又不能进行合理解释并提供相应证明的；",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHJT-2026-8#第十五条（五）": {
+      "clause_id": "SHJT-2026-8#第十五条（五）",
+      "doc_id": "SHJT-2026-8",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "劳务合作企业承包的范围是承包人承包的全部工程，劳务合作企业计取的是除上缴给承包人“管理费”之外的全部工程价款的；",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHJT-2026-8#第十五条（六）": {
+      "clause_id": "SHJT-2026-8#第十五条（六）",
+      "doc_id": "SHJT-2026-8",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "承包人通过采取合作、联营、个人承包等形式或者名义，直接或者变相将其承包的全部工程转给他人的；",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHJT-2026-8#第十五条（七）": {
+      "clause_id": "SHJT-2026-8#第十五条（七）",
+      "doc_id": "SHJT-2026-8",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "施工分包发包单位不是承包人且不属于违法分包的；",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHJT-2026-8#第十五条（八）": {
+      "clause_id": "SHJT-2026-8#第十五条（八）",
+      "doc_id": "SHJT-2026-8",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "发包人与承包人之间没有工程款收付关系，或者承包人收到款项扣除“管理费”后将剩余全部款项转拨给其他单位或者个人的；",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHJT-2026-8#第十五条（九）": {
+      "clause_id": "SHJT-2026-8#第十五条（九）",
+      "doc_id": "SHJT-2026-8",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "两个以上的单位组成联合体承包人，在联合体分工协议中约定或者在项目实际实施过程中，联合体一方不进行施工也未对施工活动进行组织管理的，并且向联合体其他方收取“管理费”或者其他类似费用的，视为联合体一方将承包的工程转包给联合体其他方；",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHJT-2026-8#第十五条（十）": {
+      "clause_id": "SHJT-2026-8#第十五条（十）",
+      "doc_id": "SHJT-2026-8",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "法律、法规规定的其他转包行为。",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHJT-2026-8#第十六条": {
+      "clause_id": "SHJT-2026-8#第十六条",
+      "doc_id": "SHJT-2026-8",
+      "strength": "A",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "第十六条 禁止下列公路工程违法分包行为：\n（一）承包人将工程分包给个人或者不具备相应条件企业的；\n(二)承包人将公路工程施工分包负面清单所列主体和关键性\n工作分包的；\n（三）承包人将合同文件中明确不得分包的工程（后期报经发\n包人书面同意的除外）进行分包的；\n(四）分包人以他人名义承揽分包工程的；\n（五）以劳务合作名义进行施工分包的；\n(六)分包人将分包工程再进行分包的；劳务合作企业将其承\n包的劳务作业交由其他单位或者个人实施的；\n(七）法律、法规规定的其他违法分包行为。\n有下列情形之一的，视为施工分包违法：\n(一)分包合同内容未经监理人审查或者未报发包人书面同意\n的；\n(二)承包人未与分包人依法签订分包合同或者分包合同未遵\n循承包合同的各项原则，不满足承包合同中相应要求的。分包人提\n供非分包工程所需或者提供非合同约定的施工设备和辅助设施，又\n一6一\n不能进行合理解释并提供相应证明的；\n（三）承包人、分包人未在施工现场设立现场管理机构和派驻\n相应人员对分包工程的施工活动实施有效管理的;\n（四）法律、法规规定的其他情形。",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHJT-2026-8#第十六条（一）": {
+      "clause_id": "SHJT-2026-8#第十六条（一）",
+      "doc_id": "SHJT-2026-8",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "承包人将工程分包给个人或者不具备相应条件企业的；",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHJT-2026-8#第十六条（二）": {
+      "clause_id": "SHJT-2026-8#第十六条（二）",
+      "doc_id": "SHJT-2026-8",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "承包人将公路工程施工分包负面清单所列主体和关键性工作分包的；",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHJT-2026-8#第十六条（三）": {
+      "clause_id": "SHJT-2026-8#第十六条（三）",
+      "doc_id": "SHJT-2026-8",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "承包人将合同文件中明确不得分包的工程（后期报经发包人书面同意的除外）进行分包的；",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHJT-2026-8#第十六条（四）": {
+      "clause_id": "SHJT-2026-8#第十六条（四）",
+      "doc_id": "SHJT-2026-8",
+      "strength": "A",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "分包人以他人名义承揽分包工程的；",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHJT-2026-8#第十六条（五）": {
+      "clause_id": "SHJT-2026-8#第十六条（五）",
+      "doc_id": "SHJT-2026-8",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "以劳务合作名义进行施工分包的；",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHJT-2026-8#第十六条（六）": {
+      "clause_id": "SHJT-2026-8#第十六条（六）",
+      "doc_id": "SHJT-2026-8",
+      "strength": "A",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "分包人将分包工程再进行分包的；劳务合作企业将其承包的劳务作业交由其他单位或者个人实施的；",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHJT-2026-8#第十六条（七）": {
+      "clause_id": "SHJT-2026-8#第十六条（七）",
+      "doc_id": "SHJT-2026-8",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "法律、法规规定的其他违法分包行为。",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHJT-2026-8#第十六条（一）#r2": {
+      "clause_id": "SHJT-2026-8#第十六条（一）#r2",
+      "doc_id": "SHJT-2026-8",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "分包合同内容未经监理人审查或者未报发包人书面同意的；",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHJT-2026-8#第十六条（二）#r2": {
+      "clause_id": "SHJT-2026-8#第十六条（二）#r2",
+      "doc_id": "SHJT-2026-8",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "承包人未与分包人依法签订分包合同或者分包合同未遵循承包合同的各项原则，不满足承包合同中相应要求的。分包人提供非分包工程所需或者提供非合同约定的施工设备和辅助设施，又不能进行合理解释并提供相应证明的；",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHJT-2026-8#第十六条（三）#r2": {
+      "clause_id": "SHJT-2026-8#第十六条（三）#r2",
+      "doc_id": "SHJT-2026-8",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "承包人、分包人未在施工现场设立现场管理机构和派驻相应人员对分包工程的施工活动实施有效管理的；",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHJT-2026-8#第十六条（四）#r2": {
+      "clause_id": "SHJT-2026-8#第十六条（四）#r2",
+      "doc_id": "SHJT-2026-8",
+      "strength": "A",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "法律、法规规定的其他情形。",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHJT-2026-8#第十七条": {
+      "clause_id": "SHJT-2026-8#第十七条",
+      "doc_id": "SHJT-2026-8",
+      "strength": "A",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "第十七条 有下列行为之一的，属第十六条规定的以劳务合作\n名义进行施工分包：\n(一）劳务合作企业除计取劳务作业费用外，还计取主要建筑\n材料款、主要周转材料款；\n(二)承包人、分包人未对其发包的劳务作业进行技术、质量、\n安全、设备等指导培训和有效管理，由劳务合作企业自行负责施工\n方案编制以及相关试验检测、工程控制测量、工程档案资料编制、\n质量安全管理等组织实施工作;\n(三)法律、法规规定的其他以劳务合作名义进行施工分包的\n行为。",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHJT-2026-8#第十七条（一）": {
+      "clause_id": "SHJT-2026-8#第十七条（一）",
+      "doc_id": "SHJT-2026-8",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "劳务合作企业除计取劳务作业费用外，还计取主要建筑材料款、主要周转材料款；",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHJT-2026-8#第十七条（二）": {
+      "clause_id": "SHJT-2026-8#第十七条（二）",
+      "doc_id": "SHJT-2026-8",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "承包人、分包人未对其发包的劳务作业进行技术、质量、安全、设备等指导培训和有效管理，由劳务合作企业自行负责施工方案编制以及相关试验检测、工程控制测量、工程档案资料编制、质量安全管理等组织实施工作；",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHJT-2026-8#第十七条（三）": {
+      "clause_id": "SHJT-2026-8#第十七条（三）",
+      "doc_id": "SHJT-2026-8",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "法律、法规规定的其他以劳务合作名义进行施工分包的行为。",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHJT-2026-8#第二十三条": {
+      "clause_id": "SHJT-2026-8#第二十三条",
+      "doc_id": "SHJT-2026-8",
+      "strength": "A",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "第二十三条发包人、承包人、分包人或者劳务合作企业违反\n本实施细则有关规定的，依照相关法律、法规、规章予以处罚。挂\n-11-\n靠情形的认定参照《建筑工程施工发包与承包违法行为认定查处管\n理办法》执行。",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHJT-2026-8#附件3": {
+      "clause_id": "SHJT-2026-8#附件3",
+      "doc_id": "SHJT-2026-8",
+      "strength": "A",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "material_requirement",
+      "quote": "附件3\n上海市公路工程施工分包合同信息表\n1#\n施工标段：\n承包人：监理人：\n根据工程施工需要，我方拟将本合同段的以下工程进行分包，分包人条件经自查符合规定，\n分包合同已经双方协商一致，现上报分包人情况及拟签订的分包合同等资料，请予以审核。\n附件：1.拟签订的分包合同（含合同附件）；\n2.营业执照、安全生产许可证、建筑业企业资质证书、进沪备案证明等复印件；\n3.拟投入的具有与工程规模、技术复杂程度相适应的，从事类似工程经验的管理人\n员简历表、身份证明、相关证书、劳动合同、近一个月社会保险缴费证明，以及建筑施工特种\n作业人员身份证明、劳动合同、建筑施工特种作业人员操作资格证书等证明材料；\n4.分包人拟投入的分包工程所需的施工设备和辅助设施；\n5.分包监管专户（开户行名称、户名、账号）；\n6. 其它材料。\n项目经理（签字+执业章、盖章）：年月日\n拟分包工程拟分包工占合同\n拟分包工程拟分包施工工期\n分包人名称规模（单位/程合同金总金额\n内容和范围\n(年月～年月)\n分部/分项）额(万元)的%\n7\n监理人专业监理工程师（签字）：年月\n日\n意见\n总监理工程师(签字+执业章、盖章):年月日\n发包人\n意见\n(签字、盖章):年月日\n注：1.资质证书复印件为分包人提供。\n2.本表由承包人填报一式三份，发包人、监理人、承包人各一份。\n3.监理人应当根据工程实际，对分包工程内容存在不符的重新进行审核。\n1",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "SHJT-2026-8#附件4": {
+      "clause_id": "SHJT-2026-8#附件4",
+      "doc_id": "SHJT-2026-8",
+      "strength": "A",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "material_requirement",
+      "quote": "附件4\n上海市公路工程劳务合作合同信息表\n施工标段：\n承（分）包人：监理人：\n根据工程施工需要，我方拟将本合同段的以下劳务作业进行分包，劳务合作企业条件经自\n查符合规定，劳务合作合同已经双方协商一致，现上报劳务合作企业情况及拟签订的劳务合作\n合同等资料，请予以审核。\n附件：1.拟签订的劳务合作合同（含合同附件）；\n2.营业执照、安全生产许可证、建筑业企业资质证书、进沪备案证明等复印件；\n3.拟投入的项目负责人、专职安全员、专职机械员（如有）、专职劳务员的身份证\n明、相关证书、劳动合同、近一个月社会保险缴费证明，以及建筑施工特种作业人员身份证明、\n劳动合同、建筑施工特种作业人员操作资格证书等证明材料;\n4.拟投入本合同段所需的施工机具（如有）；\n5. 其它材料。\n项目经理（签字+执业章、盖章）：年 月 日\n拟劳务作业拟劳务合作合占合同总拟劳务合作施工工\n劳务合作企业名称\n内容和范围同金额（万元）金额的%期（年月～年月）\n监理人专业监理工程师（签字）：年月日\n意见\n总监理工程师(签字+执业章、盖章):年月日\n注：1.证照复印件由劳务合作企业提供。\n2.本表由承包人填报一式两份，监理人、承（分）包人各一份，发包人可存档复印件。\n3.监理人应当根据工程实际，对劳务合作内容存在不符的重新进行审核。\n1",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "MOT-NL-2024#一、": {
+      "clause_id": "MOT-NL-2024#一、",
+      "doc_id": "MOT-NL-2024",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "一、桥梁工程\n（一）高度≥20米的水中沉井基础。\n（二）水深≥10米的围堰工程（钢结构制作和运输除外）。\n（三）具有下列情形之一的梁式桥上部承重结构（钢结构制作和运输除外）：\n1.高度≥20米落地式支撑架施工的现浇梁；\n2.附着式支撑架施工的现浇梁；\n3.节段重量≥200吨或长度≥4.5米悬臂施工的现浇梁；\n4.跨度≥55米移动模架施工的现浇梁；\n5.节段重量≥200吨或长度≥4.5米悬拼工法施工的装配式节段梁；\n6.整孔预制安装的预制梁（外购梁预制、运输除外）；\n7.单体自重≥200吨的装配式梁；\n8.顶推系统支撑跨度≥55米施工的上部承重结构；\n9.上跨既有一级及以上公路、主干路及以上城市道路、铁路的上部承重结构。\n（四）单孔跨径≥1000米悬索桥、单孔跨径≥600米斜拉桥、单孔跨径≥400米拱桥的上部承重结构（钢结构制作和运输除外）。",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "MOT-NL-2024#一、（一）": {
+      "clause_id": "MOT-NL-2024#一、（一）",
+      "doc_id": "MOT-NL-2024",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "高度≥20米的水中沉井基础。",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "MOT-NL-2024#一、（二）": {
+      "clause_id": "MOT-NL-2024#一、（二）",
+      "doc_id": "MOT-NL-2024",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "水深≥10米的围堰工程（钢结构制作和运输除外）。",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "MOT-NL-2024#一、（三）": {
+      "clause_id": "MOT-NL-2024#一、（三）",
+      "doc_id": "MOT-NL-2024",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "具有下列情形之一的梁式桥上部承重结构（钢结构制作和运输除外）：",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "MOT-NL-2024#一、（三）1": {
+      "clause_id": "MOT-NL-2024#一、（三）1",
+      "doc_id": "MOT-NL-2024",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "高度≥20米落地式支撑架施工的现浇梁；",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "MOT-NL-2024#一、（三）2": {
+      "clause_id": "MOT-NL-2024#一、（三）2",
+      "doc_id": "MOT-NL-2024",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "附着式支撑架施工的现浇梁；",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "MOT-NL-2024#一、（三）3": {
+      "clause_id": "MOT-NL-2024#一、（三）3",
+      "doc_id": "MOT-NL-2024",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "节段重量≥200吨或长度≥4.5米悬臂施工的现浇梁；",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "MOT-NL-2024#一、（三）4": {
+      "clause_id": "MOT-NL-2024#一、（三）4",
+      "doc_id": "MOT-NL-2024",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "跨度≥55米移动模架施工的现浇梁；",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "MOT-NL-2024#一、（三）5": {
+      "clause_id": "MOT-NL-2024#一、（三）5",
+      "doc_id": "MOT-NL-2024",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "节段重量≥200吨或长度≥4.5米悬拼工法施工的装配式节段梁；",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "MOT-NL-2024#一、（三）6": {
+      "clause_id": "MOT-NL-2024#一、（三）6",
+      "doc_id": "MOT-NL-2024",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "整孔预制安装的预制梁（外购梁预制、运输除外）；",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "MOT-NL-2024#一、（三）7": {
+      "clause_id": "MOT-NL-2024#一、（三）7",
+      "doc_id": "MOT-NL-2024",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "单体自重≥200吨的装配式梁；",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "MOT-NL-2024#一、（三）8": {
+      "clause_id": "MOT-NL-2024#一、（三）8",
+      "doc_id": "MOT-NL-2024",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "顶推系统支撑跨度≥55米施工的上部承重结构；",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "MOT-NL-2024#一、（三）9": {
+      "clause_id": "MOT-NL-2024#一、（三）9",
+      "doc_id": "MOT-NL-2024",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "上跨既有一级及以上公路、主干路及以上城市道路、铁路的上部承重结构。",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "MOT-NL-2024#一、（四）": {
+      "clause_id": "MOT-NL-2024#一、（四）",
+      "doc_id": "MOT-NL-2024",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "单孔跨径≥1000米悬索桥、单孔跨径≥600米斜拉桥、单孔跨径≥400米拱桥的上部承重结构（钢结构制作和运输除外）。",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "MOT-NL-2024#二、": {
+      "clause_id": "MOT-NL-2024#二、",
+      "doc_id": "MOT-NL-2024",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "二、隧道工程\n（一）沉管工法施工的水中隧道的预制安装（基槽开挖、回填、浮运除外）。\n（二）盾构法、TBM工法施工的隧道（管片预制、运输除外）。\n（三）高瓦斯隧道（瓦斯抽排、爆破、二衬、出碴运输除外）。\n（四）长度超过3千米，且与下列情形之一并存的隧道：\n1.深埋富水；\n2.岩溶强发育地段；\n3.V级及以上围岩且开挖断面≥150平方米（爆破、二衬、出碴运输除外）。\n（五）非无轨运输出碴隧道斜井，直径≥5米且深度≥300米的隧道竖井（爆破除外）。\n（六）下穿既有一级及以上公路、主干路及以上城市道路、铁路、江河湖海，且长度≥50米的隧道工程（爆破、二衬、出碴运输除外）。",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "MOT-NL-2024#二、（一）": {
+      "clause_id": "MOT-NL-2024#二、（一）",
+      "doc_id": "MOT-NL-2024",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "沉管工法施工的水中隧道的预制安装（基槽开挖、回填、浮运除外）。",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "MOT-NL-2024#二、（二）": {
+      "clause_id": "MOT-NL-2024#二、（二）",
+      "doc_id": "MOT-NL-2024",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "盾构法、TBM工法施工的隧道（管片预制、运输除外）。",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "MOT-NL-2024#二、（三）": {
+      "clause_id": "MOT-NL-2024#二、（三）",
+      "doc_id": "MOT-NL-2024",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "高瓦斯隧道（瓦斯抽排、爆破、二衬、出碴运输除外）。",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "MOT-NL-2024#二、（四）": {
+      "clause_id": "MOT-NL-2024#二、（四）",
+      "doc_id": "MOT-NL-2024",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "长度超过3千米，且与下列情形之一并存的隧道：",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "MOT-NL-2024#二、（四）1": {
+      "clause_id": "MOT-NL-2024#二、（四）1",
+      "doc_id": "MOT-NL-2024",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "深埋富水；",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "MOT-NL-2024#二、（四）2": {
+      "clause_id": "MOT-NL-2024#二、（四）2",
+      "doc_id": "MOT-NL-2024",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "岩溶强发育地段；",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "MOT-NL-2024#二、（四）3": {
+      "clause_id": "MOT-NL-2024#二、（四）3",
+      "doc_id": "MOT-NL-2024",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "V级及以上围岩且开挖断面≥150平方米（爆破、二衬、出碴运输除外）。",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "MOT-NL-2024#二、（五）": {
+      "clause_id": "MOT-NL-2024#二、（五）",
+      "doc_id": "MOT-NL-2024",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "非无轨运输出碴隧道斜井，直径≥5米且深度≥300米的隧道竖井（爆破除外）。",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "MOT-NL-2024#二、（六）": {
+      "clause_id": "MOT-NL-2024#二、（六）",
+      "doc_id": "MOT-NL-2024",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "下穿既有一级及以上公路、主干路及以上城市道路、铁路、江河湖海，且长度≥50米的隧道工程（爆破、二衬、出碴运输除外）。",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "MOT-NL-2024#三、": {
+      "clause_id": "MOT-NL-2024#三、",
+      "doc_id": "MOT-NL-2024",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "三、路基和路面工程\n涉及大型滑坡、泥石流、冻土等不良地质和特殊性岩土处治工程，大型支挡防护工程，特殊高填深挖路基，有特殊技术要求的路面工程，桥面（隧道）铺装工程等，是否增补纳入负面清单，由省级交通运输主管部门根据本行政区域内公路工程建设实际情况自行确定。\n抄送：中央纪委国家监委驻交通运输部纪检监察组，审计署交通运输审计局。",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "MOT-2024-2#第七条": {
+      "clause_id": "MOT-2024-2#第七条",
+      "doc_id": "MOT-2024-2",
+      "strength": "A",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "第七条\n除承包人设定的现场管理机构外，分包人也应当分别设立现\n场管理机构，对所承包或者分包工程的施工活动实施管理。\n现场管理机构应当具有与承包或者分包工程的规模、技术复杂程度相\n适应的技术、经济管理人员，其中项目负责人和技术、财务、计量、质量、\n安全等主要管理人员必须是本单位人员。",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "MOT-2024-2#第二十三条": {
+      "clause_id": "MOT-2024-2#第二十三条",
+      "doc_id": "MOT-2024-2",
+      "strength": "A",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "第二十三条\n本办法所称施工分包，是指承包人将其所承包工程中的\n部分单位工程、分部工程或者分项工程发包给其他专业施工企业，整体结\n算，由分包人自行编制施工方案和组织完成全部施工作业并能独立控制分\n包工程质量、施工进度、生产安全等的施工活动。本办法所称发包人，是\n指公路工程建设的项目法人或者受其委托的建设管理单位。本办法所称监\n理人，是指受发包人委托对发包工程实施监理的法人或者其他组织。本办\n法所称承包人，是指由发包人通过招标等形式确定，并与发包人签署正式\n合同的施工总承包企业。本办法所称分包人，是指从承包人处分包部分单\n位工程、分部工程或者分项工程的专业施工企业。本办法所称本单位人员，\n是指本单位与其签订了合法的劳动合同，并为其办理了人事、工资及社会\n保险关系的人员。本办法所称单位工程、分部工程、分项工程的划分依据\n公路工程质量检验评定标准确定。",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "ZHB-2025-0620#一、": {
+      "clause_id": "ZHB-2025-0620#一、",
+      "doc_id": "ZHB-2025-0620",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "一、专业分包附件顺序要求（4 份）\n1．分包工程清单（项目部红章）\n2．营业执照。\n3．资质证书。\n4．安全生产许可证。\n5．诚信手册（沪）。\n6．本地类似业绩清单（近3-5 年），总监办复核业绩。\n7．企业负责人：身份证、交安A 证（非法人代表须红头文任命书）。\n8．项目管理体系网络图；\n9．主要管理人员名单及联系方式；\n10．项目经理、总工以及安全员授权书(一份就行）\n11．项目经理：身份证、学历证、职称证、建造师证、交安B 证等五证。\n12．项目总工：身份证、学历证、职称证、交安全B 证等四证。\n13．安全员：身份证、学历证、职称证、交安C 证等\n14．授权人员的社保证明（主要人员）。\n15．其他管理人员相关证件等。\n16．特殊工种人员名单及操作证书。",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "ZHB-2025-0620#一、1": {
+      "clause_id": "ZHB-2025-0620#一、1",
+      "doc_id": "ZHB-2025-0620",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "分包工程清单（项目部红章）",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "ZHB-2025-0620#一、2": {
+      "clause_id": "ZHB-2025-0620#一、2",
+      "doc_id": "ZHB-2025-0620",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "营业执照。",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "ZHB-2025-0620#一、3": {
+      "clause_id": "ZHB-2025-0620#一、3",
+      "doc_id": "ZHB-2025-0620",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "资质证书。",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "ZHB-2025-0620#一、4": {
+      "clause_id": "ZHB-2025-0620#一、4",
+      "doc_id": "ZHB-2025-0620",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "安全生产许可证。",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "ZHB-2025-0620#一、5": {
+      "clause_id": "ZHB-2025-0620#一、5",
+      "doc_id": "ZHB-2025-0620",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "诚信手册（沪）。",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "ZHB-2025-0620#一、6": {
+      "clause_id": "ZHB-2025-0620#一、6",
+      "doc_id": "ZHB-2025-0620",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "本地类似业绩清单（近3-5 年），总监办复核业绩。",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "ZHB-2025-0620#一、7": {
+      "clause_id": "ZHB-2025-0620#一、7",
+      "doc_id": "ZHB-2025-0620",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "企业负责人：身份证、交安A 证（非法人代表须红头文任命书）。",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "ZHB-2025-0620#一、8": {
+      "clause_id": "ZHB-2025-0620#一、8",
+      "doc_id": "ZHB-2025-0620",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "项目管理体系网络图；",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "ZHB-2025-0620#一、9": {
+      "clause_id": "ZHB-2025-0620#一、9",
+      "doc_id": "ZHB-2025-0620",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "主要管理人员名单及联系方式；",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "ZHB-2025-0620#一、10": {
+      "clause_id": "ZHB-2025-0620#一、10",
+      "doc_id": "ZHB-2025-0620",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "项目经理、总工以及安全员授权书(一份就行）",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "ZHB-2025-0620#一、11": {
+      "clause_id": "ZHB-2025-0620#一、11",
+      "doc_id": "ZHB-2025-0620",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "项目经理：身份证、学历证、职称证、建造师证、交安B 证等五证。",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "ZHB-2025-0620#一、12": {
+      "clause_id": "ZHB-2025-0620#一、12",
+      "doc_id": "ZHB-2025-0620",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "项目总工：身份证、学历证、职称证、交安全B 证等四证。",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "ZHB-2025-0620#一、13": {
+      "clause_id": "ZHB-2025-0620#一、13",
+      "doc_id": "ZHB-2025-0620",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "安全员：身份证、学历证、职称证、交安C 证等",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "ZHB-2025-0620#一、14": {
+      "clause_id": "ZHB-2025-0620#一、14",
+      "doc_id": "ZHB-2025-0620",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "授权人员的社保证明（主要人员）。",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "ZHB-2025-0620#一、15": {
+      "clause_id": "ZHB-2025-0620#一、15",
+      "doc_id": "ZHB-2025-0620",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "其他管理人员相关证件等。",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "ZHB-2025-0620#一、16": {
+      "clause_id": "ZHB-2025-0620#一、16",
+      "doc_id": "ZHB-2025-0620",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "特殊工种人员名单及操作证书。",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "ZHB-2025-0620#二、": {
+      "clause_id": "ZHB-2025-0620#二、",
+      "doc_id": "ZHB-2025-0620",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "二、劳务分包附件顺序要求（4 份）\n1．分包工程清单（项目部红章）\n2．营业执照。\n3．资质证书。\n4．安全生产许可证。\n5．诚信手册（沪）。\n6．本地类似业绩清单（近3-5 年），总监办复核业绩。\n7．企业负责人：身份证、交安A 证（非法人代表须红头文任命书）。\n8．项目管理体系网络图；\n9．主要管理人员名单及联系方式；\n10．项目负责人和安全员授权书\n2\n11．安全员：身份证、学历证、职称证、交安C 证等。\n12．授权人员的社保证明（主要人员）。\n13．其他管理人员相关证件等。\n14．特殊工种人员名单及操作证书。",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "ZHB-2025-0620#二、1": {
+      "clause_id": "ZHB-2025-0620#二、1",
+      "doc_id": "ZHB-2025-0620",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "分包工程清单（项目部红章）",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "ZHB-2025-0620#二、2": {
+      "clause_id": "ZHB-2025-0620#二、2",
+      "doc_id": "ZHB-2025-0620",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "营业执照。",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "ZHB-2025-0620#二、3": {
+      "clause_id": "ZHB-2025-0620#二、3",
+      "doc_id": "ZHB-2025-0620",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "资质证书。",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "ZHB-2025-0620#二、4": {
+      "clause_id": "ZHB-2025-0620#二、4",
+      "doc_id": "ZHB-2025-0620",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "安全生产许可证。",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "ZHB-2025-0620#二、5": {
+      "clause_id": "ZHB-2025-0620#二、5",
+      "doc_id": "ZHB-2025-0620",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "诚信手册（沪）。",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "ZHB-2025-0620#二、6": {
+      "clause_id": "ZHB-2025-0620#二、6",
+      "doc_id": "ZHB-2025-0620",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "本地类似业绩清单（近3-5 年），总监办复核业绩。",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "ZHB-2025-0620#二、7": {
+      "clause_id": "ZHB-2025-0620#二、7",
+      "doc_id": "ZHB-2025-0620",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "企业负责人：身份证、交安A 证（非法人代表须红头文任命书）。",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "ZHB-2025-0620#二、8": {
+      "clause_id": "ZHB-2025-0620#二、8",
+      "doc_id": "ZHB-2025-0620",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "项目管理体系网络图；",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "ZHB-2025-0620#二、9": {
+      "clause_id": "ZHB-2025-0620#二、9",
+      "doc_id": "ZHB-2025-0620",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "主要管理人员名单及联系方式；",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "ZHB-2025-0620#二、10": {
+      "clause_id": "ZHB-2025-0620#二、10",
+      "doc_id": "ZHB-2025-0620",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "项目负责人和安全员授权书",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "ZHB-2025-0620#二、11": {
+      "clause_id": "ZHB-2025-0620#二、11",
+      "doc_id": "ZHB-2025-0620",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "安全员：身份证、学历证、职称证、交安C 证等。",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "ZHB-2025-0620#二、12": {
+      "clause_id": "ZHB-2025-0620#二、12",
+      "doc_id": "ZHB-2025-0620",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "授权人员的社保证明（主要人员）。",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "ZHB-2025-0620#二、13": {
+      "clause_id": "ZHB-2025-0620#二、13",
+      "doc_id": "ZHB-2025-0620",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "其他管理人员相关证件等。",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "ZHB-2025-0620#二、14": {
+      "clause_id": "ZHB-2025-0620#二、14",
+      "doc_id": "ZHB-2025-0620",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "特殊工种人员名单及操作证书。",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "ZHB-2025-0620#三、": {
+      "clause_id": "ZHB-2025-0620#三、",
+      "doc_id": "ZHB-2025-0620",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "三、相关要求\n1、分包工程量要求明确施工内容、数量以及范围。\n2、所有注册证书必须注册在本单位（分包单位），注册专业执业范围必须包含\n分包类别，全部在有效期内。\n3、所有分包提供的资料必须加分包单位红章。\n第一现场指挥部\n2025.6.20",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "ZHB-2025-0620#三、1": {
+      "clause_id": "ZHB-2025-0620#三、1",
+      "doc_id": "ZHB-2025-0620",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "分包工程量要求明确施工内容、数量以及范围。",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "ZHB-2025-0620#三、2": {
+      "clause_id": "ZHB-2025-0620#三、2",
+      "doc_id": "ZHB-2025-0620",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "所有注册证书必须注册在本单位（分包单位），注册专业执业范围必须包含分包类别，全部在有效期内。",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "ZHB-2025-0620#三、3": {
+      "clause_id": "ZHB-2025-0620#三、3",
+      "doc_id": "ZHB-2025-0620",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "所有分包提供的资料必须加分包单位红章。第一现场指挥部",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "ZHB-2025-0620#三、2025": {
+      "clause_id": "ZHB-2025-0620#三、2025",
+      "doc_id": "ZHB-2025-0620",
+      "strength": "C",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "6.20",
+      "quote_source": "basis_clauses",
+      "human_verified": true
+    },
+    "SC-397-2014#第二条": {
+      "clause_id": "SC-397-2014#第二条",
+      "doc_id": "SC-397-2014",
+      "strength": "A",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "第二条 国家对矿山企业、建筑施工企业和危险化学品、烟花爆竹、民用爆炸物品生产企业（以下统称企业）实行安全生产许可制度。\n企业未取得安全生产许可证的，不得从事生产活动。",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "MOHURD-128-2015#第二条": {
+      "clause_id": "MOHURD-128-2015#第二条",
+      "doc_id": "MOHURD-128-2015",
+      "strength": "B",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "第二条 国家对建筑施工企业实行安全生产许可制度。\n建筑施工企业未取得安全生产许可证的，不得从事建筑施工活动。\n本规定所称建筑施工企业，是指从事土木工程、建筑工程、线路管道和设备安装工程及装修工程的新建、扩建、改建和拆除等有关活动的企业。",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "JS-2014-159-ARCHIVE#总则四（七）": {
+      "clause_id": "JS-2014-159-ARCHIVE#总则四（七）",
+      "doc_id": "JS-2014-159-ARCHIVE",
+      "strength": "A",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "（七）本标准的“以上”、“以下”、“不少于”、“超\n\n过”、“不超过”均包含本数。\n",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "JS-2014-159-ARCHIVE#13.4": {
+      "clause_id": "JS-2014-159-ARCHIVE#13.4",
+      "doc_id": "JS-2014-159-ARCHIVE",
+      "strength": "A",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "13.4\n13.4\n13.4\n13.4\n承包工程范围\n承包工程范围\n承包工程范围\n承包工程范围\n13.4.1\n13.4.1\n13.4.1\n13.4.1 一级资质\n一级资质\n一级资质\n一级资质\n可承担各类地基基础工程的施工。\n13.4.2\n13.4.2\n13.4.2\n13.4.2 二级资质\n二级资质\n二级资质\n二级资质\n可承担下列工程的施工：\n（1）高度100 米以下工业、民用建筑工程和高度\n120 米以下构筑物的地基基础工程；\n（2）深度不超过24 米的刚性桩复合地基处理和深\n度不超过10 米的其它地基处理工程；\n（3）单桩承受设计荷载5000 千牛以下的桩基础工\n程；\n（4）开挖深度不超过15 米的基坑围护工程。\n13.4.3\n13.4.3\n13.4.3\n13.4.3 三级资质\n三级资质\n三级资质\n三级资质\n可承担下列工程的施工：\n（1）高度50 米以下工业、民用建筑工程和高度70\n米以下构筑物的地基基础工程；\n（2）深度不超过18 米的刚性桩复合地基处理或深\n\n度不超过8 米的其它地基处理工程；\n（3）单桩承受设计荷载3000 千牛以下的桩基础工\n程；\n（4）开挖深度不超过12 米的基坑围护工程。\n",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "JS-2014-159-ARCHIVE#19.4": {
+      "clause_id": "JS-2014-159-ARCHIVE#19.4",
+      "doc_id": "JS-2014-159-ARCHIVE",
+      "strength": "A",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "19.4\n19.4\n19.4\n19.4\n承包工程范围\n承包工程范围\n承包工程范围\n承包工程范围\n19.4.1\n19.4.1\n19.4.1\n19.4.1 一级资质\n一级资质\n一级资质\n一级资质\n可承担各类桥梁工程的施工。\n19.4.2\n19.4.2\n19.4.2\n19.4.2 二级资质\n二级资质\n二级资质\n二级资质\n可承担单跨150 米以下、单座桥梁总长1000 米以\n下桥梁工程的施工。\n19.4.3\n19.4.3\n19.4.3\n19.4.3 三级资质\n三级资质\n三级资质\n三级资质\n可承担单跨50 米以下、单座桥梁总长120 米以下\n桥梁工程的施工。\n",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "JS-2014-159-ARCHIVE#20.4": {
+      "clause_id": "JS-2014-159-ARCHIVE#20.4",
+      "doc_id": "JS-2014-159-ARCHIVE",
+      "strength": "A",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "20.4\n20.4\n20.4\n20.4\n承包工程范围\n承包工程范围\n承包工程范围\n承包工程范围\n20.4.1\n20.4.1\n20.4.1\n20.4.1 一级资质\n一级资质\n一级资质\n一级资质\n可承担各类隧道工程的施工。\n20.4.2\n20.4.2\n20.4.2\n20.4.2 二级资质\n二级资质\n二级资质\n二级资质\n可承担断面60 平方米以下且单洞长度1000 米以下\n的隧道工程施工。\n20.4.3\n20.4.3\n20.4.3\n20.4.3 三级资质\n三级资质\n三级资质\n三级资质\n可承担断面40 平方米以下且单洞长度500 米以下\n的隧道工程施工。\n",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "JS-2014-159-ARCHIVE#28.4": {
+      "clause_id": "JS-2014-159-ARCHIVE#28.4",
+      "doc_id": "JS-2014-159-ARCHIVE",
+      "strength": "A",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "28.4\n28.4\n28.4\n28.4\n承包工程范围\n承包工程范围\n承包工程范围\n承包工程范围\n28.4.1\n28.4.1\n28.4.1\n28.4.1 一级资质\n一级资质\n一级资质\n一级资质\n可承担各级公路路面工程的施工。\n28.4.2\n28.4.2\n28.4.2\n28.4.2 二级资质\n二级资质\n二级资质\n二级资质\n可承担一级以下公路路面工程的施工。\n28.4.3\n28.4.3\n28.4.3\n28.4.3 三级资质\n三级资质\n三级资质\n三级资质\n可承担二级以下公路路面工程的施工。\n",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "JS-2014-159-ARCHIVE#29.4": {
+      "clause_id": "JS-2014-159-ARCHIVE#29.4",
+      "doc_id": "JS-2014-159-ARCHIVE",
+      "strength": "A",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "rule",
+      "quote": "29.4\n29.4\n29.4\n29.4\n承包工程范围\n承包工程范围\n承包工程范围\n承包工程范围\n29.4.1\n29.4.1\n29.4.1\n29.4.1 一级资质\n一级资质\n一级资质\n一级资质\n可承担各级公路的路基、中小桥涵、防护及排水、\n软基处理工程的施工。\n29.4.2\n29.4.2\n29.4.2\n29.4.2 二级资质\n二级资质\n二级资质\n二级资质\n可承担一级标准以下公路的路基、中小桥涵、防护\n及排水、软基处理工程的施工。\n29.4.3\n29.4.3\n29.4.3\n29.4.3 三级资质\n三级资质\n三级资质\n三级资质\n可承担二级标准以下公路的路基、中小桥涵、防护\n及排水、软基处理工程的施工。\n",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "DG-TJ08-2225-ARCHIVE#表3.3.3": {
+      "clause_id": "DG-TJ08-2225-ARCHIVE#表3.3.3",
+      "doc_id": "DG-TJ08-2225-ARCHIVE",
+      "strength": "B",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "recommendation",
+      "quote": "PDF物理第12页\n3.3 \n公路与市政工程\n3.3.1 公路与市政工程总承包项目管理机构的岗位设置和专业\n人员配备应符合表3.3.1 的规定。\n表3.3.1\n公路与市政工程总承包项目管理机构岗位设置和专业人员配备\n岗位设置及专业人员数量(人)\n工程规模\n项目\n技术\n施工\n质量\n安全\n标准\n材料\n机械\n劳务\n资料\n负责人负责鼻、人\n员\n员\n员\n员\n员\n员\n员\n员\n小型工程\n1 \n\\ι \nl \n1 \nl \nl 将\n1 • \n中型工程\nl \nz , \n2 \n2 \nl \n1 \nl \n1 侨\n• \n大型工程\n1 \nø.t \n3 \n3 \n1\" \n2 \n2 赞\n2 樊\n2 椅\n王(jß分包项目管理机构的岗位设置和专\n业人员配备应符合\n表3.3.3\n公路与市政工程专业先包里且管理杭构岗位设置和专业人员配备\n岗位设置及专业人员数量(人)\n工程规模\n项目\n技术\n施工\n质量\n安全\n标准\n材料\n机械\n劳务\n资料\n负责人负责人\n员\n员\n员\n员\n员\n员\n员\n员\n小型工程\n1 \n1 \n1 \n1 \n1 \n1 揭\nl \n1 \" \n1 ‘ \n中型工程\n1 \n1 \n2 \n2 \n2 \nl \nl \n大型工程\n1 \nl \n3 \n3 \n3 \n1 钊\n2 \n2 份\n2 骨\n2\" \n注:1.专业分包单位元自带或租赁特种设备时，可不设置机械员岗位。\n2\n可兼职的岗位用\"祷\"表示。\n一\n5\n一\n",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "DG-TJ08-2225-ARCHIVE#表3.4.1": {
+      "clause_id": "DG-TJ08-2225-ARCHIVE#表3.4.1",
+      "doc_id": "DG-TJ08-2225-ARCHIVE",
+      "strength": "B",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "recommendation",
+      "quote": "PDF物理第13页\n3.4 \n劳务分包\n3.4.1 \n劳务分包不分工程类别，其项目管理机构的岗位设置和\n专业人员配备应符合表3.4.1 的规定。\n表3.4.1\n劳务分包项目管理机构岗位设置和专业人员配备\n作业人员\n岗位设置及专业人员数量(人)\n(人数)\n项目负责人\n安全员\n劳务员\n<50 \n1 \nl \n1 \n二\"，50~<200\n1 \n2 \n1 \n二\"，200\n1 \n3 ，且二主5%。\n1，且;?3%。\n6 \n",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "DG-TJ08-2225-ARCHIVE#附录A": {
+      "clause_id": "DG-TJ08-2225-ARCHIVE#附录A",
+      "doc_id": "DG-TJ08-2225-ARCHIVE",
+      "strength": "B",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "recommendation",
+      "quote": "PDF物理第28页\n•-\n飞。\n序\n号\n1 \n工程类别\n公路工程\n项目名称\n高速公路\n一级公路\n二级及以\n下公路\n附录A\n公路与市政工程规模划分标准\n表A\n公路与市政工程规模划分标准\n工程规模\n备注\n大型\n中型\n小型\n>Okm \n路基工程二二5km ，\n路基工程<5km ，\n路面面积二?-15 万m2\n，\n路面面积<15 万m2\n，\n单项工程合同额~2 亿元\n单项工程合同额<2 亿元\n路基工程注10km ，\n路基工程5km~10km ，\n路基工程<5km ，\n路面面积注25 万m' , \n路面面积15 万m2~25 万m2\n，\n路面面积<15 万nf ，\n单项工程合同额注2 亿元\n单项工程合同额O. 5 亿元~2 亿元单项工程合同额<0.5 亿元\n\n\nPDF物理第29页\nr、D\no \n序\n号\n2 \n3 \n4 \n5 \n续表A\n工程类别\n公路桥梁\n公路隧道\n城市道路\n地下交通\n项目名称\n大型\n单跨二三50m ，\n桥梁工程\n长度二主1000m ，\n单项工程合同额二三1 亿元\n隧道工程\n>Okm \n快速路、主干道路基工程\n二?o 5km ，\n道路工程\n路面面积二三15 万时，\n高架长度二三5km ，\n单项工程合同额;;?o 2 亿元\n内径、宽或高二主8m ，\n隧道工程\n单洞长度二三1km ，\n单项工程合同额注2 亿元\n工程规模\n备注\n中型\n小型\n单跨20m~50m ，\n单跨<20m ，\n长度30m~ 1 OOOm , \n长度<30m ，\n单项工程合同额0.5 亿元~1 亿元单项工程合同额<0.5 亿元\n快速路、主(次)干道路基工程2km\n~5km ， \n次干道路基工程<2km ，\n含城市快速\n路面面积5 万m2~15 万m2\n，\n路面面积<5 万m2\n，\n路、城市环\n路，不含城际\n高架长度<5km ，\n单项工程合同额<0.5 亿元\n间公路\n单项工程合同额0.5 亿元~2 亿元\n内径、宽或高4m~8m ，\n内径、宽或高<4m ，\n含地下过街\n单洞长度\nO. 5km~lkm ， \n单洞长度<0.5km ，\n通道;小型工\n单项工程合同额0.5 亿元~1 亿元单项工程合同额<0.5 亿元\n程不含盾构\n施工\n\n\nPDF物理第30页\nt'V \n1-' \n序\n号\n6 \n7 \n8 \n续表A\n工程类别\n城市桥梁\n城市轨道\n交通\n城市公共\n广场\n项目名称\n大型\n单跨二三50m ，\n桥梁工程\n长度>1000m ，\n单项工程合同额>1 亿元\n路基工程\n路基工程二三5km ，\n单项工程合同额>2 亿元\n内径、宽或高二~8m ，\n隧道工程\n单洞长度二三1km ，\n单项工程合同额注2 亿元\n高架工程\n长度二三5km ，\n单项工程合同额>2 亿元\n车站工程\n2 线及以上换乘站，\n单项工程合同额注2 亿元\n广场工程\n广场面积>5 万m'\n，\n单项工程合同额二三2 亿元\n工程规模\n备注\n中型\n小型\n单跨20m~50m ，\n单跨<20m ，\n长度30m~1 OOOm , \n长度<30m ，\n含过街天桥\n单项工程合同额0.5 亿元~1 亿元单项工程合同额<0.5 亿元\n路基工程2km~5km ，\n路基工程<2km ，\n不含轨道铺设\n单项工程合同额0.5 亿元~2 亿元单项工程合同额<0.5 亿元\n内径、宽或高<8m ，\n单洞长度<lkm ，\n不含轨道铺设\n单项工程合同额<1 亿元\n长度<5km ，\n单项工程合同额<2 亿元\n不含轨道铺设\n单线车站，\n单项工程合同额<2 亿元\n广场面积2 万m2~5 万m2'\n广场面积<2 万m 2\n，\n含体育场\n单项工程合同额O. 5 亿元~2 亿元单项工程合同额<0.5 亿元\n\n\nPDF物理第31页\nE、D\nE中\n序\n号\n9 \n10 \n11 \n续表A\n工程类别\n城市供水\n城市排水\n城市供气\n项目名称\n大型\n日处理量~10 万\nt ，\n供水厂\n单项工程合同额~1.\n5 亿\n工程\n7G \n管径二\"\"1. 5m , \n管道工程\n单项工程合同额~1 亿元\n污水处\n日处理量~10 万\nt.\n单项工程合同额~1.\n5 亿\n理厂工程\n7G \n排水管道\n管径二\"\"1. 5m , \n工程\n单项工程合同额注1 亿元\n燃气源\n日产气量~30 万时，\n工程\n单项工程合同额~1 亿元\n工程规模\n备注\n中型\n小型\n日处理量5 万t~10 万\nt ，\n单项工程合同额O. 5 亿元~1. 5 亿\n日处理量<5 万\nt ，\n单项工程合同额<0.5 亿元\n7G \n管径。. 8m~ 1. 5m , \n管径<0.8m ，\n单项工程合同额0.5 亿元~1 亿元单项工程合同额<0.5 亿元\n日处理量3 万t~10 万\nt ，\n单项工程合同额0.5 亿元~1. 5 亿\n日处理量<3 万\nt ，\n单项工程合同额<0.5 亿元\n7G \n管径。. 8m~ 1. 5m , \n管径<0.8m ，\n单项工程合同额0.5 亿元~1 亿元单项工程合同额<0.5 亿元\n日产气量\n10 万时~30 万m3 ，\n日产气量<10 万m'\n，\n单项工程合同额0.3 亿元~1 亿元单项工程合同额<0.3 亿元\n\n\nPDF物理第32页\nE、2\n臼3\n续表A\n序\n工程规模\n号\n工程类别\n项目名称\n大型\n中型\n设计压力>2.5MPa ，\n设计压力\n2. OMPa~2. 5MPa, \n总贮存容积>2 千d 的总贮存容积1m3 ~2 000m3 的液化\n储备厂\n液化石油气或>900m3 的石油气或400m3 ~ 900m 3 的液化\n(站)\n11 \n城市供气\n工程\n液化天然气贮罐厂(站) , \n天然气贮罐厂(站) , \n供气规模>15 万m 3 jd ，\n供气规模5 万m3jd~15 万m3 jd ，\n单项工程合同额~0.5 亿元单项工程合同额0.3 亿元~0.5 亿元\n管道工程\n设计压力~4.0MPa ，\n设计压力\n2. 5MPa~4. OMPa , \n单项工程合同额二三1 亿元\n单项工程合同额0.5 亿元~1 亿元\n填埋场\n库容~500 万m3 ，\n库容300 万m3~500 万m3\n，\n工程\n12 \n生活垃圾\n单项工程合同额注2 亿元\n单项工程合同额1 亿元~2 亿元\n焚烧厂\n日处理量~2000t ，\n日处理量500t~2 OOOt , \n工程\n单项工程合同额~3 亿元\n单项工程合同额1 亿元~3 亿元\n机电系统\n机电设备单项工程合同额~O. 5 亿单项工程合同额0.2 亿元~O. 5 亿\n13 \n安装工程\nJG \nJG \n交通安全\n交通安全\n14 \n单项工程合同额~O. 5 亿单项工程合同额0.2 亿兀~O. 5 亿\n设施\n防护工程\nJG \nJG \n说明z 同一栏目中有多项条件时，任一项达到即为满足认定条件。\n备注\n小型\n设计压力<1. OMPa , \n总贮存容积<1000m3 的液\n含调压站、混\n化石油气或<400m3 的液化\n气站、气化\n站、压缩天然\n天然气贮罐厂(站) , \n气站、汽车加\n供气规模<5 万m3 jd ，\n气站等\n单项工程合同额<0.3 万元\n设计压力<2.5MPa ，\n单项工程合同额<0.5 万元\n库容<300 万m 3\n，\n单项工程合同额<1 亿元\n日处理量<500t ，\n单项工程合同额<1 亿元\n单项工程合同额<0.2 亿元\n单项工程合同额<0.2 亿元\n",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "DG-TJ08-2225-ARCHIVE#4.2.2": {
+      "clause_id": "DG-TJ08-2225-ARCHIVE#4.2.2",
+      "doc_id": "DG-TJ08-2225-ARCHIVE",
+      "strength": "B",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "requirement_kind": "recommendation",
+      "quote": "4.2.2 技术负责人应符合下列条件：\n技术负责人应取得工程技术类职称。其中，初级职称取得者可在本标准中最小规模的工程中任职；中级职称取得者可在本标准中除最大规模外的工程中任职；高级职称取得者可在所有规模的工程中任职。",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    }
+  },
+  "external_documents": [
+    {
+      "basis_id": "DG/TJ08-2225-2017",
+      "doc_title": "施工现场专业人员配备标准",
+      "doc_no": "DG/TJ 08-2225-2017",
+      "clause_ref": "表3.3.3、表3.4.1、第4.2.2条",
+      "strength": "B",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "effective_from": "2017-06-01",
+      "effective_to": null,
+      "document_role": "full_text",
+      "content_format": "text_layer",
+      "citation_mode": "clause",
+      "knowledge_id": "88104e12-d162-48c4-bef8-e27b2c09a283",
+      "quote": null,
+      "quote_status": "pending_verification",
+      "effective_date_source": "DG-TJ08-2225-ARCHIVE#批准通知物理第3页",
+      "effective_date_note": "按原件批准通知纠正旧登记日期；原线上quote仍pending_verification，未改线上知识库"
+    },
+    {
+      "basis_id": "JS-2014-159",
+      "doc_title": "建筑业企业资质标准",
+      "doc_no": "建市〔2014〕159号",
+      "clause_ref": "资质类别与承包工程范围",
+      "strength": "A",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "effective_from": "2015-01-01",
+      "effective_to": null,
+      "document_role": "full_text",
+      "content_format": "pdf",
+      "citation_mode": "clause",
+      "knowledge_id": "34158e8c-925f-4550-ba9f-16fd75c7563f",
+      "quote": null,
+      "quote_status": "pending_verification"
+    },
+    {
+      "basis_id": "JS-2007-171",
+      "doc_title": "注册建造师执业工程规模标准",
+      "doc_no": "建市〔2007〕171号",
+      "clause_ref": "各专业工程规模划分表",
+      "strength": "A",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "effective_from": "2007-08-01",
+      "effective_to": null,
+      "document_role": "full_text",
+      "content_format": "pdf",
+      "citation_mode": "clause",
+      "knowledge_id": "7eb5d6bc-1025-411b-a68d-e1b4638f22a9",
+      "quote": null,
+      "quote_status": "pending_verification"
+    },
+    {
+      "basis_id": "MOT-2017-25",
+      "doc_title": "公路水运工程安全生产监督管理办法",
+      "doc_no": "交通运输部令2017年第25号",
+      "clause_ref": "第十四条",
+      "strength": "A",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "effective_from": "2017-08-01",
+      "effective_to": null,
+      "document_role": "full_text",
+      "content_format": "pdf",
+      "citation_mode": "clause",
+      "knowledge_id": "34e632a7-f09d-48db-927c-86c16763abb1",
+      "quote": null,
+      "quote_status": "pending_verification"
+    },
+    {
+      "basis_id": "MOHURD-2025-60",
+      "doc_title": "建筑施工特种作业人员管理规定",
+      "doc_no": "住建部令2025年第60号",
+      "clause_ref": "特种作业工种目录与证书管理",
+      "strength": "A",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "effective_from": "2026-06-01",
+      "effective_to": null,
+      "document_role": "full_text",
+      "content_format": "pdf",
+      "citation_mode": "clause",
+      "knowledge_id": "ca84ba48-6e9c-434c-a35e-7cc2ed4f7652",
+      "quote": null,
+      "quote_status": "pending_verification"
+    },
+    {
+      "basis_id": "JS-2015-20",
+      "doc_title": "建筑业企业资质管理规定和资质标准实施意见",
+      "doc_no": "建市〔2015〕20号",
+      "clause_ref": "第三十八条（社保证明要素）",
+      "strength": "A",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "effective_from": "2015-03-01",
+      "effective_to": null,
+      "document_role": "full_text",
+      "content_format": "pdf",
+      "citation_mode": "clause",
+      "knowledge_id": "5b6d4816-9622-4194-8d23-d82b6bc45591",
+      "quote": null,
+      "quote_status": "pending_verification"
+    },
+    {
+      "basis_id": "SHJT-2026-8-JD",
+      "doc_title": "上海市公路工程施工分包管理实施细则政策解读",
+      "doc_no": "沪交行规〔2026〕8号解读",
+      "clause_ref": "问题3（在岗与不得同时受聘）",
+      "strength": "B",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "effective_from": "2026-08-08",
+      "effective_to": "2031-08-07",
+      "document_role": "full_text",
+      "content_format": "pdf",
+      "citation_mode": "clause",
+      "knowledge_id": "7595d56e-abdd-405b-bb02-316695fd7717",
+      "quote": null,
+      "quote_status": "pending_verification"
+    },
+    {
+      "basis_id": "STATE-COUNCIL-724",
+      "doc_title": "保障农民工工资支付条例",
+      "doc_no": "国务院令第724号",
+      "clause_ref": "工资专用账户、实名制、总包代发",
+      "strength": "A",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "effective_from": "2020-05-01",
+      "effective_to": null,
+      "document_role": "full_text",
+      "content_format": "pdf",
+      "citation_mode": "clause",
+      "knowledge_id": "9134a162-3629-49cd-9afb-961c4f83b8db",
+      "quote": null,
+      "quote_status": "pending_verification"
+    },
+    {
+      "basis_id": "MOF-2022-136",
+      "doc_title": "企业安全生产费用提取和使用管理办法",
+      "doc_no": "财资〔2022〕136号",
+      "clause_ref": "第十七、十八条（工程层提取与分包单独约定、支付、不重复提取）",
+      "strength": "A",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "effective_from": "2022-11-21",
+      "effective_to": null,
+      "document_role": "full_text",
+      "content_format": "pdf",
+      "citation_mode": "clause",
+      "knowledge_id": "56ae09e0-3c78-4ed1-854a-13d9df6cdbde",
+      "quote": null,
+      "quote_status": "pending_verification"
+    },
+    {
+      "basis_id": "JS-2019-18",
+      "doc_title": "建筑工人实名制管理办法（试行）",
+      "doc_no": "建市〔2019〕18号",
+      "clause_ref": "实名制管理",
+      "strength": "A",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "effective_from": "2019-03-01",
+      "effective_to": null,
+      "document_role": "full_text",
+      "content_format": "pdf",
+      "citation_mode": "clause",
+      "knowledge_id": "3dd79cb0-d4ff-4e28-a1f6-61c4294ae1de",
+      "quote": null,
+      "quote_status": "pending_verification"
+    },
+    {
+      "basis_id": "SPECIAL-EQUIPMENT-LAW",
+      "doc_title": "中华人民共和国特种设备安全法",
+      "doc_no": "主席令第4号",
+      "clause_ref": "特种设备检验与使用管理",
+      "strength": "A",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "effective_from": "2014-01-01",
+      "effective_to": null,
+      "document_role": "full_text",
+      "content_format": "pdf",
+      "citation_mode": "clause",
+      "knowledge_id": "5c48c4f4-eb29-412a-8829-c97bf687f04c",
+      "quote": null,
+      "quote_status": "pending_verification"
+    },
+    {
+      "basis_id": "SAFETY-PERMIT-397",
+      "doc_title": "安全生产许可证条例",
+      "doc_no": "国务院令第397号",
+      "clause_ref": "安全生产许可",
+      "strength": "A",
+      "subject_scope": [
+        "subcontractor"
+      ],
+      "effective_from": "2004-01-13",
+      "effective_to": null,
+      "document_role": "full_text",
+      "content_format": "pdf",
+      "citation_mode": "clause",
+      "knowledge_id": "f0e7a344-6fab-4f01-833c-d35c9e6b1ad3",
+      "quote": null,
+      "quote_status": "pending_verification"
+    },
+    {
+      "basis_id": "JS-2019-1",
+      "doc_title": "建筑工程施工发包与承包违法行为认定查处管理办法",
+      "doc_no": "建市规〔2019〕1号",
+      "clause_ref": "转包、违法分包、挂靠认定",
+      "strength": "A",
+      "subject_scope": [
+        "contractor"
+      ],
+      "effective_from": "2019-01-01",
+      "effective_to": null,
+      "document_role": "full_text",
+      "content_format": "pdf",
+      "citation_mode": "clause",
+      "knowledge_id": "2e9c999d-669c-48e7-b41a-a2bfdd35a3d2",
+      "quote": null,
+      "quote_status": "pending_verification"
+    }
+  ],
+  "rule_subjects": {
+    "ZHB-2025-SEAL": "subcontractor",
+    "T15-01": "contractor",
+    "T15-02": "contractor",
+    "T15-03": "contractor",
+    "T15-04": "contractor",
+    "T15-05": "contractor",
+    "T15-06": "contractor",
+    "T15-07": "contractor",
+    "T15-08": "contractor",
+    "T15-09": "contractor",
+    "T15-10": "contractor",
+    "W16-01": "contractor",
+    "W16-02": "contractor",
+    "W16-03": "contractor",
+    "W16-04": "subcontractor",
+    "W16-05": "contractor",
+    "W16-06": "subcontractor",
+    "W16-07": "contractor",
+    "V16-01": "contractor",
+    "V16-02": "contractor",
+    "V16-03": "contractor",
+    "V16-04": "subcontractor",
+    "L17-01": "contractor",
+    "L17-02": "contractor",
+    "L17-03": "contractor",
+    "NL-B-01": "contractor",
+    "NL-B-02": "contractor",
+    "NL-B-03": "contractor",
+    "NL-B-04": "contractor",
+    "NL-B-05": "contractor",
+    "NL-B-06": "contractor",
+    "NL-B-07": "contractor",
+    "NL-B-08": "contractor",
+    "NL-B-09": "contractor",
+    "NL-B-10": "contractor",
+    "NL-B-11": "contractor",
+    "NL-B-12": "contractor",
+    "NL-T-01": "contractor",
+    "NL-T-02": "contractor",
+    "NL-T-03": "contractor",
+    "NL-T-04": "contractor",
+    "NL-T-05": "contractor",
+    "NL-T-06": "contractor",
+    "NL-T-07": "contractor",
+    "NL-T-08": "contractor",
+    "NL-R-01": "contractor",
+    "RC-A01": "subcontractor",
+    "RC-A02": "subcontractor",
+    "RC-A03": "subcontractor",
+    "RC-A04": "subcontractor",
+    "RC-A05": "subcontractor",
+    "RC-A06": "subcontractor",
+    "RC-A07": "subcontractor",
+    "RC-A08": "subcontractor",
+    "RC-A09": "subcontractor",
+    "RC-A10": "subcontractor",
+    "RC-P11": "subcontractor",
+    "RC-P12": "subcontractor",
+    "RC-P13": "subcontractor",
+    "RC-P14": "subcontractor",
+    "RC-P15": "subcontractor",
+    "RC-P16": "subcontractor",
+    "RC-L11": "subcontractor",
+    "RC-L12": "subcontractor",
+    "RC-L13": "subcontractor",
+    "RC-L14": "subcontractor",
+    "A2-09": "subcontractor"
+  },
+  "attachment_pairs": {
+    "SHCG-2025-118-ANNEX": "SHCG-2025-118"
+  }
+}

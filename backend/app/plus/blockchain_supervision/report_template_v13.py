@@ -103,14 +103,14 @@ def _scope_limitations(report, reading_coverage):
             "未查询外部网站，缺少资料不代表无风险。"
         )
 
-    contract_limits = [value for value in statements if "总包合同" in value]
+    contract_limits = [value for value in statements
+                       if "未上传总包合同" in value or "未提供总包合同" in value]
     ratio_limits = [value for value in statements if "金额占比" in value or "工程量占比" in value]
     semantic_limits = [value for value in statements if "合同语义核查" in value]
-    if contract_limits or ratio_limits or semantic_limits:
-        limits.append(
-            "合同及比例核查边界：未上传总包合同，需依据该合同原文判断的事项尚未核查；"
-            "分包金额占比、工程量占比及合同语义核查本次未启用。"
-        )
+    if contract_limits:
+        limits.append("合同核查边界：未上传总包合同，需依据该合同原文判断的事项尚未核查。")
+    if ratio_limits or semantic_limits:
+        limits.append("合同及比例核查边界：分包金额占比、工程量占比及合同语义核查本次未启用。")
 
     qualification_limits = [value for value in statements if "资质仅按工程类别" in value]
     if qualification_limits:

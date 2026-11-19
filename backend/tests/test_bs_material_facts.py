@@ -41,13 +41,46 @@ def test_extract_material_facts_preserves_raw_normalized_and_grounding():
     assert by_field["certificate.number"]["quote"]
     # 无 ocr_meta 的页面是文本层，不能一律记成线上 OCR
     assert by_field["certificate.number"]["source_kind"] == "embedded_text_layer"
-    assert by_field["certificate.number"]["extractor_version"] == "material-facts.v2"
+    from app.plus.blockchain_supervision.material_facts import EXTRACTOR_VERSION
+    assert by_field["certificate.number"]["extractor_version"] == EXTRACTOR_VERSION
 
 
 def _facts(text):
     from app.plus.blockchain_supervision.material_facts import extract_material_facts
 
     return {fact["field_path"]: fact for fact in extract_material_facts(_material(text))}
+
+
+def test_contract_material_persists_role_amount_and_scope_facts():
+    from app.plus.blockchain_supervision.material_facts import extract_material_facts
+
+    material = SimpleNamespace(
+        id=11, task_id=3, file_name="嘉松合同.pdf", role="sub", parse_state="done",
+        degradations_json=[],
+        pages_json=[{"page": 2, "text": (
+            "建设工程施工专业分包合同\n"
+            "发包人（全称）：上海建工集团股份有限公司\n"
+            "分包人（全称）：上海兴友工程机械有限公司\n"
+            "总包工程名称：嘉松公路越江新建工程\n"
+            "分包工程名称：嘉松公路越江新建工程预制构件安装工程\n"
+            "分包工程承包范围和内容：预制立柱、盖梁、箱梁、板梁、挡墙等构件安装相关的工程内容\n"
+            "签约合同价（含税）：4557598.71元\n"
+            "不含增值税的签约合同价：4181283.22元\n"
+            "税率：9%")}],
+    )
+
+    facts = {fact["field_path"]: fact for fact in extract_material_facts(material)}
+
+    assert facts["contract.party.subcontractor"]["raw_value"] == "上海兴友工程机械有限公司"
+    assert facts["contract.party.general_contractor"]["raw_value"] == "上海建工集团股份有限公司"
+    assert facts["contract.item_name"]["raw_value"] == "嘉松公路越江新建工程预制构件安装工程"
+    assert facts["contract.total_project_name"]["raw_value"] == "嘉松公路越江新建工程"
+    assert facts["contract.scope"]["raw_value"].startswith("预制立柱")
+    assert facts["contract.amount.incl_wan"]["raw_value"] == "455.759871"
+    assert facts["contract.amount.excl_wan"]["raw_value"] == "418.128322"
+    assert facts["contract.tax_rate_pct"]["raw_value"] == "9"
+    assert facts["contract.amount.incl_wan"]["page"] == 2
+    assert facts["contract.amount.incl_wan"]["quote"].startswith("签约合同价")
 
 
 def test_extract_person_name_accepts_spaced_label():

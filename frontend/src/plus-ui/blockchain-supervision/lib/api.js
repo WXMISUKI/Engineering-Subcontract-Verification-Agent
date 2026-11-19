@@ -119,9 +119,10 @@ export async function pingBs({ signal } = {}) {
   return pingRequest
 }
 
-export async function createBsTask({ conversationId, title, scopeA1, scopeA3, projectName, contractSection, baselineDate }) {
+export async function createBsTask({ conversationId, title, scopeA1, scopeA3, projectName, contractSection, baselineDate, reviewMode = 'admission' }) {
   const body = {
     conversation_id: conversationId, title, scope_a1: scopeA1, scope_a3: scopeA3,
+    review_mode: reviewMode,
     // A-03（B1）标段锚点：可选三字段（未填写则留空，后端存 NULL）
     project_name: projectName || null,
     contract_section: contractSection || null,

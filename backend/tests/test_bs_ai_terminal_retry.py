@@ -136,9 +136,11 @@ def test_failed_job_can_resume_same_review_once_without_new_rules_or_findings(mo
                 assert first['job_id'] != 'old-job'
                 same_process = jobs.submit_background_job(db, task.id, user, 'review-1', retry=True)
                 assert same_process['job_id'] == first['job_id']
+                # 换工作进程也不能另起一个作业：租约模型下 running 走幂等返回，
+                # 跨进程“未收到终态的 started”由 test_foreign_unfinished_job_cannot_be_restarted 覆盖。
                 monkeypatch.setattr(jobs, 'INSTANCE_ID', 'other-worker')
-                with pytest.raises(ValueError, match='无法确认'):
-                    jobs.submit_background_job(db, task.id, user, 'review-1', retry=True)
+                foreign = jobs.submit_background_job(db, task.id, user, 'review-1', retry=True)
+                assert foreign['job_id'] == first['job_id'] and foreign['state'] == 'running'
                 assert db.get(BsTask, 1).options_snapshot_json[reference_snapshots.REVIEW_POINTER] == 'review-1'
             finally:
                 worker.cancel()

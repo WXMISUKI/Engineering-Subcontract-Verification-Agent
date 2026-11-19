@@ -18,6 +18,7 @@
 """
 import re
 
+from . import negative_applicability as negative_scope
 from .models import STATUS_HIT, STATUS_MISS, STATUS_UNDECIDABLE, BsFinding
 from .parsing import describe_reading_gap, material_page_readable, material_reading_gap
 from .rules import (load_config, load_negative_matchers,
@@ -41,7 +42,7 @@ _AMT_RE = re.compile(
     r"(合同总金额|签约合同价|合同总价|合同金额|合同价|承包金额|分包金额|合同价款|劳务报酬|金额|总价)"
     # 合同扫描件常见“签约合同价（含税）为人民币 … 元”写法；
     # 允许标签后的税额括注和“为人民币”等结构，但仍要求紧邻金额单位，避免从无关段落猜金额。
-    r"(?:[（(][^）)]{0,20}[）)])?[^0-9]{0,24}(?:人民币|￥|¥)?"
+    r"(?:[（(][^）)]{0,20}[）)])?[^0-9；;。]{0,80}(?:人民币|￥|¥)?"
     r"(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)"
     r"(亿元|万元|元)")
 _STRONG_KEYWORDS = ("合同总金额", "签约合同价", "合同总价", "合同金额", "合同价",
@@ -111,12 +112,21 @@ def _detect_tax_for_amount(text: str, match) -> str:
     detected = _detect_tax(match.group(0))
     if detected != "unknown":
         return detected
-    prefix = text[max(0, match.start() - 40):match.start()]
+    prefix = re.split(r"[；;。]", text[max(0, match.start() - 40):match.start()])[-1]
     detected = _detect_tax(prefix)
     if detected != "unknown":
         return detected
-    suffix = text[match.end():min(len(text), match.end() + 16)]
-    return _detect_tax(suffix)
+    suffix = re.split(r"[；;。]", text[match.end():min(len(text), match.end() + 40)])[0]
+    detected = _detect_tax(suffix)
+    if detected != "unknown":
+        return detected
+    # 合同常写「签约合同价为…；不含增值税的签约合同价为…」：未标注税额的
+    # 首个签约合同价是含税总价，不能因为后一个分句出现「不含增值税」就把它
+    # 反向标成不含税。
+    sentence = text[max(0, match.start() - 60):min(len(text), match.end() + 120)]
+    if "签约合同价" in match.group(0) and ("不含增值税" in sentence or "不含税" in sentence):
+        return "incl"
+    return "unknown"
 
 
 def extract_contract_amount(material) -> dict:
@@ -141,7 +151,14 @@ def extract_contract_amount(material) -> dict:
     if not candidates:
         return {"found": False}
     strong = [c for c in candidates if c["strong"]]
-    chosen = strong[0] if strong else candidates[0]
+    # 含税合同价是报告呈现与金额占比核查的主口径；同一合同同时列出
+    # 「签约合同价（含税）」和「不含增值税的签约合同价」时优先含税，
+    # 不能按文本顺序把不含税价当成合同价。
+    chosen = next((c for c in strong if c["tax"] == "incl"), None)
+    if chosen is None:
+        chosen = next((c for c in candidates if c["tax"] == "incl"), None)
+    if chosen is None:
+        chosen = strong[0] if strong else candidates[0]
     chosen = dict(chosen)
     chosen["found"] = True
     return chosen
@@ -428,11 +445,49 @@ def _province_delegated_finding(task, rule: dict) -> BsFinding:
         source="%s%s" % (_NEGATIVE_SOURCE, rule["article"]))
 
 
-def run_negative_list_check(task, materials: list) -> list:
-    """A1-02：分包/劳务合同范围 vs 负面清单 21 叶。
+_SCOPE_LABELS = (
+    "分包工程内容及范围", "分包工程内容", "分包范围", "承包范围",
+    "工程内容", "分包工程概况", "劳务作业内容", "劳务内容",
+)
 
-    只对「触发词召回」的条目出结论；未召回条目不逐条刷屏（报告汇总里说明覆盖面）。
-    同一规则跨材料聚合：命中 > 不可判定 > 未命中。
+
+def _scope_window(materials: list) -> tuple[str, object]:
+    """取分包/劳务合同的工程内容窗口；找不到时退回合同前 800 字。"""
+    for material in materials:
+        text = _material_text(material)
+        for label in _SCOPE_LABELS:
+            index = text.find(label)
+            if index >= 0:
+                return text[index:index + 800], material
+    if materials:
+        return _material_text(materials[0])[:800], materials[0]
+    return "", None
+
+
+def _scope_params(prepared: list) -> dict:
+    """从合同页面抽负面清单阈值参数；抽不到的不写，交给 evaluate_scope 判需确认。"""
+    params = {}
+    for key in _EXTRACTORS:
+        for material, candidates, factual_text in prepared:
+            for _page_no, text in candidates:
+                value, _quote = _extract_threshold(key, text, material, fallback_text=factual_text)
+                if value is not None:
+                    params[key] = value
+                    break
+            if key in params:
+                break
+    return params
+
+
+def _first_page(material) -> int | None:
+    pages = _norm_pages(material) if material is not None else []
+    return pages[0][0] if pages else None
+
+
+def run_negative_list_check(task, materials: list) -> list:
+    """A1-02：分包/劳务合同范围 vs 负面清单。
+
+    保留逐条判定作为工作底稿；另加一条 NL-SCOPE 汇总，报告层只用“通过 / 发现问题”。
     """
     contracts = [m for m in materials if m.role in ("sub", "labor")]
     gaps = [(m, material_reading_gap(m)) for m in contracts]
@@ -447,7 +502,6 @@ def run_negative_list_check(task, materials: list) -> list:
     for material in scoped:
         candidates = [(page_no, clause) for page_no, page_text in _norm_pages(material)
                       for clause in _negative_clauses(page_text)]
-        # 同一合同的可靠页面及事实片段对所有条目相同，只读取和切分一次。
         factual_text = "。".join(
             fragment.group() for _, clause in candidates
             for fragment in re.finditer(r"[^，,]+", clause)
@@ -476,7 +530,6 @@ def run_negative_list_check(task, materials: list) -> list:
                     status, quote, detail, missing, page = (
                         STATUS_UNDECIDABLE, trig_quote, fact_limit, [], page_no)
                 elif context_re is not None and not context_re.search(text):
-                    # 触发词在场但缺上下文限定：不硬判，标不可判定（缺什么写清）
                     status, quote, detail = STATUS_UNDECIDABLE, trig_quote, \
                         "触发词「%s」在场但未见上下文限定（缺：%s）" % (trigger, matcher["context"])
                     missing, page = [], page_no
@@ -491,7 +544,6 @@ def run_negative_list_check(task, materials: list) -> list:
                         detail = "阈值未抽取到（缺：%s）" % "、".join(missing)
                     elif status == STATUS_UNDECIDABLE:
                         detail = detail or "阈值结论不一致"
-                # 例外情形只提示不翻案（人工终审）
                 exceptions = [e for e in rule.get("exceptions", []) if e in text]
                 if exceptions and status == STATUS_HIT:
                     detail += "；注意例外情形「%s」（人工终审确认）" % "、".join(exceptions)
@@ -509,7 +561,6 @@ def run_negative_list_check(task, materials: list) -> list:
                     quote=quote, page=page,
                     source="%s%s" % (_NEGATIVE_SOURCE, rule["article"]))
                 rank = {STATUS_HIT: 0, STATUS_UNDECIDABLE: 1, STATUS_MISS: 2}[status]
-                # 制度/否定提示只能在没有实际范围证据时兜底，不能盖过其余实证。
                 score = (bool(fact_limit), rank)
                 if best is None or score < best[:2]:
                     best = (*score, finding)
@@ -526,6 +577,35 @@ def run_negative_list_check(task, materials: list) -> list:
                 finding.message = ("不可判定：%s；已识别范围不能代表全部范围；%s"
                                    % ("；".join(descriptions), finding.message))[:500]
             findings.append(finding)
+
+    scope_text, scope_material = _scope_window(scoped)
+    result = negative_scope.evaluate_scope(
+        scope_text,
+        getattr(task, "project_name", "") or "",
+        _scope_params(prepared),
+        rules,
+    )
+    hits = [f for f in findings if f.status == STATUS_HIT]
+    undecided = [f for f in findings if f.status == STATUS_UNDECIDABLE]
+    if hits:
+        scope_status, scope_message = STATUS_HIT, "发现 %d 项问题" % len(hits)
+    elif undecided:
+        scope_status, scope_message = STATUS_UNDECIDABLE, "发现 %d 项需补充确认的问题" % len(undecided)
+    else:
+        scope_status, scope_message = STATUS_MISS, "通过"
+    findings.append(BsFinding(
+        task_id=task.id, material_id=getattr(scope_material, "id", None),
+        item_id="NL-SCOPE", kind="negative_list", status=scope_status,
+        message=scope_message[:500],
+        page=_first_page(scope_material), source=_NEGATIVE_SOURCE + "第九条",
+        evidence_json=[{
+            "scope_quality": result.get("scope_quality"),
+            "scope_missing": result.get("scope_missing"),
+            "problem_rule_ids": [f.item_id for f in hits],
+            "scope_text": (result.get("scope") or {}).get("scope_text"),
+            "reading_incomplete": incomplete,
+        }],
+    ))
     return findings
 
 
@@ -2480,6 +2560,32 @@ def _run_w16_02(task, nl_findings, rule: dict) -> BsFinding:
     """
     source = _rule_source(rule)
     missing_evidence = ["negative_list_match"]
+    scope_summary = next((f for f in (nl_findings or []) if f.item_id == "NL-SCOPE"), None)
+    if scope_summary is not None:
+        problems = [f for f in nl_findings
+                    if f.kind == "negative_list" and f.item_id not in ("NL-SCOPE", "NL-R-01")]
+        hits = [f for f in problems if f.status == STATUS_HIT]
+        undecided = [f for f in problems if f.status == STATUS_UNDECIDABLE]
+        if hits:
+            ids = "、".join(f.item_id for f in hits)
+            reasons = "；".join((f.message or "")[:80] for f in hits[:3])
+            return BsFinding(
+                task_id=task.id, material_id=hits[0].material_id, item_id=rule["id"],
+                kind=_ILLEGAL_KIND, status=STATUS_HIT,
+                message=("命中：分包范围涉及负面清单（%s）：%s" % (ids, reasons))[:500],
+                quote=hits[0].quote, page=hits[0].page, source=source)
+        if undecided:
+            ids = "、".join(f.item_id for f in undecided)
+            reasons = "；".join((f.message or "")[:80] for f in undecided[:3])
+            return _undecidable_finding(
+                task, rule["id"], _ILLEGAL_KIND,
+                ("需补充确认：负面清单（%s）尚有参数/除外情形需确认：%s"
+                 % (ids, reasons))[:500],
+                source, missing=missing_evidence)
+        return _miss_finding(
+            task, rule["id"], None, None, None,
+            "通过：未涉及《公路工程施工分包负面清单（2024年版）》所列禁止分包情形。",
+            source)
     if not nl_findings:
         return _undecidable_finding(
             task, rule["id"], _ILLEGAL_KIND,
@@ -3147,6 +3253,19 @@ def _run_v16_01(task, evidence: list, a3_findings, rule: dict) -> BsFinding:
         evidence_json=_v16_01_evidence_refs(sup_anchor, con_anchor))
 
 
+def _first_readable_contract_ref(materials):
+    """合同对照在场性：以可读材料为准，不要求正文出现「总包合同」字样。
+
+    总包合同常以「施工合同」「建设工程施工合同」命名，用固定字样判断在场会把
+    实际存在的对照材料误报为缺件。
+    """
+    for material in materials or []:
+        for page_no, text in _norm_pages_breaks(material):
+            if text.strip():
+                return (material, page_no, "", "")
+    return None
+
+
 def _run_v16_02(task, general: list, subs_labor: list, pool: list,
                 rule: dict) -> BsFinding:
     """V16-02：未依法签订或未遵循承包合同原则要求。
@@ -3159,8 +3278,8 @@ def _run_v16_02(task, general: list, subs_labor: list, pool: list,
     det = rule["illegal_detection"]
     source = _rule_source(rule)
     guard_c = _guard_lists(det.get("clause_polarity_guard"))
-    gc = _page_match_breaks(general, det["general_contract_patterns"])
-    sc = _page_match_breaks(subs_labor, det["subcontract_patterns"])
+    gc = _first_readable_contract_ref(general)
+    sc = _first_readable_contract_ref(subs_labor)
     violation = _page_match_breaks(pool, det["violation_patterns"])
     consistency = _page_match_breaks(pool, det["consistency_patterns"])
     explanation = _page_match_breaks(pool, det["explanation_patterns"])
@@ -3196,10 +3315,12 @@ def _run_v16_02(task, general: list, subs_labor: list, pool: list,
     missing = [k for k, side in (("principle_comparison", violation),
                                  ("equipment_facility_explanation", explanation))
                if side is None]
+    detail = ("材料未载明分包合同是否符合总包合同原则（缺原则对照）" if violation is None
+              else "原则违背表述在场，但设备设施说明不足")
     return _undecidable_finding(
         task, rule["id"], _ILLEGAL_KIND,
-        "不可判定：合同对照在场但未见原则违背或一致明示，现场材料不足"
-        "（缺：%s）" % "、".join(_EVIDENCE_LABELS[k] for k in missing),
+        "不可判定：合同对照在场，%s（缺：%s）" % (
+            detail, "、".join(_EVIDENCE_LABELS[k] for k in missing)),
         source, (violation or sc)[0].id if violation else sc[0].id, missing=missing)
 
 

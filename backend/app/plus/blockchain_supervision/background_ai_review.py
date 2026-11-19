@@ -9,10 +9,11 @@ from types import SimpleNamespace
 from sqlalchemy.orm import Session
 
 from .models import BsTask, BsTaskEvent
-from . import ai_advisory_snapshots, knowledge_runs, reference_snapshots, reporting
+from . import ai_advisory_snapshots, ai_review_jobs, knowledge_runs, reference_snapshots, reporting
 
 INSTANCE_ID = uuid.uuid4().hex
 ACTIVE_JOBS = {}
+RESUME_LOCK = asyncio.Lock()
 STARTED = 'check.ai_background_started'
 COMPLETED = 'check.ai_background_completed'
 FAILED = 'check.ai_background_failed'
@@ -103,11 +104,56 @@ def _latest(db, task_id, review_run_id):
             .order_by(BsTaskEvent.sequence.desc()).first())
 
 
+def _overlay_job_row(state, row):
+    """任务表是调度事实源：事件可能滞后或属于已退出进程，只作诊断补充。"""
+    state = dict(state)
+    state['job_id'] = row.id
+    state['attempt'] = row.attempt
+    now = ai_review_jobs.utc_naive_now()
+    if row.state in {'queued', 'running'}:
+        # 排队与租约过期都不能向用户报“中断”：巡检会重新领取并续跑，
+        # 这里保持“运行中”才能让前端继续轮询而不是诱导重复提交。
+        state['state'] = 'running'
+        if row.state == 'queued':
+            state['queued'] = True
+            state['diagnostic_state'] = '排队中'
+        elif row.lease_expires_at is None or row.lease_expires_at <= now:
+            state['queued'] = True
+            state['diagnostic_state'] = '等待恢复'
+        else:
+            state.setdefault('diagnostic_state', '可定位')
+    else:
+        state['state'] = row.state
+        if row.state == 'failed':
+            state.setdefault('reason', 'execution_failed')
+            state.setdefault('failure_categories', [])
+            state['diagnostic_state'] = '执行失败'
+        elif row.state == 'review_required':
+            state.setdefault('reason', 'incomplete_material_scope')
+            state.setdefault('failure_categories', [])
+            state['diagnostic_state'] = '待人工复核'
+        elif row.state == 'interrupted':
+            state['diagnostic_state'] = '已中断'
+    return state
+
+
 def job_status(db, task, review_run_id):
     if not review_run_id or (task.options_snapshot_json or {}).get(reference_snapshots.REVIEW_POINTER) != review_run_id:
         return {'state': 'unavailable'}
     state = project_job_state(_latest(db, task.id, review_run_id),
                               active_job_ids=set(ACTIVE_JOBS), instance_id=INSTANCE_ID)
+    if state['state'] in {'running', 'interrupted', 'failed'} and state.get('job_id'):
+        progress = (db.query(BsTaskEvent).filter(BsTaskEvent.task_id == task.id,
+                    BsTaskEvent.event_type.in_((PROGRESS, 'check.ai_batch_progress')),
+                    BsTaskEvent.payload_json['job_id'].as_string() == state['job_id'])
+                    .order_by(BsTaskEvent.sequence.desc()).first())
+        if progress is not None:
+            state = project_job_state(_latest(db, task.id, review_run_id),
+                                      active_job_ids=set(ACTIVE_JOBS), instance_id=INSTANCE_ID,
+                                      progress_event=progress)
+    row = ai_review_jobs.get_job(db, task.id, review_run_id)
+    if row is not None:
+        state = _overlay_job_row(state, row)
     if state['state'] == 'completed' and not _completed_coverage_valid(db, task, review_run_id):
         return {'state': 'unavailable', 'last_recorded_state': 'completed',
                 'job_id': state['job_id'], 'review_run_id': state['review_run_id'], 'diagnostic_state': '无法核实'}
@@ -117,14 +163,6 @@ def job_status(db, task, review_run_id):
             return {'state': 'unavailable', 'last_recorded_state': 'review_required',
                     'job_id': state['job_id'], 'review_run_id': state['review_run_id'],
                     'diagnostic_state': '无法核实'}
-    if state['state'] in {'running', 'interrupted', 'failed'}:
-        progress = (db.query(BsTaskEvent).filter(BsTaskEvent.task_id == task.id,
-                    BsTaskEvent.event_type.in_((PROGRESS, 'check.ai_batch_progress')),
-                    BsTaskEvent.payload_json['job_id'].as_string() == state['job_id'])
-                    .order_by(BsTaskEvent.sequence.desc()).first())
-        state = project_job_state(_latest(db, task.id, review_run_id),
-                                  active_job_ids=set(ACTIVE_JOBS), instance_id=INSTANCE_ID,
-                                  progress_event=progress)
     if state['state'] == 'failed' and state.get('failure_categories') == ['incomplete_material_scope']:
         try:
             state['scope_gap_review_available'] = _scope_gap_review_available(db, task, review_run_id)
@@ -199,6 +237,94 @@ def running_job(db, task):
     return bool(review_id and job_status(db, task, review_id)['state'] == 'running')
 
 
+def _terminal_marked(db, task_id, review_run_id, job_id):
+    """同一 job 是否已写过受控终态事件，避免恢复巡检重复记失败。"""
+    latest = _latest(db, task_id, review_run_id)
+    return bool(latest is not None and (latest.payload_json or {}).get('job_id') == job_id
+                and latest.event_type in (COMPLETED, FAILED, REVIEW_REQUIRED))
+
+
+def _recoverable_reason(db, task, review_run_id, groups):
+    """校验排队任务是否仍可执行；返回不可执行原因，可执行时返回 None。"""
+    from ...standalone.identity import User
+    if task is None:
+        return 'task_missing'
+    if task.state not in ('running', 'review'):
+        return 'task_finished'
+    if (task.options_snapshot_json or {}).get(reference_snapshots.REVIEW_POINTER) != review_run_id:
+        return 'review_changed'
+    account = db.get(User, task.created_by)
+    if account is None or not account.is_active:
+        return 'account_unavailable'
+    snapshot = reference_snapshots.get_reference_snapshot(db, task)
+    if (not snapshot or snapshot.get('review_run_id') != review_run_id
+            or snapshot.get('state') != 'completed' or snapshot.get('ai_auto_enabled') is not True):
+        return 'review_changed'
+    if (not groups or any(group not in reference_snapshots.CHECK_GROUPS for group in groups)
+            or len(set(groups)) != len(groups)
+            or set(groups) != set(snapshot.get('ai_auto_groups') or [])):
+        return 'scope_changed'
+    return None
+
+
+async def resume_queued_jobs(engine) -> int:
+    """启动/巡检恢复：接管过期租约并重新驱动仍有效的排队任务。"""
+    from . import service
+    async with RESUME_LOCK:
+        with Session(engine) as db:
+            handled = ai_review_jobs.requeue_expired(db)
+            db.commit()
+            from . import page_text_candidates
+            page_text_candidates.expire_candidates(db)
+            db.commit()
+            queued = [(row.id, row.task_id, row.review_run_id, list(row.groups_json or []), row.attempt)
+                      for row in ai_review_jobs.list_queued(db)]
+        exhausted = {row['id'] for row in handled if row['state'] == 'failed'}
+        started = 0
+        for job_id, task_id, review_run_id, groups, attempt in queued:
+            if job_id in ACTIVE_JOBS:
+                continue
+            with Session(engine) as db:
+                task = db.get(BsTask, task_id)
+                if job_id in exhausted:
+                    if task is not None and not _terminal_marked(db, task_id, review_run_id, job_id):
+                        service.add_event(db, task_id, FAILED, stage='check', payload={
+                            'job_id': job_id, 'review_run_id': review_run_id,
+                            'instance_id': INSTANCE_ID, 'reason': 'lease_expired',
+                            'failure_categories': []})
+                    continue
+                reason = _recoverable_reason(db, task, review_run_id, groups)
+                if reason is not None:
+                    if ai_review_jobs.abandon(db, job_id, reason):
+                        db.commit()
+                    if task is not None and not _terminal_marked(db, task_id, review_run_id, job_id):
+                        service.add_event(db, task_id, FAILED, stage='check', payload={
+                            'job_id': job_id, 'review_run_id': review_run_id,
+                            'instance_id': INSTANCE_ID, 'reason': reason,
+                            'failure_categories': []})
+                    continue
+                user_id, user_type = task.created_by, task.created_by_type
+            worker = asyncio.create_task(_run_background(
+                engine, task_id, user_id, user_type, review_run_id, job_id, groups, True,
+                recovered=attempt > 1))
+            ACTIVE_JOBS[job_id] = worker
+            worker.add_done_callback(lambda _task, job_id=job_id: ACTIVE_JOBS.pop(job_id, None))
+            started += 1
+        return started
+
+
+async def maintenance_loop(engine, *, interval_seconds: float = 30):
+    """周期巡检：进程崩溃/租约过期后自动续跑，避免任务永久停在运行中。"""
+    while True:
+        await asyncio.sleep(interval_seconds)
+        try:
+            await resume_queued_jobs(engine)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning('AI background job maintenance failed', exc_info=True)
+
+
 def submit_background_job(db, task_id, user, review_run_id, *, retry=False):
     from . import service
     db.rollback()
@@ -244,7 +370,12 @@ def submit_background_job(db, task_id, user, review_run_id, *, retry=False):
                 raise ValueError('当前 AI 覆盖状态无法核实，请刷新或联系人工复核')
         except Exception as exc:
             raise ValueError('当前 AI 覆盖状态无法核实，请刷新或联系人工复核') from exc
-    job_id = uuid.uuid4().hex
+    job = ai_review_jobs.enqueue(db, task_id, review_run_id, groups, retry=retry)
+    if job["state"] in {"completed", "review_required"} and not retry:
+        return {"state": job["state"], "job_id": job["id"], "review_run_id": review_run_id}
+    if job["state"] == "running" and job["lease_token"]:
+        return {"state": "running", "job_id": job["id"], "review_run_id": review_run_id}
+    job_id = job["id"]
     service.add_event(db, task_id, STARTED, stage='check', payload={
         'job_id': job_id, 'review_run_id': review_run_id, 'instance_id': INSTANCE_ID,
         'groups': list(groups), 'retry': bool(retry)}, commit=False)
@@ -257,7 +388,8 @@ def submit_background_job(db, task_id, user, review_run_id, *, retry=False):
     return {'state': 'running', 'job_id': job_id, 'review_run_id': review_run_id}
 
 
-async def _run_background(bind, task_id, user_id, user_type, review_run_id, job_id, groups, retry):
+async def _run_background(bind, task_id, user_id, user_type, review_run_id, job_id, groups, retry,
+                          *, recovered=False):
     from . import service
     from ...standalone.identity import User
     actor = SimpleNamespace(id=user_id, user_type=user_type)
@@ -265,8 +397,23 @@ async def _run_background(bind, task_id, user_id, user_type, review_run_id, job_
     unlocated_count, not_assessed_no_signal_count = 0, 0
     deferred_scope_gap = False
     phase = 'checking_group'
+    lease_token = None
+    with Session(bind) as db:
+        claimed = ai_review_jobs.claim(db, job_id)
+        if claimed is None:
+            return
+        lease_token = claimed['lease_token']
+        if recovered:
+            service.add_event(db, task_id, 'check.ai_job_recovered', stage='check', payload={
+                'job_id': job_id, 'review_run_id': review_run_id, 'instance_id': INSTANCE_ID,
+                'attempt': claimed['attempt'], 'groups': list(groups)}, commit=False)
+        db.commit()
     try:
         for group in groups:
+            with Session(bind) as db:
+                if not ai_review_jobs.heartbeat(db, job_id, lease_token):
+                    return
+                db.commit()
             with Session(bind) as db:
                 phase = 'checking_group'
                 task = db.query(BsTask).filter_by(id=task_id).with_for_update().one_or_none()
@@ -306,10 +453,11 @@ async def _run_background(bind, task_id, user_id, user_type, review_run_id, job_
                     if ids:
                         await service.run_linked_batch_ai_advisory(db, task, actor, group_id=group,
                             finding_ids=ids, resume_partial=retry, expected_run_id=run['run_id'], retry_failed=retry,
-                            background_job_id=job_id)
+                            background_job_id=job_id, background_lease_token=lease_token)
                     if group == 'a1':
                         await service.run_negative_candidate_ai_advisory(db, task, actor, max_batches=64,
-                            expected_run_id=run['run_id'], retry=retry, background_job_id=job_id)
+                            expected_run_id=run['run_id'], retry=retry, background_job_id=job_id,
+                            background_lease_token=lease_token)
             with Session(bind) as db:
                 phase = 'checking_coverage'
                 task = db.get(BsTask, task_id)
@@ -343,6 +491,9 @@ async def _run_background(bind, task_id, user_id, user_type, review_run_id, job_
                 task = db.query(BsTask).filter_by(id=task_id).with_for_update().one_or_none()
                 if not task or (task.options_snapshot_json or {}).get(reference_snapshots.REVIEW_POINTER) != review_run_id:
                     raise ValueError('核查运行已变化')
+                if not ai_review_jobs.finish(db, job_id, lease_token, 'review_required',
+                                             'incomplete_material_scope'):
+                    return
                 service.add_event(db, task_id, REVIEW_REQUIRED, stage='check', payload={
                     'job_id': job_id, 'review_run_id': review_run_id, 'instance_id': INSTANCE_ID,
                     'reason': 'incomplete_material_scope', 'failure_categories': []}, commit=False)
@@ -353,6 +504,8 @@ async def _run_background(bind, task_id, user_id, user_type, review_run_id, job_
             task = db.query(BsTask).filter_by(id=task_id).with_for_update().one_or_none()
             if not task or (task.options_snapshot_json or {}).get(reference_snapshots.REVIEW_POINTER) != review_run_id:
                 raise ValueError('核查运行已变化')
+            if not ai_review_jobs.finish(db, job_id, lease_token, 'completed'):
+                return
             service.add_event(db, task_id, COMPLETED, stage='check', payload={
                 'job_id': job_id, 'review_run_id': review_run_id, 'instance_id': INSTANCE_ID,
                 'warning': warning, 'needs_human_review': needs_human_review,
@@ -379,6 +532,9 @@ async def _run_background(bind, task_id, user_id, user_type, review_run_id, job_
             with Session(bind) as db:
                 task = db.query(BsTask).filter_by(id=task_id).with_for_update().one_or_none()
                 if task and (task.options_snapshot_json or {}).get(reference_snapshots.REVIEW_POINTER) == review_run_id:
+                    if not ai_review_jobs.finish(db, job_id, lease_token, 'failed',
+                                                 '%s: %s' % (type(exc).__name__, exc)):
+                        return
                     service.add_event(db, task_id, FAILED, stage='check', payload={
                         'job_id': job_id, 'review_run_id': review_run_id, 'instance_id': INSTANCE_ID,
                         'reason': 'execution_failed',

@@ -18,14 +18,14 @@
 // 标出计数口径（a2 组横跨第二/三/四步，近似会把同一结论计进多步）。
 
 import { isUnreviewedFinding } from './reviewDecision'
-import { statusLabelOf } from './statusDisplay'
+import { countedStatusOf, statusLabelOf } from './statusDisplay'
 
 /** 运行组 → finding kind（结构镜像自后端 CHECK_GROUPS，顺序即组内展示顺序）。 */
 export const GROUP_KINDS = {
   completeness: ['completeness'],
   signature_chain: ['signature_chain'],
   a1: ['negative_list', 'transfer_scope', 'illegal_subcontract'],
-  a2: ['cert_validity', 'person_consistency', 'qualification_match'],
+  a2: ['cert_validity', 'person_consistency', 'personnel_adequacy', 'qualification_match'],
   internal_records: ['internal_records'],
 }
 
@@ -189,9 +189,11 @@ export function buildFiveSteps({ snapshot, findings } = {}) {
       // 保持 findings 原顺序：按原数组单遍追加，不排序。
       step.findingIds.push(finding.id)
       step.counts.total += 1
-      if (finding.status === 'hit') step.counts.hit += 1
-      else if (finding.status === 'undecidable') step.counts.undecidable += 1
-      else if (finding.status === 'miss') step.counts.miss += 1
+      // 缺项折回无法核实、不适用折回符合：步骤计数与后端 counts 口径一致。
+      const status = countedStatusOf(finding.status)
+      if (status === 'hit') step.counts.hit += 1
+      else if (status === 'undecidable') step.counts.undecidable += 1
+      else if (status === 'miss') step.counts.miss += 1
       // open = 未处置的不符合项（三态与回执语义复用 reviewDecision，不在此另立一份）。
       if (isUnreviewedFinding(finding)) step.counts.open += 1
     }
@@ -213,6 +215,8 @@ export function buildFiveSteps({ snapshot, findings } = {}) {
 export function todoKeyOf(finding) {
   const status = finding?.status
   if (status === 'miss' || status == null) return null
+  // 缺项是「要素不全、需要补正」，归要素不足；不能混入需人工核实。
+  if (status === 'not_included') return 'content_gap'
   if (status === 'undecidable') return 'manual_check'
   if (status !== 'hit') return null
   if (finding.severity === 'high' || finding.severity === 'critical' || finding.severity === 'medium') {

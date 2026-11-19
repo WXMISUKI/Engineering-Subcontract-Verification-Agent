@@ -1,0 +1,493 @@
+{
+  "schema_version": "bs-personnel-adequacy.v2",
+  "meta": {
+    "standard": "DG/TJ 08-2225-2017",
+    "title": "建筑工程、公路与市政工程施工现场专业人员配备标准",
+    "effective_from": "2017-06-01",
+    "status": "in_force",
+    "strength": "B",
+    "source_doc": "08-DGTJ08-2225-2017-施工现场专业人员配备标准.pdf",
+    "source_pages": {
+      "professional_table": [
+        12
+      ],
+      "labor_table": [
+        13
+      ],
+      "qualification": [
+        15
+      ],
+      "appendix_a": [
+        28,
+        29,
+        32
+      ]
+    },
+    "basis_ids": [
+      "SHJT-2026-8#第七条",
+      "DG-TJ08-2225#表3.3.3",
+      "DG-TJ08-2225#表3.4.1",
+      "DG-TJ08-2225#4.2.1",
+      "DG-TJ08-2225#4.2.2"
+    ],
+    "interpretation_notes": {
+      "scale_basis": "以分包合同约定的工程内容为工程规模基准，不按主项目整体等级",
+      "highway_expressway": "原文高速公路大型列>0km，中小型为空；旧稿跨行错配所称冲突已纠正",
+      "highway_secondary": "原PDF第28物理页有完整大中小三档，旧稿空白/固定小型解释已按用户确认纠正",
+      "highway_tunnel": "原文大型列为 >0km；公路隧道按大型",
+      "any_condition": "同一栏目多项条件任一项达到即认定，同时满足多档取最高档",
+      "part_time": "每人兼职不超过1项，每个岗位兼职人员不超过1人；无兼职声明不得推断",
+      "partial_parameters": "只有合同额时保留按合同额初判；未能排除其他参数触发较高档时最终待核实，不把缺失当低值",
+      "applicable_parameters": "完整合同范围明示仅承担路基/路面且无另一类道路内容时，核该单项与合同额；普通提及、混合、否定或冲突范围不自动排除参数"
+    },
+    "source_archive": {
+      "manifest": "docs/plus/blockchain-supervision/evidence/DGTJ规模原文-20261119/manifest.json",
+      "sha256": "3ae2ff0dda06215ec32d44849f80fdc6fbd66200c10d8fa23eae84c7b3b6e905",
+      "human_verified": false,
+      "online_knowledge_verified": false,
+      "current_legal_effect_exhaustive": false
+    }
+  },
+  "posts": {
+    "project_manager": {
+      "label": "项目负责人",
+      "key": true
+    },
+    "technical_lead": {
+      "label": "技术负责人",
+      "key": true
+    },
+    "construction_officer": {
+      "label": "施工员",
+      "key": false
+    },
+    "quality_officer": {
+      "label": "质量员",
+      "key": true
+    },
+    "safety_officer": {
+      "label": "安全员",
+      "key": true
+    },
+    "standard_officer": {
+      "label": "标准员",
+      "key": false
+    },
+    "material_officer": {
+      "label": "材料员",
+      "key": false
+    },
+    "machinery_officer": {
+      "label": "机械员",
+      "key": false
+    },
+    "labor_officer": {
+      "label": "劳务员",
+      "key": false
+    },
+    "document_officer": {
+      "label": "资料员",
+      "key": false
+    }
+  },
+  "professional": {
+    "by_scale": {
+      "small": {
+        "project_manager": 1,
+        "technical_lead": 1,
+        "construction_officer": 1,
+        "quality_officer": 1,
+        "safety_officer": 1,
+        "standard_officer": 1,
+        "material_officer": 1,
+        "machinery_officer": 1,
+        "labor_officer": 1,
+        "document_officer": 1
+      },
+      "medium": {
+        "project_manager": 1,
+        "technical_lead": 1,
+        "construction_officer": 2,
+        "quality_officer": 2,
+        "safety_officer": 2,
+        "standard_officer": 1,
+        "material_officer": 1,
+        "machinery_officer": 1,
+        "labor_officer": 1,
+        "document_officer": 1
+      },
+      "large": {
+        "project_manager": 1,
+        "technical_lead": 1,
+        "construction_officer": 3,
+        "quality_officer": 3,
+        "safety_officer": 3,
+        "standard_officer": 1,
+        "material_officer": 2,
+        "machinery_officer": 2,
+        "labor_officer": 2,
+        "document_officer": 2
+      }
+    },
+    "part_time_allowed": {
+      "small": [
+        "standard_officer",
+        "machinery_officer",
+        "labor_officer",
+        "document_officer"
+      ],
+      "medium": [
+        "standard_officer",
+        "labor_officer",
+        "document_officer"
+      ],
+      "large": [
+        "standard_officer",
+        "machinery_officer",
+        "labor_officer",
+        "document_officer"
+      ]
+    },
+    "notes": [
+      "专业分包单位无自带或租赁特种设备时，可不设置机械员岗位"
+    ]
+  },
+  "labor": {
+    "bands": [
+      {
+        "min": 0,
+        "max": 49,
+        "project_manager": 1,
+        "safety_officer": 1,
+        "labor_officer": 1
+      },
+      {
+        "min": 50,
+        "max": 199,
+        "project_manager": 1,
+        "safety_officer": 2,
+        "labor_officer": 1
+      },
+      {
+        "min": 200,
+        "max": null,
+        "project_manager": 1,
+        "safety_officer": 3,
+        "safety_ratio_permille": 5,
+        "labor_officer": 1,
+        "labor_ratio_permille": 3
+      }
+    ],
+    "notes": [
+      "劳务分包不分工程类别",
+      "比例基数为作业人员人数"
+    ]
+  },
+  "post_requirements": {
+    "project_manager": {
+      "certificates": [
+        "建造师注册证书",
+        "安全生产考核合格证"
+      ],
+      "basis_id": "DG-TJ08-2225#4.2.1"
+    },
+    "technical_lead": {
+      "title_by_scale": {
+        "junior": [
+          "small"
+        ],
+        "intermediate": [
+          "small",
+          "medium"
+        ],
+        "senior": [
+          "small",
+          "medium",
+          "large"
+        ]
+      },
+      "basis_id": "DG-TJ08-2225-ARCHIVE#4.2.2",
+      "source_pages": [
+        15
+      ],
+      "scope_note": "仅核已提交工程技术类职称等级与规模，不证明证件真实、专业全适用或全部岗位资格",
+      "title_aliases": {
+        "junior": [
+          "助理工程师",
+          "初级工程师",
+          "工程技术员"
+        ],
+        "intermediate": [
+          "工程师",
+          "中级工程师"
+        ],
+        "senior": [
+          "高级工程师",
+          "正高级工程师",
+          "教授级高级工程师"
+        ]
+      },
+      "certificate_documents": [
+        "职称证书",
+        "专业技术资格证书",
+        "专业技术职务任职资格证书"
+      ]
+    },
+    "other": {
+      "requires_competency_certificate": true,
+      "part_time_requires_competency_certificate": true,
+      "basis_id": "DG-TJ08-2225#4.2.3"
+    }
+  },
+  "scale_rules": {
+    "highway_expressway": {
+      "label": "高速公路",
+      "always": "large",
+      "interpreted": false,
+      "source_pages": [
+        28
+      ]
+    },
+    "highway_first_class": {
+      "label": "一级公路",
+      "large": [
+        {
+          "field": "roadbed_km",
+          "op": ">=",
+          "value": 5
+        },
+        {
+          "field": "pavement_area_wan_m2",
+          "op": ">=",
+          "value": 15
+        },
+        {
+          "field": "contract_amount_yi",
+          "op": ">=",
+          "value": 2
+        }
+      ],
+      "medium": [
+        {
+          "field": "roadbed_km",
+          "op": "<",
+          "value": 5
+        },
+        {
+          "field": "pavement_area_wan_m2",
+          "op": "<",
+          "value": 15
+        },
+        {
+          "field": "contract_amount_yi",
+          "op": "<",
+          "value": 2
+        }
+      ],
+      "small": [],
+      "interpreted": false,
+      "lowest_scale": "medium",
+      "source_pages": [
+        28
+      ]
+    },
+    "highway_secondary": {
+      "label": "二级及以下公路",
+      "large": [
+        {
+          "field": "roadbed_km",
+          "op": ">=",
+          "value": 10
+        },
+        {
+          "field": "pavement_area_wan_m2",
+          "op": ">=",
+          "value": 25
+        },
+        {
+          "field": "contract_amount_yi",
+          "op": ">=",
+          "value": 2
+        }
+      ],
+      "medium": [
+        {
+          "field": "roadbed_km",
+          "op": ">=",
+          "value": 5
+        },
+        {
+          "field": "pavement_area_wan_m2",
+          "op": ">=",
+          "value": 15
+        },
+        {
+          "field": "contract_amount_yi",
+          "op": ">=",
+          "value": 0.5
+        }
+      ],
+      "small": [],
+      "interpreted": false,
+      "source_pages": [
+        28
+      ]
+    },
+    "bridge": {
+      "label": "公路桥梁",
+      "large": [
+        {
+          "field": "span_m",
+          "op": ">=",
+          "value": 50
+        },
+        {
+          "field": "bridge_length_m",
+          "op": ">=",
+          "value": 1000
+        },
+        {
+          "field": "contract_amount_yi",
+          "op": ">=",
+          "value": 1
+        }
+      ],
+      "medium": [
+        {
+          "field": "span_m",
+          "op": ">=",
+          "value": 20
+        },
+        {
+          "field": "bridge_length_m",
+          "op": ">=",
+          "value": 30
+        },
+        {
+          "field": "contract_amount_yi",
+          "op": ">=",
+          "value": 0.5
+        }
+      ],
+      "small": [],
+      "interpreted": false,
+      "source_pages": [
+        29
+      ]
+    },
+    "tunnel": {
+      "label": "公路隧道",
+      "always": "large",
+      "interpreted": false,
+      "source_pages": [
+        29
+      ]
+    },
+    "traffic_safety": {
+      "label": "交通安全设施/防护工程",
+      "large": [
+        {
+          "field": "contract_amount_yi",
+          "op": ">=",
+          "value": 0.5
+        }
+      ],
+      "medium": [
+        {
+          "field": "contract_amount_yi",
+          "op": ">=",
+          "value": 0.2
+        }
+      ],
+      "small": [],
+      "interpreted": false,
+      "source_pages": [
+        32
+      ]
+    }
+  },
+  "other_management": {
+    "finance": {
+      "label": "财务负责人",
+      "required_by_default": false
+    },
+    "measurement": {
+      "label": "计量负责人",
+      "required_by_default": false
+    },
+    "note": "6.20 附件要求未单列财务/计量；归入其他管理人员，仅在名单/合同列明时核验证书与社保"
+  },
+  "legal_safety_minimum": {
+    "basis_id": "MOT-2017-25#第十四条",
+    "amount_field": "contract_amount_wan",
+    "thresholds": [
+      {
+        "lt": 5000,
+        "min": 1
+      },
+      {
+        "lt": 20000,
+        "divisor": 5000
+      },
+      {
+        "gte": 20000,
+        "min": 5
+      }
+    ],
+    "note": "按年度施工产值/合同额；不足5000万至少1名，5000万至2亿每5000万不少于1名，2亿以上不少于5名且按专业配备"
+  },
+  "business_decisions": {
+    "safety_officer": {
+      "calculation_base": "subcontract_contract_amount",
+      "scope": "subcontractor_separate_no_sharing",
+      "conflict_rule": "max_of_legal_and_recommended",
+      "by_specialty": "subcontract_specialty",
+      "confirmed_at": "2026-11-18",
+      "confirmed_by": "user",
+      "version": "2026-11-18.1",
+      "notes": [
+        "以分包合同额作为年度施工产值的可核查代理",
+        "分包单位按自己的合同额单独计算，不与总包共用",
+        "法定下限与 DG/TJ 推荐值取高者：低于法定判不符合，仅低于推荐判建议补正",
+        "2亿以上按分包实际专业分别配备安全员"
+      ]
+    },
+    "social_insurance": {
+      "payment_unit_must_match": "subcontractor",
+      "branch_office": "recognized_as_same_unit_with_proof",
+      "subsidiary_parent_hr_agency_individual": "not_recognized",
+      "retired_person": {
+        "default": "not_recognized",
+        "key_posts": "not_allowed",
+        "non_key_posts": "allowed_with_retirement_certificate_reemployment_agreement_attendance_commitment"
+      },
+      "labor_dispatch": "not_recognized_unless_contract_or_owner_explicit",
+      "salary_flow": "supplementary_evidence",
+      "period": "benchmark_month_or_previous_natural_month",
+      "confirmed_at": "2026-11-18",
+      "confirmed_by": "user",
+      "version": "2026-11-18.2",
+      "basis": [
+        "MOT-2024-2#第二十三条",
+        "SHJT-2026-8#第七条",
+        "SHJT-2026-8#附件3",
+        "SHJT-2026-8#附件4",
+        "MOHURD-2015-20#第三十八条",
+        "SH-ZB-2026#资格否决条款"
+      ],
+      "notes": [
+        "分公司/非独立法人分支机构缴纳视同本单位，需营业执照或登记证明+隶属关系证明",
+        "子公司、上级公司、人力资源服务机构、个人缴纳不认",
+        "退休人员默认不认；业主书面允许时，非关键岗位凭退休证+返聘协议+到岗承诺认定，关键岗位不允许",
+        "劳务派遣原则上不算本单位人员，除非合同/业主明确认可",
+        "工资流水作补充证据，不单独否决",
+        "社保期间按基准日所在月或上一自然月"
+      ]
+    }
+  },
+  "fallback_order": [
+    "roster",
+    "contract_estimate",
+    "contract_amount"
+  ]
+}

@@ -8,7 +8,7 @@
 
 import { isMaterialOnly, isUnreviewedFinding } from './reviewDecision'
 import { subjectDisplayName } from './materialState'
-import { statusLabelOf } from './statusDisplay'
+import { statusLabelOf, countedStatusOf } from './statusDisplay'
 import { cleanText } from './plainText'
 
 // ── 常量（左栏分组锚点；key 仅作 React key / 选中态锚点，不展示） ──────────────
@@ -17,7 +17,8 @@ export const SECTION_GROUP_LABEL = '标段整体'
 export const UNRESOLVED_SUBJECT_GROUP_KEY = 'subject:unresolved'
 
 // 结论三态在左栏的优先权重（产品口径 §二.4：不符合/无法核实优先，符合折叠在后）。
-const STATUS_RANK = { hit: 0, undecidable: 1, miss: 2 }
+// 缺项与无法核实同档（同属待处理），不适用与符合同档（不构成待办）。
+const STATUS_RANK = { hit: 0, undecidable: 1, not_included: 1, miss: 2, not_applicable: 2 }
 // 严重度权重：high→medium→low→未分级（与 EvidencePanel.SEVERITY_RANK 同口径）。
 const SEVERITY_RANK = { high: 0, medium: 1, low: 2 }
 const UNRANKED = 3
@@ -350,9 +351,10 @@ export function groupFindings({ findings, materialsById = {}, subjectsById = {},
     let hit = 0
     let und = 0
     for (const it of g.items) {
-      if (it.status === 'miss') miss += 1
-      else if (it.status === 'hit') hit += 1
-      else if (it.status === 'undecidable') und += 1
+      const status = countedStatusOf(it.status)
+      if (status === 'miss') miss += 1
+      else if (status === 'hit') hit += 1
+      else if (status === 'undecidable') und += 1
     }
     g.missCount = miss
     g.hitCount = hit

@@ -1,7 +1,58 @@
 """名单事实的共同抽取层；不做合规判定或关系推断。"""
 import re
+import unicodedata
 from html import unescape
 from .attachment_source import has_embedded_submission, is_attachment_source
+from .document_boundaries import is_document_boundary
+
+
+_IDENTITY_LABEL = r"(?:公民身份号码|身份证号码|身份证号)"
+IDENTITY_NUMBER_RE = re.compile(
+    _IDENTITY_LABEL + r"(?:[ \t]*\|[ \t]*|\s*[:：]?\s*)([0-9]{17}[0-9Xx])(?![0-9A-Za-z])")
+
+
+def normalize_identity_number(value):
+    """仅规范明示完整18位候选，不补掩码、不验真、不纠OCR字符。"""
+    value = unicodedata.normalize("NFKC", str(value or "")).strip().upper()
+    return value if re.fullmatch(r"[0-9]{17}[0-9X]", value) else None
+
+
+def identity_number_candidates(text):
+    text = unicodedata.normalize("NFKC", str(text or ""))
+    return list(dict.fromkeys(match[1].upper() for match in IDENTITY_NUMBER_RE.finditer(text)))
+
+
+def _identity_fields(text):
+    candidates = identity_number_candidates(text)
+    return {"id_number": candidates[0] if len(candidates) == 1 else None,
+            "id_number_candidates": candidates}
+
+
+def _table_identity_fields(header, row):
+    """仅取同表身份证列，不能把证书编号或备注的18位数字当身份证。"""
+    split = (lambda value: [cell.strip() for cell in value.strip().strip("|").split("|")]) if "|" in header else (lambda value: value.split())
+    columns, cells = split(header), split(row)
+    if len(columns) != len(cells):
+        return _identity_fields("")
+    candidates = list(dict.fromkeys(number for column, cell in zip(columns, cells)
+                     if re.fullmatch(_IDENTITY_LABEL, column)
+                     for number in [normalize_identity_number(cell)] if number))
+    fields = {"id_number": candidates[0] if len(candidates) == 1 else None,
+              "id_number_candidates": candidates}
+    for field, labels in {
+        "professional_title": {"职称"},
+        "certificate_type": {"证书类别", "证书类型", "作业类别"},
+        "certificate_number": {"证书编号", "证号", "证件编号"},
+        "validity_start": {"有效期起", "有效期开始", "有效起始日期"},
+        "validity_end": {"有效期至", "有效期止", "有效截止日期"},
+        "validity_period": {"有效期", "有效期限"},
+    }.items():
+        values = list(dict.fromkeys(cell for column, cell in zip(columns, cells)
+                                   if column in labels and cell and cell not in {"/", "-", "—", "待填"}))
+        if values:
+            fields[field + "_candidates"] = values
+            fields[field] = values[0] if len(values) == 1 else None
+    return fields
 
 
 # 人员姓名（社保记录侧 / 名单侧显式标注）
@@ -141,7 +192,7 @@ def _page_lines(raw: str, *, preserve_roster_table=False, preserve_social_table=
     return [line if (has_markdown_roster or has_social_table) and "|" in line else line.strip(" |#\t") for line in lines]
 
 
-def _table_person(header: str, row: str):
+def _table_person(header: str, row: str, *, require_phone=True):
     """仅从表头对应姓名/岗位/联系方式列取值，不扫描职责、备注中的中文串。"""
     if "|" in header:
         # Markdown 单元格本身可能包含空格，也可能为空；必须按列而非空白切分。
@@ -164,11 +215,13 @@ def _table_person(header: str, row: str):
     phone_index = next((i for i, column in enumerate(columns) if _CONTACT_FIELD_RE.fullmatch(column)), None)
     if columns and columns[0] == "序号" and (not cells or not re.fullmatch(r"\d+", cells[0])):
         return None  # 续行首列为空，不能向左错列借用姓名或岗位。
-    if any(index is None or index >= len(cells) for index in (name_index, post_index, phone_index)):
+    indexes = (name_index, post_index, phone_index) if require_phone else (name_index, post_index)
+    if any(index is None or index >= len(cells) for index in indexes):
         return None
-    name, post, phone = cells[name_index], cells[post_index], cells[phone_index]
+    name, post = cells[name_index], cells[post_index]
+    phone = cells[phone_index] if phone_index is not None and phone_index < len(cells) else ""
     if (not re.fullmatch(r"[\u4e00-\u9fa5]{2,4}", name) or name in _ROSTER_STOPWORDS
-            or not post or post in _POST_PLACEHOLDERS or not _ACTUAL_PHONE_RE.search(phone)):
+            or not post or post in _POST_PLACEHOLDERS or (require_phone and not _ACTUAL_PHONE_RE.search(phone))):
         return None
     return [name], post
 
@@ -192,6 +245,7 @@ def _layout_management_roster(page, material):
     name_head = [box for value, box in blocks if value == "姓名"]
     post_head = [box for value, box in blocks if value in {"职务", "岗位"}]
     phone_head = [box for value, box in blocks if _CONTACT_FIELD_RE.fullmatch(value)]
+    identity_heads = [box for value, box in blocks if re.fullmatch(_IDENTITY_LABEL, value)]
     if not (len(name_head) == len(post_head) == len(phone_head) == 1):
         return []
     name_head, post_head, phone_head = name_head[0], post_head[0], phone_head[0]
@@ -227,8 +281,67 @@ def _layout_management_roster(page, material):
             continue
         if name not in text or same_posts[0][0] not in text or same_phones[0][0] not in text:
             continue
+        numbers = [(normalize_identity_number(value), value) for value, other in blocks
+                   if len(identity_heads) == 1 and overlap(box, other)
+                   and identity_heads[0][0] <= xcenter(other) <= identity_heads[0][2]
+                   and value in text and normalize_identity_number(value)]
+        candidates = list(dict.fromkeys(number for number, _ in numbers))
         facts.append({"name": name, "post": same_posts[0][0], "material_id": material.id,
+                      "subject_id": getattr(material, "subject_id", None),
+                      "id_number": candidates[0] if len(candidates) == 1 else None,
+                      "id_number_candidates": candidates,
+                      "identity_quote": numbers[0][1] if len(candidates) == 1 else None,
                       "page": page.get("page"), "quote": name, "evidence_kind": "management_roster"})
+    return facts
+
+
+_CONTRACT_ROSTER_POSTS = ("项目经理", "项目负责人", "项目副经理", "技术负责人", "安全负责人", "施工员", "质量员",
+                         "安全员", "机械员", "测量员", "技术员", "材料员", "资料员", "试验员", "劳务员", "标准员")
+_CONTRACT_ROSTER_DECLARATIONS = (*_CONTRACT_ROSTER_POSTS, "一级建造师", "二级建造师", "高级工程师", "工程师", "助理工程师")
+_CONTRACT_ROSTER_ROW = re.compile(r"^(" + "|".join(map(re.escape, _CONTRACT_ROSTER_POSTS)) +
+    r")\s*([\u4e00-\u9fa5]{2,4}?)(?:\s*(" + "|".join(map(re.escape, _CONTRACT_ROSTER_DECLARATIONS)) + r"))?$")
+
+
+def _contract_declaration_roster(page, material):
+    """独立合同人员表的有限行语法；仅声明，不扩大实际证明来源。"""
+    from .parsing import material_page_readable
+    if (material.role not in {"sub", "labor"} or not material_page_readable(material, page.get("page"))
+            or re.search(r"模板|示例|样例|样表|填写说明", material.file_name or "")):
+        return []
+    lines = (page.get("text") or "").splitlines()
+    is_title = lambda value: re.sub(r"\s+", "", _plain_title(value)) == "分包人主要项目管理人员表"
+    facts = []
+    for start, line in enumerate(lines):
+        if not is_title(line):
+            continue
+        end = next((i for i in range(start + 1, len(lines)) if is_title(lines[i]) or is_document_boundary(lines[i])
+                    or re.match(r"^\s*(?:第[一二三四五六七八九十\d]+条|\d+(?:\.\d+)+[.、\s])", lines[i])), len(lines))
+        segment = lines[start:end]
+        header = next((i for i, row in enumerate(segment[:6])
+                       if re.match(r"^(?:岗位姓名|名称姓名职务)", re.sub(r"[\s|]+", "", row))), None)
+        if header is None or _ROSTER_INSTRUCTION_RE.search("\n".join(segment)) or re.search(r"模板|样表", "\n".join(segment)):
+            continue
+        sectioned = any(re.search(r"(?:总部|现场)人员", row) for row in segment[header + 1:])
+        site = not sectioned
+        for raw in segment[header + 1:]:
+            if "总部人员" in raw:
+                site = False
+                continue
+            if "现场人员" in raw:
+                site = True
+                continue
+            if not site:
+                continue
+            match = _CONTRACT_ROSTER_ROW.fullmatch(raw.strip().strip("| "))
+            if not match:
+                continue
+            post, name, qualification = match.groups()
+            if name in _ROSTER_STOPWORDS or name in _POST_PLACEHOLDERS:
+                continue
+            facts.append({"name": name, "post": post, "qualification_declaration": qualification,
+                "material_id": material.id, "subject_id": getattr(material, "subject_id", None),
+                "page": page.get("page"), "quote": segment[0] + "\n" + segment[header] + "\n" + raw,
+                "id_number": None, "id_number_candidates": [], "evidence_kind": "contract_roster"})
     return facts
 
 
@@ -244,16 +357,25 @@ def _roster_records(materials: list, *, contract_only=False):
             continue
         embedded = contract and has_embedded_submission(material)
         for page in material.pages_json or []:
+            declarations = _contract_declaration_roster(page, material)
+            if declarations:
+                yield from declarations
+                continue
             layout_facts = _layout_management_roster(page, material) if not contract or embedded else []
             if layout_facts:
                 yield from layout_facts
                 continue
             lines = _page_lines(page.get("text") or "", preserve_roster_table=True)
-            anchors = []
+            anchors, phone_optional = [], set()
             for index, line in enumerate(lines):
                 heading = bool(_ROSTER_HEADING_RE.fullmatch(re.sub(r"\s+", "", line)))
+                explicit_table = (not contract and index > 0 and "|" in line
+                    and bool(_ROSTER_HEADING_RE.fullmatch(re.sub(r"\s+", "", lines[index - 1])))
+                    and bool(re.search(r"身份证|职称", line)))
                 header = ("姓名" in line and ("岗位" in line or "职务" in line)
-                          and bool(_CONTACT_FIELD_RE.search(line)))
+                          and (bool(_CONTACT_FIELD_RE.search(line)) or explicit_table))
+                if explicit_table and header:
+                    phone_optional.add(index)
                 if heading or header:
                     anchors.append((index, header))
             # 专用名单无标题时仍允许显式姓名；不把合同联系人当名单。
@@ -277,9 +399,9 @@ def _roster_records(materials: list, *, contract_only=False):
                 if header:
                     # 名称、主要管理岗位、实填电话必须属于同一表格行，不能跨行拼凑。
                     for row in block[1:]:
-                        person = _table_person(line, row)
+                        person = _table_person(line, row, require_phone=index not in phone_optional)
                         if person:
-                            records.append((row, *person))
+                            records.append((row, *person, _table_identity_fields(line, row)))
                 else:
                     # 合同段落允许姓名/电话分行，但联系人边界或下一姓名栏会结束本记录。
                     for offset, row in enumerate(block[1:], 1):
@@ -295,18 +417,20 @@ def _roster_records(materials: list, *, contract_only=False):
                             record_text = "\n".join(record)
                             post = _POST_FIELD_RE.search(record_text)
                             names = [name for name in extract_social_names(row) if name not in _ROSTER_STOPWORDS]
-                            records.append((record_text, names, post.group(1).strip() if post else None))
-                for record, names, post in records:
-                    proof = re.sub(r"\s+", " ", line + "\n" + record).strip()[:240]
+                            records.append((record_text, names, post.group(1).strip() if post else None,
+                                            _identity_fields(record_text)))
+                for record, names, post, fields in records:
+                    proof = re.sub(r"\s+", " ", line + "\n" + record).strip()
                     # 后续姓名的岗位/电话不能借给本记录；首姓名来自显式栏或同表行。
                     for name in names:
                         key = (name, proof)
                         if key in emitted:
                             continue
                         emitted.add(key)
-                        yield {"name": name, "post": post,
+                        yield {"name": name, "post": post, **fields,
                                "material_id": material.id, "page": page.get("page"),
-                               "quote": proof, "evidence_kind": "contract_roster" if contract else "management_roster"}
+                               "quote": proof, "subject_id": getattr(material, "subject_id", None),
+                               "evidence_kind": "contract_roster" if contract else "management_roster"}
 
 
 def extract_management_roster(materials: list) -> list[dict]:
@@ -459,6 +583,8 @@ def extract_special_trade_roster(materials: list) -> list[dict]:
                             or name in _ROSTER_STOPWORDS or not post or post in _POST_PLACEHOLDERS):
                         continue
                     facts.append({"name": name, "post": post, "material_id": material.id,
+                                  "subject_id": getattr(material, "subject_id", None),
+                                  **_table_identity_fields(header, row),
                                   "page": page.get("page"), "quote": row.strip(),
                                   "evidence_kind": "special_trade_roster"})
                 break
@@ -547,7 +673,8 @@ def _social_table_rows(lines):
                     labels.append(label)
         if "序号" not in labels or "姓名" not in labels:
             continue
-        positions = {label: position for position, label in enumerate(labels)}
+        positions = {label: position for position, label in enumerate(
+            columns if len([column for column in columns if column in _SOCIAL_TABLE_LABELS]) >= 3 else labels)}
         name_index = positions.get("姓名")
         period_index = positions.get("缴费起止时间")
         pending = None
@@ -559,16 +686,21 @@ def _social_table_rows(lines):
                 continue
             name = value_at(values, name_index)
             period = period_of(values, period_index)
+            number = normalize_identity_number(value_at(values, positions.get("身份证号")))
+            identity = {"id_number": number, "id_number_candidates": [number] if number else []}
             if re.fullmatch(r"[\u4e00-\u9fa5]{2,4}", name) and name not in _ROSTER_STOPWORDS:
                 if pending is not None:
                     yield pending
-                pending = (name, period, row) if period else (name, None, row)
+                pending = (name, period, row, identity)
                 if period:
                     yield pending
                     pending = None
                 continue
             if pending is not None and period:
-                yield pending[0], period, row
+                candidates = list(dict.fromkeys(pending[3]["id_number_candidates"] + identity["id_number_candidates"]))
+                yield pending[0], period, pending[2] + "\n" + row, {
+                    "id_number": candidates[0] if len(candidates) == 1 else None,
+                    "id_number_candidates": candidates}
                 pending = None
         if pending is not None:
             yield pending
@@ -592,12 +724,18 @@ def extract_person_relation_evidence(materials: list) -> list[dict]:
                     _clean_relation_value(m.group(1)) for m in _EMPLOYER_RE.finditer(text)))
                 periods = list(dict.fromkeys(
                     _clean_relation_value(m.group(1)) for m in _PERIOD_RE.finditer(text)))
-                for line in actual_lines:
+                for index, line in enumerate(actual_lines):
                     for name in extract_social_names(line):
+                        end = next((offset for offset in range(index + 1, len(actual_lines))
+                                    if extract_social_names(actual_lines[offset])), len(actual_lines))
+                        identity_text = "\n".join(actual_lines[index:end])
+                        identity = _identity_fields(identity_text)
                         # 引文来自同段原文；候选全留，冲突时不擅自选择第一条。
                         fields = [m.group() for regex in (_EMPLOYER_RE, _PERIOD_RE) for m in regex.finditer(text)]
-                        quote = "\n".join(filter(None, [title, *fields, line]))
+                        identity_quotes = [m.group() for m in IDENTITY_NUMBER_RE.finditer(identity_text)]
+                        quote = "\n".join(filter(None, [title, line, *identity_quotes, *fields]))
                         facts.append({"name": name, "post": None, "material_id": material.id,
+                                      **identity, "subject_id": getattr(material, "subject_id", None),
                                       "page": page.get("page"), "quote": re.sub(r"\s+", " ", quote)[:240],
                                       "evidence_kind": kind,
                                       "employer": employers[0] if len(employers) == 1 else None,
@@ -605,12 +743,84 @@ def extract_person_relation_evidence(materials: list) -> list[dict]:
                                       "employer_candidates": employers, "period_candidates": periods})
                 if kind == "social_record":
                     employer = employers[0] if len(employers) == 1 else None
-                    for name, period, row in _social_table_rows(actual_lines):
+                    for name, period, row, identity in _social_table_rows(actual_lines):
                         facts.append({"name": name, "post": None, "material_id": material.id,
+                                      **identity, "subject_id": getattr(material, "subject_id", None),
                                       "page": page.get("page"), "quote": row.strip(), "evidence_kind": kind,
                                       "employer": employer, "period": period,
                                       "employer_candidates": employers,
                                       "period_candidates": [period] if period else []})
+    return facts
+
+
+_SUPPLEMENT_TITLES = {
+    "salary_record": r"工资(?:流水|发放记录|支付记录|发放表)",
+    "retirement_certificate": r"退休(?:证|证明)",
+    "reemployment_agreement": r"(?:退休人员)?返聘协议(?:书)?",
+    "attendance_commitment": r"到岗承诺(?:书)?",
+    "owner_approval": r"(?:业主|发包人)(?:书面)?(?:允许|批准|同意)(?:退休人员)?返聘(?:函|证明)?",
+    "branch_registration": r"(?:分公司|分支机构)登记证明|营业执照",
+    "branch_affiliation": r"(?:分公司|分支机构)?隶属关系证明",
+}
+
+
+def _supplement_kind(line):
+    title = _plain_title(line)
+    return next((kind for kind, pattern in _SUPPLEMENT_TITLES.items()
+                 if re.fullmatch(pattern, title)), None)
+
+
+def _supplement_values(text, labels):
+    # 明示独立字段，不从叙述中的“应当提交某单位证明”提取单位或批准事实。
+    return list(dict.fromkeys(_clean_relation_value(match[1]) for match in re.finditer(
+        r"(?:^|\n)(?:" + labels + r")\s*[:：]\s*([^\n;；|]+)", text)))
+
+
+def extract_person_supplement_evidence(materials: list) -> list[dict]:
+    """工资/例外证明候选；标题只认实际独立证明，字段仍须逐人逐段核对。"""
+    facts = []
+    for material in materials:
+        if material.parse_state != "done":
+            continue
+        for page in material.pages_json or []:
+            lines = _page_lines(page.get("text") or "")
+            starts = [index for index, line in enumerate(lines) if _supplement_kind(line)
+                      or _looks_like_social_title(line) or _LABOR_TITLE_RE.fullmatch(line)
+                      or _ROSTER_HEADING_RE.fullmatch(line) or is_document_boundary(line)]
+            for start, end in zip(starts, starts[1:] + [len(lines)]):
+                kind = _supplement_kind(lines[start])
+                segment = lines[start:end]
+                text = "\n".join(segment)
+                if not kind or re.search(r"模板|示例|样例|填表说明|应提交|应提供", text):
+                    continue
+                base = {"material_id": material.id, "page": page.get("page"),
+                        "subject_id": getattr(material, "subject_id", None), "evidence_kind": kind}
+                if kind in {"branch_registration", "branch_affiliation"}:
+                    branches = _supplement_values(text, "分公司名称|分支机构名称|名称")
+                    parents = _supplement_values(text, "总公司|上级法人|隶属单位")
+                    facts.append({**base, "name": None, "post": None, "quote": text[:800],
+                                  "branch_name": branches[0] if len(branches) == 1 else None,
+                                  "branch_candidates": branches, "parent_candidates": parents,
+                                  "parent_company": parents[0] if len(parents) == 1 else None,
+                                  "non_independent": bool(re.search(r"不具有独立法人资格|(?:类型|机构性质)\s*[:：].*分公司", text))})
+                    continue
+                names = [(index, name) for index, line in enumerate(segment)
+                         for name in extract_social_names(line)]
+                for offset, (index, name) in enumerate(names):
+                    last = names[offset + 1][0] if offset + 1 < len(names) else len(segment)
+                    local = "\n".join(segment[index:last])
+                    field_text = text if len(names) == 1 else local
+                    units = _supplement_values(field_text, "用人单位|单位名称|发放单位|返聘单位|聘用单位")
+                    periods = _supplement_values(field_text, "工资期间|发放月份|返聘期间|合同期限")
+                    approval = ("rejected" if re.search(r"不同意|不予批准|不允许|(?:尚未|未予|未|不予)(?:同意|批准|允许)", field_text) else
+                                "candidate" if re.search(r"(?:同意|允许|批准).{0,12}返聘", field_text) else "unknown")
+                    facts.append({**base, "name": name, "post": None, **_identity_fields(local),
+                                  "employer": units[0] if len(units) == 1 else None,
+                                  "employer_candidates": units,
+                                  "period": periods[0] if len(periods) == 1 else None,
+                                  "period_candidates": periods,
+                                  "approval_state": approval if kind == "owner_approval" else None,
+                                  "quote": (text if len(names) == 1 else lines[start] + "\n" + local)[:800]})
     return facts
 
 

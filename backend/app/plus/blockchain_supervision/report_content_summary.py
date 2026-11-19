@@ -37,6 +37,7 @@ _THEMES = {
     "negative_list": "分包负面清单", "transfer_scope": "转包风险",
     "illegal_subcontract": "违法分包与劳务边界", "a1_dependency": "分包责任约定",
     "person_consistency": "管理人员劳动关系与社保", "cert_validity": "人员证件有效性及注册关系",
+    "personnel_adequacy": "岗位配置与人员配备",
     "internal_records": "企业信用与事故记录", "contract_semantic": "分包合同条款",
     "amount_ratio": "分包金额", "workload_ratio": "分包工程量",
 }
