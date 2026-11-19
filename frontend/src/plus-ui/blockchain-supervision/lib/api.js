@@ -142,6 +142,19 @@ export async function getBsTask(taskId, { signal } = {}) {
   return _json(r, 'bs task')
 }
 
+export async function startBsRetrospective(taskId, relations) {
+  const r = await fetch(`${BASE}/tasks/${taskId}/retrospective/start`, {
+    method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ relations }),
+  })
+  return _json(r, '合同倒查')
+}
+
+export async function getBsRetrospective(taskId, { signal } = {}) {
+  const r = await fetch(`${BASE}/tasks/${taskId}/retrospective`, { credentials: 'include', signal })
+  return _json(r, '合同倒查状态')
+}
+
 // 任务级计时与 Token 用量只读视图；shadow 阶段只展示真实用量，不扣余额。
 export async function getBsTaskUsage(taskId, { signal } = {}) {
   const r = await fetch(`${BASE}/tasks/${taskId}/usage`, { credentials: 'include', signal })

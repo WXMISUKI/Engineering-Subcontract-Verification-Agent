@@ -25,6 +25,7 @@ import BlockchainSupervisionModuleContainer from './prototype/BlockchainSupervis
 import BlockchainSupervisionWorkspaceFrame from './prototype/BlockchainSupervisionWorkspaceFrame'
 import ModelSelect from '../../components/ModelSelect'
 import ReviewModeSelect from './components/ReviewModeSelect'
+import RetrospectiveWorkspace from './RetrospectiveWorkspace'
 import { buildPrototypeTask, stageFromTaskState, stageIndexOf } from './prototype/prototypeViewModel'
 import './components/CheckProgress.css'
 import './prototype/v3VisualTokens.css'
@@ -506,7 +507,8 @@ export default function BlockchainSupervisionWorkbench({ conversationId, onExitP
         const desired = tasks.find((t) => Number(t.task_id) === deepLinkTaskId)
         if (desired) {
           setReviewMode(desired.review_mode || 'admission')
-            if (['preparing', 'running', 'review', 'done'].includes(desired.state)) {
+            if (['preparing', 'running', 'review', 'done'].includes(desired.state)
+                || (desired.state === 'failed' && desired.review_mode === 'contract_retrospective')) {
               openWorkbench(desired.task_id, { title: desired.title, autoRun: true, view: desired.state === 'preparing' ? 'run' : undefined })
           } else {
             openSetup(desired.task_id)
@@ -519,7 +521,8 @@ export default function BlockchainSupervisionWorkbench({ conversationId, onExitP
         setPhase('error')
         return
       }
-        const started = tasks.find((t) => t.state === 'preparing' || t.state === 'running' || t.state === 'review' || t.state === 'done')
+        const started = tasks.find((t) => t.state === 'preparing' || t.state === 'running' || t.state === 'review' || t.state === 'done'
+          || (t.state === 'failed' && t.review_mode === 'contract_retrospective'))
         if (started) { setReviewMode(started.review_mode || 'admission'); openWorkbench(started.task_id, { title: started.title, autoRun: started.state === 'preparing', view: started.state === 'preparing' ? 'run' : undefined }); return }
       // T10-C C3：`setup` 与 `preparing` 都进第一阶段。`preparing` 是 ZIP 资料包准备中的
       // 持久任务态（契约 §7.3），此时**结论尚未产生** —— 若按「任务已开始」跳进工作台，
@@ -605,21 +608,25 @@ export default function BlockchainSupervisionWorkbench({ conversationId, onExitP
             </button>
           </div>
         )}
-        {phase === 'setup' && (
+        {reviewMode === 'contract_retrospective' && !['loading', 'error'].includes(phase) && (
+          <RetrospectiveWorkspace conversationId={conversationId} taskId={taskId}
+            onTaskCreated={(id) => { setTaskId(id); openSetup(id) }} onError={setError} />
+        )}
+        {reviewMode !== 'contract_retrospective' && phase === 'setup' && (
           <SetupStage key={`setup-${setupNonce}`} conversationId={conversationId} taskId={taskId} editing={editingMaterials}
           reviewMode={reviewMode}
           supplement={pendingSupplement} reachedIndex={reachedIndex}
             onReset={handleRestart} resetting={restarting}
             onTaskCreated={setTaskId} onStarted={(id) => { setError(''); openWorkbench(id, { autoRun: true, view: 'run' }) }} onError={setError} />
         )}
-        {phase === 'materials' && (
+        {reviewMode !== 'contract_retrospective' && phase === 'materials' && (
           <SetupStage key={`materials-${taskId}`} conversationId={conversationId} taskId={taskId} readOnly
           reachedIndex={reachedIndex} onStageSelect={goToStage} onRequestEdit={requestMaterialEdit}
           onExit={() => openWorkbench(taskId, { view: workbenchView || 'review' })}
             onReset={handleRestart} resetting={restarting}
           onTaskCreated={setTaskId} onStarted={(id) => { setError(''); openWorkbench(id, { autoRun: true, view: 'run' }) }} onError={setError} />
         )}
-        {phase === 'workbench' && (
+        {reviewMode !== 'contract_retrospective' && phase === 'workbench' && (
           <WorkbenchStage key={`${conversationId}:${taskId}`} taskId={taskId} autoRunOnMount={autoRunOnMount} onError={setError}
           onPreparationNeedsAction={handlePreparationNeedsAction}
           initialView={workbenchView} reachedIndex={reachedIndex} onReachStage={reachStage}

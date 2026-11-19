@@ -2,6 +2,7 @@
 import logging
 import json
 import os
+import re
 from copy import deepcopy
 from datetime import date, datetime, timezone
 from typing import Optional
@@ -20,6 +21,7 @@ from . import (access, admission, ai_advisory_snapshots, checklist, contract_par
                severity, zip_ingestion, knowledge_runs, reference_snapshots, rules, ruleset)
 from . import source_manifest, finding_text, background_ai_review, execution_summary
 from . import reference_visibility
+from . import retrospective_runtime
 from . import material_versions, supplement_generation, section_projection, material_confirmation, report_basic_facts
 from . import parsing, page_text_candidates, report_policy, report_template_render, report_template_v13, report_template_v14
 from .rules import load_report_checklist
@@ -32,7 +34,29 @@ from .models import STATUS_LABELS, BsFinding, BsMaterial, BsMaterialConfirmation
 from ...models.models import TokenUsage
 from ...services.billing import estimates as billing_estimates
 
-router = APIRouter(tags=[f"plus:{manifest['code']}"])
+async def _guard_retrospective_write(request: Request, db: Session = Depends(get_db)):
+    """所有任务写入口统一隔离模式，避免准入入口改写倒查运行。"""
+    if request.method not in {"POST", "PUT", "PATCH", "DELETE"}:
+        return
+    match = re.search(r"/tasks/(\d+)(/.*)?$", request.url.path)
+    if not match:
+        return
+    user = get_current_any_user(request, db)
+    from . import review_mode
+    task = access.require_bs_task(db, int(match[1]), user.id, user.user_type)
+    if not review_mode.is_retrospective(task):
+        return
+    suffix = match[2] or ""
+    if suffix == "/retrospective/start" or (not suffix and request.method == "DELETE"):
+        return
+    setup_write = suffix in {"/materials/upload", "/section"} or (
+        request.method == "DELETE" and re.fullmatch(r"/materials/\d+", suffix))
+    if setup_write and task.state == "setup":
+        return
+    raise HTTPException(status_code=409, detail="合同倒查使用独立核查与自动报告流程；核查开始后合同与输入不可修改")
+
+
+router = APIRouter(tags=[f"plus:{manifest['code']}"], dependencies=[Depends(_guard_retrospective_write)])
 logger = logging.getLogger(__name__)
 
 
@@ -1018,6 +1042,10 @@ async def upload_material(task_id: int, request: Request, file: UploadFile = Fil
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     task = _get_task(db, task_id, user)
     _require_setup(task, "核查已开始，不能再上传材料")
+    if task_review_mode.is_retrospective(task) and (
+            not (file.filename or "").lower().endswith(".pdf") or role not in {"sub", "labor", "general"}
+            or replaces_material_id is not None or supplement_generation_id):
+        raise HTTPException(status_code=400, detail="合同倒查仅接收明确归属的合同PDF；更换已运行的合同请新建核查")
     supplement_label = None
     if supplement_generation_id:
         plan = service.get_supplement_generation_plan(task)
@@ -1089,6 +1117,11 @@ async def upload_material(task_id: int, request: Request, file: UploadFile = Fil
             detail=f"文件体积超过上限（{max_bytes // (1024 * 1024)}MB），请压缩或拆分后重新上传")
     if not content:
         raise HTTPException(status_code=400, detail="空文件")
+    if task_review_mode.is_retrospective(task):
+        # 读完上传内容后再锁定并重读状态，与倒查受理串行化，防止运行中插入新材料。
+        db.rollback()
+        task = service._lock_material_setup_task(db, task)
+        _require_setup(task, "合同倒查已开始，不能再上传文件")
     if is_pdf:
         # 上传魔数校验（P1-2）：扩展名已过 + %PDF- 文件头双验，防伪装文件。
         if b"%PDF-" not in content[:1024]:
@@ -1175,6 +1208,46 @@ def correct_role(task_id: int, material_id: int, body: RoleCorrectIn,
     return {"material_id": mat.id, "role": mat.role}
 
 
+class RetrospectiveRelation(BaseModel):
+    material_id: StrictInt
+    relation: str
+
+
+class RetrospectiveStart(BaseModel):
+    relations: list[RetrospectiveRelation] | None = None
+
+
+def _require_admission_mode(task):
+    if task_review_mode.is_retrospective(task):
+        raise HTTPException(status_code=409, detail="合同倒查使用独立核查与自动报告流程，无需准入检查或人工复核")
+
+
+@router.post("/tasks/{task_id}/retrospective/start", status_code=202)
+async def start_retrospective(task_id: int, body: RetrospectiveStart,
+                              db: Session = Depends(get_db), user=Depends(get_current_any_user)):
+    task = _get_task(db, task_id, user)
+    try:
+        return retrospective_runtime.accept(db, task, user, relations=(
+            [row.model_dump() for row in body.relations] if body.relations is not None else None))
+    except PermissionError as exc:
+        db.rollback()
+        raise HTTPException(status_code=404, detail="任务不存在或无访问权限") from exc
+    except (ValueError, RuntimeError) as exc:
+        db.rollback()
+        logger.warning("Retrospective start rejected task=%s type=%s", task_id, type(exc).__name__)
+        # 外部配置错误可能包含认证信息；只展示经过控制的业务错误。
+        message = str(exc) if isinstance(exc, ValueError) else "所选模型配置不可用，请联系管理员核对"
+        raise HTTPException(status_code=409, detail=message) from exc
+
+
+@router.get("/tasks/{task_id}/retrospective")
+def get_retrospective(task_id: int, db: Session = Depends(get_db), user=Depends(get_current_any_user)):
+    task = _get_task(db, task_id, user)
+    if not task_review_mode.is_retrospective(task):
+        raise HTTPException(status_code=409, detail="该任务不是合同倒查阶段")
+    return retrospective_runtime.status(db, task)
+
+
 @router.post("/tasks/{task_id}/start")
 def start_review(task_id: int, response: Response,
                  db: Session = Depends(get_db), user=Depends(get_current_any_user)):
@@ -1185,6 +1258,7 @@ def start_review(task_id: int, response: Response,
     受理体不带 `ok=true`（契约 §7.3.2 禁止暗示已正式运行）。
     """
     task = _get_task(db, task_id, user)
+    _require_admission_mode(task)
     # 新环境映射缺失时，在后台准备及任务状态变更前给出可理解的提示。
     if not task_review_mode.is_retrospective(task):
         knowledge_runs.load_reference_package(as_of=task.baseline_date)
@@ -1218,6 +1292,7 @@ def _checked_run(db: Session, task: BsTask, kind: str, fn) -> list:
     回滚后再写事件，避免失败事务污染事件写入。500 文案平实中文，异常摘要只进
     事件 payload（前端时间线按事件类型模板化展示，见 P0-1 中文化白名单）。
     """
+    _require_admission_mode(task)
     try:
         return fn(db, task)
     except knowledge_runs.ReferenceRunSuperseded as exc:
@@ -1244,6 +1319,7 @@ def run_check(task_id: int, request: Request, db: Session = Depends(get_db),
     6/minute 拦的是脚本化重跑风暴；正常交互远达不到。
     """
     task = _get_task(db, task_id, user)
+    _require_admission_mode(task)
     if task.state not in ("running", "review"):
         raise HTTPException(status_code=409, detail="请先完成两段式启动（POST /start）")
     findings = _checked_run(db, task, "completeness", service.run_completeness)
@@ -1274,7 +1350,7 @@ class BackgroundAiReviewIn(BaseModel):
 @limiter.limit('10/minute')
 async def submit_background_ai_review(task_id: int, body: BackgroundAiReviewIn, request: Request,
                                       db: Session = Depends(get_db), user=Depends(get_current_any_user)):
-    _get_task(db, task_id, user)
+    _require_admission_mode(_get_task(db, task_id, user))
     try:
         return background_ai_review.submit_background_job(db, task_id, user, body.review_run_id, retry=body.retry)
     except PermissionError:
@@ -1529,6 +1605,7 @@ def complete_task(task_id: int, db: Session = Depends(get_db), user=Depends(get_
     拍板口径：不做 awaiting_human_review 闸，人工复核走线下（P1-3 回执留痕）。
     """
     task = _get_task(db, task_id, user)
+    _require_admission_mode(task)
     result = service.complete_review(db, task)
     if not result["ok"]:
         raise HTTPException(status_code=409, detail=result["detail"])
@@ -1541,6 +1618,7 @@ def create_supplement_plan(task_id: int, body: SupplementPlanIn,
                            user=Depends(get_current_any_user)):
     """登记补件局部核查计划，供 P8-03C 后续调度消费。"""
     task = _get_task(db, task_id, user)
+    _require_admission_mode(task)
     try:
         plan = service.plan_supplement_generation(
             db,
@@ -1575,6 +1653,7 @@ def read_supplement_plan(task_id: int, db: Session = Depends(get_db),
 def start_supplement_edit(task_id: int, db: Session = Depends(get_db),
                           user=Depends(get_current_any_user)):
     task = _get_task(db, task_id, user)
+    _require_admission_mode(task)
     result = service.enter_supplement_edit(db, task)
     if not result.get("ok"):
         raise HTTPException(status_code=409, detail=result)
@@ -1585,6 +1664,7 @@ def start_supplement_edit(task_id: int, db: Session = Depends(get_db),
 def activate_supplement_plan(task_id: int, response: Response, db: Session = Depends(get_db),
                              user=Depends(get_current_any_user)):
     task = _get_task(db, task_id, user)
+    _require_admission_mode(task)
     result = service.activate_supplement_plan(db, task, operator=user.id)
     if result.get("preparing"):
         response.status_code = 202
@@ -1605,6 +1685,7 @@ def activate_supplement_plan(task_id: int, response: Response, db: Session = Dep
 def start_page_text_refresh(task_id: int, body: PageTextRefreshIn, request: Request,
                             db: Session = Depends(get_db), user=Depends(get_current_any_user)):
     task = _get_task(db, task_id, user)
+    _require_admission_mode(task)
     if os.getenv("BS_PAGE_TEXT_REFRESH_ENABLED") != "1":
         raise HTTPException(status_code=404, detail="功能暂不可用")
     try:
@@ -1735,6 +1816,7 @@ def rerun_task(task_id: int, body: Optional[RerunIn] = None,
     免重解析：parse_state=done 的材料复用已落库 pages_json/seal_json，不重跑重活段。
     """
     task = _get_task(db, task_id, user)
+    _require_admission_mode(task)
     scope = (body.scope if body is not None else "all") or "all"
     item_ids = body.item_ids if body is not None else None
     if scope not in ("all", "items"):
@@ -1782,6 +1864,7 @@ def rerun_task(task_id: int, body: Optional[RerunIn] = None,
 def material_edit(task_id: int, db: Session = Depends(get_db), user=Depends(get_current_any_user)):
     """返回材料修改阶段；保留材料和解析结果，旧结论作废。"""
     task = _get_task(db, task_id, user)
+    _require_admission_mode(task)
     result = service.enter_material_edit(db, task)
     if not result["ok"]:
         raise HTTPException(status_code=409, detail=result["detail"])
@@ -1997,6 +2080,8 @@ def review_finding(finding_id: int, body: ReviewIn,
     """
     # BS-1B：先反查 finding 归属（不存在 → 404，越权 → 403），再做既有门禁。
     finding = access.require_bs_finding(db, finding_id, user.id, user.user_type)
+    task_guard = db.get(BsTask, finding.task_id)
+    _require_admission_mode(task_guard)
     # Serialize with supplement activation; a historical or partial finding must
     # not accept a new human decision while the replacement run is incomplete.
     task = (db.query(BsTask).filter_by(id=finding.task_id).with_for_update().populate_existing().one())
@@ -2278,6 +2363,13 @@ def _output_payload(db: Session, task: BsTask, kind: str, stage: str,
     只改返回值、不写库，快照本体保持 append-only（设计 100 §2.3）。调用方的
     report_digest/opinion_digest 在本函数返回之后计算，故与当前报告同口径。
     """
+    if task_review_mode.is_retrospective(task):
+        if kind != "report":
+            raise HTTPException(status_code=409, detail="合同倒查仅提供合同文本倒查报告")
+        result = retrospective_runtime.status(db, task, version_no=version_no)
+        if not result["report"] or result["state"] == "failed":
+            raise HTTPException(status_code=409, detail="合同倒查尚未形成可用报告，请查看执行状态与限制说明")
+        return result["report"]
     if version_no is None:
         readiness = _require_current_output_ready(
             db, task, stage, require_reading_complete=require_reading_complete,
@@ -2365,7 +2457,8 @@ def export_report(task_id: int, fmt: str = "docx", stage: str = "draft", version
                   template_id: str = "legacy", db: Session = Depends(get_db), user=Depends(get_current_any_user)):
     """报告导出（W3-3）：Word/PDF，只渲染 build_report 聚合结果，不重算。"""
     task = _get_task(db, task_id, user)
-    _require_file_output_stage(stage, version_no)
+    if not task_review_mode.is_retrospective(task):
+        _require_file_output_stage(stage, version_no)
     report = _output_payload(
         db, task, "report", stage, version_no, user=user,
         template_id=template_id,

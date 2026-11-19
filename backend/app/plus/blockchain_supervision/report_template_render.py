@@ -99,7 +99,7 @@ def _format_overview(document):
 def word_bytes(payload, digest, exported_at=None):
     """Dispatch by frozen template identity; V1.4 is block-rendered."""
     document = payload["template_document"]
-    if document.get("template_id") == "v1.4":
+    if document.get("template_id") in {"v1.4", "contract-retrospective.v1"}:
         return word_bytes_v14(payload, digest, exported_at)
     doc = Document(Path(__file__).with_name("templates") / "review_opinion_v13.docx")
     body = doc.element.body
@@ -273,22 +273,37 @@ def _add_text(doc, text, *, size=11, bold=False, align=None, space_before=0,
     return paragraph
 
 
-def _add_table(doc, headers, rows):
+def _add_table(doc, headers, rows, *, widths=None, font_size=10.5):
     table = doc.add_table(rows=1, cols=len(headers))
-    table.autofit = True
+    document = doc.sections[0]
+    # 仅合同倒查模板指定列宽；准入旧模板仍沿用自动布局。
+    table.autofit = widths is None
+    if widths and len(widths) == len(headers):
+        table.autofit = False
+        available = document.page_width - document.left_margin - document.right_margin
+        for column, ratio in zip(table.columns, widths):
+            column.width = int(available * ratio)
+        for row in table.rows:
+            for cell, ratio in zip(row.cells, widths):
+                cell.width = int(available * ratio)
     _set_light_table_borders(table)
     for index, value in enumerate(headers):
         cell = table.rows[0].cells[index]
         cell.text = ""
         _shade_cell(cell)
         run = cell.paragraphs[0].add_run(str(value))
-        _set_run_font(run, size=10.5, bold=True)
+        _set_run_font(run, size=font_size, bold=True)
+    repeated = OxmlElement("w:tblHeader")
+    table.rows[0]._tr.get_or_add_trPr().append(repeated)
     for row in rows:
         cells = table.add_row().cells
+        if widths:
+            for cell, ratio in zip(cells, widths):
+                cell.width = int(available * ratio)
         for index, value in enumerate(row):
             cells[index].text = ""
             run = cells[index].paragraphs[0].add_run(str(value))
-            _set_run_font(run, size=10.5)
+            _set_run_font(run, size=font_size)
     return table
 
 
@@ -297,12 +312,17 @@ def word_bytes_v14(payload, digest, exported_at=None):
     document = payload["template_document"]
     doc = Document()
     section = doc.sections[0]
-    section.page_width = Cm(21.0)
-    section.page_height = Cm(29.7)
+    landscape = document.get("page_layout") == "landscape"
+    section.page_width = Cm(29.7 if landscape else 21.0)
+    section.page_height = Cm(21.0 if landscape else 29.7)
     section.top_margin = Cm(2.5)
     section.bottom_margin = Cm(2.5)
     section.left_margin = Cm(3.2)
     section.right_margin = Cm(3.2)
+    retrospective = document.get("template_id") == "contract-retrospective.v1"
+    if retrospective:
+        section.left_margin = section.right_margin = Cm(1.25)
+        section.top_margin = section.bottom_margin = Cm(1.5)
     _set_style_font(doc.styles["Normal"])
     _add_text(doc, document["title"], size=16, bold=True, align="center", space_after=8)
     for block in document.get("blocks") or []:
@@ -313,7 +333,9 @@ def word_bytes_v14(payload, digest, exported_at=None):
             _add_text(doc, block.get("text") or "", size=12, bold=True,
                       space_before=6, space_after=6)
         elif block_type == "table":
-            _add_table(doc, block.get("headers") or [], block.get("rows") or [])
+            _add_table(doc, block.get("headers") or [], block.get("rows") or [],
+                       widths=block.get("widths") if retrospective else None,
+                       font_size=9 if retrospective else 10.5)
             _add_text(doc, "", size=4, space_after=2)
         elif block_type == "conclusion":
             for index, line in enumerate(str(block.get("text") or "").splitlines()):
@@ -367,7 +389,8 @@ def pdf_bytes(payload, digest, exported_at=None):
     from . import export
     document = payload["template_document"]
     doc = fitz.open()
-    margin, width, height = 48.0, 595.0, 842.0
+    landscape = document.get("page_layout") == "landscape"
+    margin, width, height = (36.0, 842.0, 595.0) if landscape else (48.0, 595.0, 842.0)
     page, y = doc.new_page(width=width, height=height), margin
     size, line_height, padding = 9.0, 13.5, 4.0
 

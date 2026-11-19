@@ -24,8 +24,8 @@ def test_task_mode_defaults_and_is_restored_by_api(tmp_path):
     modes = {row["task_id"]: row["review_mode"] for row in client.get(base, params={"conversation_id": conversation_id}).json()["tasks"]}
     assert modes == {old_id: "admission", task_id: "contract_retrospective"}
     started = client.post(f"{base}/{task_id}/start")
-    assert started.status_code == 400
-    assert "倒查执行与自动报告正在实现" in started.json()["detail"]["message"]
+    assert started.status_code == 409
+    assert "独立核查与自动报告流程" in started.json()["detail"]
     with Session(engine) as db:
         assert db.get(BsTask, old_id).options_snapshot_json == {"historical": True}
         assert review_mode.of(db.get(BsTask, task_id)) == "contract_retrospective"

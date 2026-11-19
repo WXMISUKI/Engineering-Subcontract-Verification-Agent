@@ -280,9 +280,19 @@ async def resume_queued_jobs(engine) -> int:
             queued = [(row.id, row.task_id, row.review_run_id, list(row.groups_json or []), row.attempt)
                       for row in ai_review_jobs.list_queued(db)]
         exhausted = {row['id'] for row in handled if row['state'] == 'failed'}
+        from . import retrospective_runtime
+        from .retrospective_contracts import JOB_GROUP
+        with Session(engine) as db:
+            for row in handled:
+                if row['state'] == 'failed' and row['groups'] == [JOB_GROUP]:
+                    retrospective_runtime.recovery_exhausted(db, row)
+            db.commit()
         started = 0
         for job_id, task_id, review_run_id, groups, attempt in queued:
             if job_id in ACTIVE_JOBS:
+                continue
+            if groups == [JOB_GROUP]:
+                started += int(retrospective_runtime.schedule(engine, job_id))
                 continue
             with Session(engine) as db:
                 task = db.get(BsTask, task_id)
