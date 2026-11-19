@@ -6,7 +6,7 @@ from pydantic import Field
 from .retrospective_contracts import Citation, ContractModel, KINDS
 from .retrospective_sources import digest, original_citation
 
-VERSION = 'bs.contract-upstream.v1'
+VERSION = 'bs.contract-upstream.v2'
 TOPICS = ('scope', 'price', 'payment', 'schedule', 'quality', 'safety',
           'environment', 'wages', 'insurance', 'equipment', 'priority')
 
@@ -63,30 +63,40 @@ def bind_refs(refs, sources, *, allowed_ids=None):
 
 
 def bind_extraction(raw, batch, sources):
-    parsed = ExtractionResponse.model_validate(raw)
+    if not isinstance(raw, dict) or any(not isinstance(raw.get(key), list) or len(raw[key]) > limit
+                                       for key, limit in [('facts', 24), ('terms', 60)]):
+        raise ValueError('条款提取外层结构不完整')
+    parsed = ExtractionResponse.model_validate({**raw, 'facts': [], 'terms': []})
     if set(parsed.checked_topics) != set(TOPICS):
         raise ValueError('条款提取主题执行字段缺失或重复')
     # 提取只引用当前批次正文，不能把其他文件或跨批相关片段冒充已读取范围。
     compact = lambda value: ''.join(value.split())
     def local_refs(values):
         refs = bind_refs(values, sources)
-        if any(not any(part['material_id'] == ref['material_id'] and part['page'] == ref['page']
-                       and compact(ref['quote']) in compact(part['text']) for part in batch['parts'])
-               for ref in refs):
-            raise ValueError('引文不在本批正文范围')
+        for ref in refs:
+            parts = [part for part in batch['parts'] if part['material_id'] == ref['material_id'] and part['page'] == ref['page']]
+            # 提示正文合并同页连续条款；合法引文可以跨片段，但每个实字仍须在本批范围。
+            if any(not char.isspace() and not any(part['start'] <= ref['start'] + offset < part['end'] for part in parts)
+                   for offset, char in enumerate(ref['quote'])):
+                raise ValueError('引文不在本批正文范围')
         return refs
-    facts, terms = [], []
-    for fact in parsed.facts:
-        refs = local_refs(fact.evidence)
-        # 身份字段是明确记载事实，不能由模型自行归纳出原文没有的名字。
-        if not any(compact(fact.value) in compact(ref['quote']) for ref in refs):
-            raise ValueError('身份字段不是所引原文中的值')
-        facts.append({**fact.model_dump(), 'evidence': refs})
-    for term in parsed.terms:
-        row = {**term.model_dump(), 'evidence': local_refs(term.evidence)}
-        row['term_id'] = digest(row)[:24]
-        terms.append(row)
-    return {'facts': facts, 'terms': terms}
+    facts, terms, rejected = [], [], []
+    for kind, schema, output in [('facts', ProfileFact, facts), ('terms', ContractTerm, terms)]:
+        for index, value in enumerate(raw[kind]):
+            try:
+                item = schema.model_validate(value)
+                refs = local_refs(item.evidence)
+                if kind == 'facts' and not any(compact(item.value) in compact(ref['quote']) for ref in refs):
+                    raise ValueError('身份字段不是所引原文中的值')
+                row = {**item.model_dump(), 'evidence': refs}
+                if kind == 'terms':
+                    row['term_id'] = digest(row)[:24]
+                output.append(row)
+            except (ValueError, TypeError, KeyError) as exc:
+                # 坏引文不进入比较；有效候选保留，不把部分提取伪装为全批完成。
+                rejected.append({'kind': kind, 'index': index, 'error_type': type(exc).__name__})
+    state = ('partial' if facts or terms else 'failed') if rejected else 'completed'
+    return {'state': state, 'facts': facts, 'terms': terms, 'rejected': rejected}
 
 
 def bind_relationship(raw, sources, facts):

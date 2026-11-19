@@ -41,15 +41,40 @@ def test_extraction_restores_exact_source_and_retains_conditions():
     assert bound['terms'][0]['exceptions'] == '另行约定除外'
     assert bound['terms'][0]['term_id']
     raw['facts'][0]['value'] = '另一个工程'
-    with pytest.raises(ValueError):
-        bind_extraction(raw, analysis_batches(sources()[:1])[0], sources())
+    partial = bind_extraction(raw, analysis_batches(sources()[:1])[0], sources())
+    assert partial['state'] == 'partial' and not partial['facts']
+    assert partial['terms'] == bound['terms'] and len(partial['rejected']) == 1
 
 
 def test_extraction_cannot_borrow_the_other_contract():
-    with pytest.raises(ValueError):
-        bind_extraction({'checked_topics': list(TOPICS), 'facts': [], 'terms': [{'topic': 'quality', 'statement': '检测责任不同',
+    rejected = bind_extraction({'checked_topics': list(TOPICS), 'facts': [], 'terms': [{'topic': 'quality', 'statement': '检测责任不同',
             'obligation_holder': 'sub', 'transmission': 'pass_through', 'conditions': '', 'exceptions': '',
             'priority': '', 'evidence': [candidate()['evidence'][1]]}]}, analysis_batches(sources()[:1])[0], sources())
+    assert rejected['state'] == 'failed' and not rejected['terms']
+
+
+def test_invalid_summary_quote_does_not_discard_valid_identity_or_become_evidence():
+    raw = {'checked_topics': list(TOPICS), 'facts': [
+        {'field': 'project_name', 'value': '嘉松工程', 'evidence': [ref(1, '工程名称：嘉松工程。')]}],
+        'terms': [{'topic': 'quality', 'statement': '检测责任与配合范围', 'obligation_holder': 'employer',
+                   'transmission': 'reserved', 'conditions': '', 'exceptions': '', 'priority': '',
+                   'evidence': [ref(1, '质量检测由业主...承包人仅负责配合。')]}]}
+    result = bind_extraction(raw, analysis_batches(sources()[:1])[0], sources())
+    assert result['state'] == 'partial' and result['facts'][0]['value'] == '嘉松工程'
+    assert not result['terms'] and result['rejected'][0]['kind'] == 'terms'
+
+
+def test_same_page_quote_may_cross_contiguous_parts_but_not_unprovided_text():
+    src = sources()[:1]
+    text = '1.1 工程名称：嘉松工程。\n1.2 承包人：建工公司。'
+    src[0]['pages'][0]['text'] = text
+    batch = analysis_batches(src)[0]
+    assert len(batch['parts']) > 1
+    raw = {'checked_topics': list(TOPICS), 'facts': [
+        {'field': 'project_name', 'value': '嘉松工程', 'evidence': [ref(1, text)]}], 'terms': []}
+    assert bind_extraction(raw, batch, src)['state'] == 'completed'
+    omitted = {**batch, 'parts': batch['parts'][:1]}
+    assert bind_extraction(raw, omitted, src)['state'] == 'failed'
 
 
 def test_relationship_requires_all_dimensions_and_both_sides():
@@ -174,6 +199,20 @@ def test_usage_failure_stops_before_next_upstream_call():
     with pytest.raises(ExecutionBoundaryError):
         asyncio.run(compare(sources(), {}, client=client, on_usage=fail))
     assert len(client.calls) == 1
+
+
+def test_provider_timeout_stops_new_upstream_requests_without_claiming_coverage():
+    from app.plus.blockchain_supervision.retrospective_upstream import compare
+    class TimeoutClient:
+        calls = 0
+        async def complete(self, *args, **kwargs):
+            self.calls += 1
+            raise TimeoutError('synthetic provider timeout')
+    client = TimeoutClient()
+    result = asyncio.run(compare(sources(), {}, client=client))
+    assert client.calls == 1 and result['state'] == 'partial'
+    assert result['coverage']['batches_completed'] == 0
+    assert result['extraction'][1]['state'] == 'not_executed'
 
 
 def test_interrupted_extraction_is_not_called_again_or_reported_complete():
@@ -305,7 +344,7 @@ def test_real_runtime_persists_dual_evidence_and_same_report_exports(tmp_path, m
     result = http.get(base + '/retrospective').json()
     report = result['report']
     assert report, result
-    assert report['identity']['upstream_version'] == 'bs.contract-upstream.v1'
+    assert report['identity']['upstream_version'] == 'bs.contract-upstream.v2'
     assert report['upstream']['state'] == 'completed'
     assert {row['kind'] for row in report['rows']} == {'internal_ambiguity', 'upstream_risk'}
     row = next(row for row in report['rows'] if row['kind'] == 'upstream_risk')
