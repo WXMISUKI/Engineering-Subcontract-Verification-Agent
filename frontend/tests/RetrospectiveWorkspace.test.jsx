@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import RetrospectiveWorkspace from '../src/plus-ui/blockchain-supervision/RetrospectiveWorkspace'
 
 const api = vi.hoisted(() => ({
@@ -11,9 +11,22 @@ const api = vi.hoisted(() => ({
 
 vi.mock('../src/plus-ui/blockchain-supervision/lib/api', async (importOriginal) => ({ ...(await importOriginal()), ...api }))
 
-afterEach(() => { cleanup(); vi.clearAllMocks() })
+afterEach(() => { cleanup(); vi.clearAllMocks(); vi.useRealTimers() })
 
 describe('RetrospectiveWorkspace', () => {
+  it('clears a transient read error after polling recovers without starting another job', async () => {
+    vi.useFakeTimers()
+    api.getBsTask.mockRejectedValueOnce(new Error('Failed to fetch')).mockResolvedValue({ state: 'running', materials: [] })
+    api.getBsRetrospective.mockResolvedValue({ state: 'running', report: null })
+    render(<RetrospectiveWorkspace taskId={4} conversationId={2}/>)
+    await act(async () => {})
+    expect(screen.getByRole('alert').textContent).toContain('Failed to fetch')
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getByText('合同智能核查')).toBeTruthy()
+    expect(api.startBsRetrospective).not.toHaveBeenCalled()
+  })
+
   it('shows saved findings and source-page navigation without admission review controls', async () => {
     api.getBsTask.mockResolvedValue({ materials: [] })
     api.getBsRetrospective.mockResolvedValue({ state: 'completed', report: {

@@ -2,6 +2,8 @@ import { formatEventTime } from '../lib/eventTime'
 
 function eventText(event) {
   if (!event) return '系统事件'
+  if (event.event_type === 'retrospective.batch_started') return `${event.label || '合同批次'}（开始）`
+  if (event.event_type === 'retrospective.batch_completed') return `${event.label || '合同批次'}（${event.payload?.state === 'failed' ? '未完成' : '已处理'}）`
   if (event.event_type === 'check.ai_advisory_completed' && event.label === 'AI 辅助核查已完成') return 'AI 核查结果已更新'
   return event.label || event.event_type || event.type || '系统事件'
 }

@@ -19,6 +19,7 @@ export default function RetrospectiveWorkspace({ conversationId, taskId, onTaskC
   const inputRef = useRef(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [readError, setReadError] = useState('')
   const [retry, setRetry] = useState(0)
   const [view, setView] = useState(null)
   const mutation = useRef(false)
@@ -32,7 +33,7 @@ export default function RetrospectiveWorkspace({ conversationId, taskId, onTaskC
   }, [scope])
 
   useEffect(() => {
-    setTask(null); setStatus(null); setError('')
+    setTask(null); setStatus(null); setError(''); setReadError('')
     if (taskId == null) { setTask(null); setStatus(null); return undefined }
     let dead = false
     let timer
@@ -43,9 +44,9 @@ export default function RetrospectiveWorkspace({ conversationId, taskId, onTaskC
           getBsTask(taskId, { signal: controller.signal }), getBsRetrospective(taskId, { signal: controller.signal }),
         ])
         if (dead) return
-        setTask(detail); setStatus(result)
+        setTask(detail); setStatus(result); setReadError('')
         if (['queued', 'running'].includes(result.state) || detail.materials?.some((m) => ['parsing', 'uploading'].includes(m.parse_state))) timer = setTimeout(tick, 2500)
-      } catch (exc) { if (!dead) { setError(exc.message); timer = setTimeout(tick, 5000) } }
+      } catch (exc) { if (!dead) { setReadError(exc.message); timer = setTimeout(tick, 5000) } }
     }
     tick()
     return () => { dead = true; controller.abort(); clearTimeout(timer) }
@@ -154,8 +155,8 @@ export default function RetrospectiveWorkspace({ conversationId, taskId, onTaskC
     <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[#DADCE0] px-6 py-3">
       <div><h1 className="text-base font-semibold">分包合同文本倒查</h1><p className="mt-0.5 text-xs text-[#5F6368]">合同核查完成后自动保存报告，可直接查看、对照和导出</p></div>
     </header>
-    {error && <div role="alert" className="mx-6 mt-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{error}
-      {taskId != null && <button type="button" onClick={() => { setError(''); setRetry((value) => value + 1) }} className="ml-3 underline">刷新状态</button>}
+    {(error || readError) && <div role="alert" className="mx-6 mt-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{error || readError}
+      {taskId != null && <button type="button" onClick={() => { setError(''); setReadError(''); setRetry((value) => value + 1) }} className="ml-3 underline">刷新状态</button>}
     </div>}
     {stage === 'upload' && <>
       <input ref={inputRef} aria-label="上传合同PDF" type="file" accept="application/pdf,.pdf" multiple hidden disabled={busy}

@@ -277,7 +277,6 @@ export default function PrototypeUploadPage({
             <PrototypeDatePicker value={task?.section?.baselineDate || ''} disabled={busy} readOnly={readOnly} onChange={(value) => onSectionChange?.('baselineDate', value)} />
             <small className="text-[13px] font-normal text-[#9CA3AF]">{baselineHelp}</small>
           </div>
-          <label className="flex flex-col gap-1 text-[14px]"><span>核查基准日</span><input aria-label="核查基准日" type="date" value={task?.section?.baselineDate || ''} disabled={busy || readOnly} onChange={(event) => onSectionChange?.('baselineDate', event.target.value)} className="min-h-[38px] rounded-lg border border-[#E9E3D9] px-2.5 text-[16px] outline-none focus:border-[#8B7355]" /><small className="text-[13px] text-[#9CA3AF]">{baselineHelp}</small></label>
         </div>
       </section>
 
@@ -316,7 +315,7 @@ export default function PrototypeUploadPage({
           {onRequestEdit && <button type="button" data-testid="materials-edit" onClick={onRequestEdit} className="min-h-[38px] rounded-lg border border-[#8B7355] px-4 text-[14px] text-[#8B7355]">修改材料</button>}
         </div>
       ) : (
-        <div className={`mt-3.5 flex flex-wrap items-center gap-3 rounded-[10px] border px-4 py-3.5 ${preparing ? 'border-[#8DB9E6] bg-[#EAF2FB]' : readiness.ready ? 'border-[#CFE8D0] bg-[#F3FAF3]' : 'border-[#E9E3D9] bg-white'}`} data-testid="prototype-upload-start-bar"><div className="min-w-[260px] flex-1"><b>{preparing ? '正在读取材料，准备智能核查' : !materials.length ? '先上传报审材料' : readiness.ready ? '材料已就绪，可以开始核查' : '先处理上方阻断项'}</b><p className="mt-0.5 text-[14px] text-[#6B7280]">{preparing ? '读取完成后系统会自动进入智能核查页面。' : retrospective ? '系统将核查合同条款、适用规范及上下游约定，完成后自动保存报告。' : '系统将按五步核查定位册内材料、比对报审附件要求。'}</p></div><button type="button" data-testid="start-review" disabled={!readiness.ready || busy || preparing} onClick={onStart} className="min-h-[38px] rounded-lg bg-[#8B7355] px-4 text-[16px] text-white disabled:cursor-not-allowed disabled:opacity-45">{preparing ? '读取中…' : '开始核查'}</button></div>
+        <div className={`mt-3.5 flex flex-wrap items-center gap-3 rounded-[10px] border px-4 py-3.5 ${preparing ? 'border-[#8DB9E6] bg-[#EAF2FB]' : readiness.ready ? 'border-[#CFE8D0] bg-[#F3FAF3]' : 'border-[#E9E3D9] bg-white'}`} data-testid="prototype-upload-start-bar"><div className="min-w-[260px] flex-1"><b>{preparing ? '正在读取材料，准备智能核查' : !materials.length ? (retrospective ? '先上传合同资料' : '先上传报审材料') : readiness.ready ? '材料已就绪，可以开始核查' : '先处理上方阻断项'}</b><p className="mt-0.5 text-[14px] text-[#6B7280]">{preparing ? '读取完成后系统会自动进入智能核查页面。' : retrospective ? '系统将核查合同条款、适用规范及上下游约定，完成后自动保存报告。' : '系统将按五步核查定位册内材料、比对报审附件要求。'}</p></div><button type="button" data-testid="start-review" disabled={!readiness.ready || busy || preparing} onClick={onStart} className="min-h-[38px] rounded-lg bg-[#8B7355] px-4 text-[16px] text-white disabled:cursor-not-allowed disabled:opacity-45">{preparing ? '读取中…' : '开始核查'}</button></div>
       )}
 
       <input ref={replaceRef} type="file" hidden accept={retrospective ? '.pdf' : '.pdf,.zip'} onChange={submitReplace} />
