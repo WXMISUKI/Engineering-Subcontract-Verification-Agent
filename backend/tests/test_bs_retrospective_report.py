@@ -35,6 +35,21 @@ def test_retrospective_report_has_eight_stable_columns_and_widths():
     assert abs(sum(table["widths"]) - 1) < 1e-9
 
 
+def test_checkpoint_noise_is_audited_without_becoming_a_report_finding():
+    raw = _report()
+    raw['summary'] = '本次已覆盖条款范围内列示1项合同文本问题或风险提示。'
+    raw['findings'] = [{'finding_id': 'noise', 'kind': 'internal_ambiguity', 'evidence': [
+        {'quote': '\n'.join(f'17.2.{i} 完工验收程序' for i in range(100, 111))}]}]
+    report = build_report(raw, project_name='项目', sources=[])
+    assert not report['findings'] and not report['rows']
+    assert report['execution_status'] == 'partial'
+    assert '未发现可列示问题' in report['summary']
+    assert report['excluded_findings'][0]['finding'] == raw['findings'][0]
+    assert report['excluded_findings'][0]['reason_code'] == 'repetitive_heading_evidence'
+    assert len(raw['findings']) == 1  # 原检查点与保存版本不回写。
+    assert '完工验收程序' not in str(report['template_document'])
+
+
 def test_public_limits_use_execution_coverage_without_promoting_model_claims_to_facts():
     raw = _report()
     raw['limitations'] = ['第5页材料未提供社保，human_verified=false，请7日内补正。']

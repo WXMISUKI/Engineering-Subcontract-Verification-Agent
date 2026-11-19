@@ -1,14 +1,26 @@
 """倒查八列表投影；前端和导出共同消费保存结果，不重新分析或润色。"""
 from copy import deepcopy
 
-from .retrospective_contracts import COLUMNS
-from .retrospective_sources import reading_limitations
+from .retrospective_contracts import COLUMNS, summary
+from .retrospective_sources import reading_limitations, repetitive_heading_evidence
 
 TEMPLATE_ID = "contract-retrospective.v4"
 
 
 def build_report(result, *, project_name, sources):
     report = deepcopy(result)
+    # 检查点回放同样经过证据支撑门槛；排除项只保留审计，不把解析噪声列为合同缺陷。
+    excluded = [row for row in report['findings'] if row['kind'] == 'internal_ambiguity'
+                and any(repetitive_heading_evidence(ref['quote']) for ref in row['evidence'])]
+    if excluded:
+        report.setdefault('excluded_findings', []).extend(
+            {'finding': row, 'reason_code': 'repetitive_heading_evidence'} for row in excluded)
+        report['findings'] = [row for row in report['findings'] if row not in excluded]
+        report['analysis_summary'] = report.get('analysis_summary', report['summary'])
+        if report['execution_status'] == 'completed':
+            report['execution_status'] = 'partial'
+        report['limitations'].append('候选的重复标题摘录不足以支持实质歧义，已隔离并保留审计；不据此判断该条款无问题。')
+        report['summary'] = summary(report['execution_status'], len(report['findings']))
     # 模型对局部输入的自述不能直接成为全合同缺件/缺页事实。
     # 原始说明留审计，正文只投影可信覆盖记录和明确的分析边界。
     report['analysis_notes'] = deepcopy(report['limitations'])

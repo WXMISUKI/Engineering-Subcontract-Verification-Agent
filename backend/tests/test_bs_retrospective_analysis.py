@@ -21,6 +21,21 @@ def inputs():
     return [source], identity, candidate
 
 
+def test_repeated_numbered_titles_do_not_prove_substantive_contract_ambiguity():
+    sources, identity, candidate = inputs()
+    repeated = '\n\n'.join(f'17.2.{i} 完工验收程序' for i in range(100, 111))
+    sources[0]['pages'][0]['text'] += '\n' + repeated
+    candidate['evidence'][1]['quote'] = repeated
+    with pytest.raises(ValueError, match='重复标题'):
+        validate_candidate(candidate, sources, [], identity)
+
+
+def test_normal_repeated_substantive_obligations_remain_valid_evidence():
+    sources, identity, candidate = inputs()
+    # 两项实际费用约定仍可比较；不将任意重复词或条款号视为噪声。
+    assert validate_candidate(candidate, sources, [], identity)['kind'] == 'internal_ambiguity'
+
+
 class Client:
     def __init__(self, response=None, error=None):
         self.response, self.error, self.calls = response, error, 0

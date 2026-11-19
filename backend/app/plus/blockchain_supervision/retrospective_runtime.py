@@ -431,8 +431,8 @@ async def run(engine, job_id, *, client=None):
             task.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
             task.elapsed_seconds = max(0., (task.completed_at - task.started_at).total_seconds()) if task.started_at else None
             service.add_event(db, task_id, "retrospective.completed", stage="report", payload={
-                "run_id": run_id, "execution_status": result["execution_status"],
-                "finding_count": len(result["findings"])}, commit=False)
+                "run_id": run_id, "execution_status": report["execution_status"],
+                "finding_count": len(report["findings"])}, commit=False)
             db.commit()
     except asyncio.CancelledError:
         raise
