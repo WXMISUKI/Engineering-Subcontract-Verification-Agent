@@ -93,6 +93,69 @@ def test_tunnel_scope_does_not_force_bridge_negative_rules():
     assert not any(row['clause_id'].startswith('MOT-NL-2024#一、') for row in selected)
 
 
+def beam_exception_inputs():
+    sources, identity, _ = inputs()
+    quote = '承包范围：箱梁等预制构件安装。'
+    sources[0]['pages'][0]['text'] += '\n' + quote
+    text = '整孔预制安装的预制梁（外购梁预制、运输除外）；'
+    basis = [{'clause_id': 'MOT-NL-2024#一、（三）6', 'text': text,
+              'document': {'effective_from': '2024-01-01'}, 'human_verified': True}]
+    finding = {'kind': 'conditional_risk', 'time_scope': 'current',
+               'message': '合同范围包含箱梁安装，若涉及整孔预制安装的预制梁（非外购梁），存在施工分包范围风险。',
+               'conditions': '具体安装的箱梁为整孔预制安装（非外购梁）时。',
+               'applicability': '本项针对公路工程施工分包范围。',
+               'evidence': [{'material_id': 1, 'page': 1, 'quote': quote}],
+               'basis': [{'clause_id': basis[0]['clause_id'], 'quote': text}]}
+    return sources, identity, basis, finding
+
+
+def test_bound_rule_restores_exact_process_exception_and_keeps_audit():
+    sources, identity, basis, finding = beam_exception_inputs()
+    row = validate_candidate(finding, sources, basis, identity)
+    assert '非外购梁' not in row['message'] + row['conditions']
+    assert '外购梁预制、运输除外' in row['message'] and '外购梁预制、运输除外' in row['conditions']
+    assert row['time_scope'] == 'current' and row['kind'] == 'conditional_risk'
+    assert row['basis'][0]['quote'] == basis[0]['text']
+    assert len(row['basis_exception_corrections']) == 2
+    assert row['basis_exception_corrections'][0]['original'] == finding['message']
+    assert sources[0]['pages'][0]['text'].endswith(finding['evidence'][0]['quote'])
+
+
+def test_correct_or_unrelated_exception_is_not_arbitrarily_rewritten():
+    sources, identity, basis, finding = beam_exception_inputs()
+    finding['message'] = finding['message'].replace('非外购梁', '外购梁预制、运输除外')
+    finding['conditions'] = '若符合规则所列工法且不属于所列工序例外。'
+    row = validate_candidate(finding, sources, basis, identity)
+    assert row['message'] == finding['message'] and 'basis_exception_corrections' not in row
+    basis[0]['clause_id'] = finding['basis'][0]['clause_id'] = 'OTHER#6'
+    finding['message'] = '若其他规则的原文明确约定非外购梁范围，本次仅按该约定提示。'
+    row = validate_candidate(finding, sources, basis, identity)
+    assert row['message'] == finding['message'] and 'basis_exception_corrections' not in row
+
+
+@pytest.mark.parametrize('wrong', ['外购梁均除外', '外购梁不受限制', '非外购梁'])
+def test_unstructured_expansion_of_process_exception_is_rejected(wrong):
+    sources, identity, basis, finding = beam_exception_inputs()
+    finding['message'] = '若涉及整孔预制安装，' + wrong + '，可能存在范围风险。'
+    with pytest.raises(ValueError, match='工序例外'):
+        validate_candidate(finding, sources, basis, identity)
+
+
+@pytest.mark.asyncio
+async def test_final_review_uses_the_same_exception_guard_and_preserves_original_explanation():
+    sources, identity, basis, finding = beam_exception_inputs()
+    row = validate_candidate(finding, sources, basis, identity)
+    class Reviewer:
+        async def complete(self, *args, **kwargs):
+            return json.dumps({'decisions': [{'finding_id': row['finding_id'], 'keep': True,
+                'reason': '合同涉及安装，需按具体工法和工序核对。', 'message': finding['message']}]})
+    kept, decisions = await review_candidates([row], sources, identity, client=Reviewer(), final=True)
+    assert '非外购梁' not in kept[0]['message']
+    assert len(kept[0]['basis_exception_corrections']) == 3
+    assert decisions[0]['message'] == finding['message']
+    assert kept[0]['evidence'] == row['evidence'] and kept[0]['finding_id'] == row['finding_id']
+
+
 @pytest.mark.asyncio
 async def test_validated_findings_are_reportable_without_human_disposition_and_replay_is_free():
     sources, identity, finding = inputs()

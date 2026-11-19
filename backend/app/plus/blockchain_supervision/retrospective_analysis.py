@@ -175,6 +175,26 @@ def _in_force(document, at):
         return False
 
 
+def _restore_basis_exception(candidate, bound):
+    """只还原已绑定原文中的已知例外，不让工序例外扩大成构件类别例外。"""
+    clause_id = 'MOT-NL-2024#一、（三）6'
+    original = '外购梁预制、运输除外'
+    if not any(ref['clause_id'] == clause_id and original in re.sub(r'\s+', '', ref['text'])
+               for ref in bound):
+        return []
+    corrections = []
+    for field in ('message', 'conditions', 'applicability'):
+        before = getattr(candidate, field)
+        after = re.sub(r'[（(]\s*非\s*外购梁\s*[）)]', '（' + original + '）', before)
+        if re.search(r'非\s*外购梁|外购梁(?:均|全部|一律)?(?:不适用|不受限制|除外)', after):
+            raise ValueError('规范工序例外被扩大为外购梁整体排除')
+        if after != before:
+            setattr(candidate, field, after)
+            corrections.append({'field': field, 'clause_id': clause_id,
+                                'original': before, 'restored': after})
+    return corrections
+
+
 def validate_candidate(raw, sources, basis, identity):
     if isinstance(raw, dict) and raw.get('kind') == 'upstream_risk':
         from .retrospective_upstream_contracts import validate_upstream_candidate
@@ -212,6 +232,7 @@ def validate_candidate(raw, sources, basis, identity):
         start = re.sub(r"\s+", "", source["text"]).index(quote)
         restored = source["text"][positions[start]:positions[start + len(quote) - 1] + 1]
         bound.append({**source, "quote": restored})
+    exception_corrections = _restore_basis_exception(candidate, bound)
     if candidate.kind != "internal_ambiguity" and not candidate.applicability.strip():
         raise ValueError("规范适用关系尚未说明")
     if candidate.kind == "text_nonconformity":
@@ -229,6 +250,8 @@ def validate_candidate(raw, sources, basis, identity):
         candidate.message = "若" + candidate.conditions.rstrip("。；") + "，" + candidate.message
     row = candidate.model_dump()
     row.update(evidence=refs, basis=bound, kind_label=KINDS[candidate.kind])
+    if exception_corrections:
+        row['basis_exception_corrections'] = exception_corrections
     row["finding_id"] = digest({"kind": row["kind"], "evidence": refs,
                                 "basis": [ref["clause_id"] for ref in bound]})[:24]
     return row
@@ -268,6 +291,7 @@ async def review_candidates(rows, sources, identity, *, client, on_usage=None, f
         '不得仅因参数未载明、条件尚未核实或规则晚于签约日而排除current口径的条件性风险。'
         '反之，无合同对应范围、条件凭空捏造或合同已有明确排除/例外证据的泛化风险应排除。'
         '不得在专业说明中擅自加入“非”“除外”等改变原文条件、责任主体或义务方向的字词。'
+        '“外购梁预制、运输除外”只针对所列工序，不能缩写为“非外购梁”或解释为全部外购梁安装均除外。'
         '新规只能作有具体合同对应的现行提示，不能认定旧约定违法。不得以问题数量为目标。'
         '返回JSON：{"decisions":[{"finding_id":"复制候选ID","keep":false,"reason":"简短事实理由","message":"保留时的准确专业说明；排除时空字符串"}]}。'
         '每个候选恰好一项，不得漏项或重复，不返回修改后的候选。')
@@ -326,6 +350,9 @@ async def review_candidates(rows, sources, identity, *, client, on_usage=None, f
                                        for ref in row['evidence']],
                              basis=[{'clause_id': ref['clause_id'], 'quote': ref['quote']} for ref in row['basis']])
             checked = validate_candidate(candidate, sources, row['basis'], identity)
+            corrections = row.get('basis_exception_corrections', []) + checked.get('basis_exception_corrections', [])
+            if corrections:
+                checked['basis_exception_corrections'] = corrections
             decisions_row['original_message'] = row['message']
             row = checked
         result.append(row)
