@@ -83,7 +83,7 @@ class ReviewResponse(ContractModel):
 
 class BasisCheck(ContractModel):
     clause_id: str
-    state: Literal['checked', 'not_applicable', 'pending']
+    state: Literal['checked', 'not_applicable', 'not_observed', 'pending']
     reason: str = Field(min_length=1, max_length=1800)
     evidence: list[Citation] = Field(max_length=6)
 

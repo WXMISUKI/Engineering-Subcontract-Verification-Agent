@@ -154,7 +154,7 @@ def test_basis_coverage_is_frozen_executed_and_saved_without_changing_public_tem
         db.commit()
     asyncio.run(runtime.run(engine, job_id))
     report = http.get(f'/api/plus/blockchain-supervision/tasks/{task_id}/retrospective').json()['report']
-    assert report['identity']['coverage_version'] == 'bs.contract-basis-coverage.v1'
+    assert report['identity']['coverage_version'] == 'bs.contract-basis-coverage.v2'
     assert report['basis_coverage']['counts'] == {'checked': 1, 'not_applicable': 0, 'pending': 0}
     assert len(report['basis_coverage']['scans']) == 1
     assert '核查限制' not in str(report['template_document'])

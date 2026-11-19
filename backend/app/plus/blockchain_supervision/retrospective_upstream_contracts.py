@@ -6,7 +6,7 @@ from pydantic import Field
 from .retrospective_contracts import Citation, ContractModel, KINDS
 from .retrospective_sources import digest, original_citation
 
-VERSION = 'bs.contract-upstream.v4'
+VERSION = 'bs.contract-upstream.v5'
 TOPICS = ('scope', 'price', 'payment', 'schedule', 'quality', 'safety',
           'environment', 'wages', 'insurance', 'equipment', 'priority')
 

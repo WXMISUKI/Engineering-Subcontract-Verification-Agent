@@ -479,7 +479,7 @@ def test_real_runtime_persists_dual_evidence_and_same_report_exports(tmp_path, m
     result = http.get(base + '/retrospective').json()
     report = result['report']
     assert report, result
-    assert report['identity']['upstream_version'] == 'bs.contract-upstream.v4'
+    assert report['identity']['upstream_version'] == 'bs.contract-upstream.v5'
     assert report['upstream']['state'] == 'completed'
     assert {row['kind'] for row in report['rows']} == {'internal_ambiguity', 'upstream_risk'}
     row = next(row for row in report['rows'] if row['kind'] == 'upstream_risk')
