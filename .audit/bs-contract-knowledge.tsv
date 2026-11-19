@@ -1,0 +1,11 @@
+ts	phase	decision	why	evidence	result
+2026-11-19T05:24:44.829119+00:00	start	开始合同规范对照补齐	用户确认以试用报告为核心并暂不推进OCR	openspec/changes/bs-contract-retrospective-20261119/design.md	in progress
+2026-11-19T05:24:44.829145+00:00	recall	修复工程概念及完整负面清单覆盖	原词表导致负面清单未进入6批分析	backend/tests/test_bs_retrospective_analysis.py	15 passed after 2 reproduced failures
+2026-11-19T05:24:44.829151+00:00	knowledge	复用准入原文验证并完成真实只读检索	保留授权和原件指纹边界	artifacts/bs-retrospective-trial-20261119/knowledge-live.json	partial: 4 verified references; no shared DML
+2026-11-19T05:24:44.829159+00:00	trial6	原始真实运行完成6/6批但未通过业务样例	自动复核错误排除条件性风险并出现重复说明	artifacts/bs-retrospective-trial-20261119/knowledge-trial-task-6.json	not accepted
+2026-11-19T05:24:44.829163+00:00	review	修正条件性风险复核并增加报告收尾核验	明确提示与违法定性的不同证据要求	backend/app/plus/blockchain_supervision/retrospective_analysis.py	focused 28 passed; real trial7 running
+2026-11-19T05:43:37.098921+00:00	trial7	完成6/6正文及最终收尾，保留两项有据发现	修复条件风险误排除并去重	artifacts/bs-retrospective-trial-20261119/knowledge-trial-final.json	partial; v7 main18 requests; v8 editorial1; 260877 tokens
+2026-11-19T05:43:37.098932+00:00	projection	v3复用真实响应；v4仅调整展示	保留原始失败和历史身份，不重复付费	artifacts/bs-retrospective-trial-20261119/knowledge-clean-export-validation.json	new model0; same2 findings; Word/PDF8columns verified
+2026-11-19T05:43:37.098937+00:00	evidence	追加纠正旧台账证据指针及过期状态	旧行源码与JSON本身不足以证明测试/只读；保留事务片段和会话指针	artifacts/bs-retrospective-trial-20261119/knowledge-acceptance-evidence.json	55 semantic; 21 backend+4 frontend after presentation change; layered verification only
+2026-11-19T05:43:37.098941+00:00	coverage	不认定两项等于全部问题或全面覆盖	缺全部适用依据到合同的覆盖验收	artifacts/bs-retrospective-trial-20261119/knowledge-acceptance-evidence.json	full rule coverage NOT accepted; 8090 unchanged
+2026-11-19T05:47:45.929881+00:00	audit-fix	纠正v4展示副本materials为空，另存v5并保留历史	只读审查发现一次性harness遗漏材料来源清单，原v3完整	artifacts/bs-retrospective-trial-20261119/knowledge-clean-export-validation.json	v4 not audit-preserving; v5 audit fields equal v3; model0; export verified

@@ -16,7 +16,7 @@ describe('RetrospectiveWorkspace', () => {
     api.getBsTask.mockResolvedValue({ materials: [] })
     api.getBsRetrospective.mockResolvedValue({ state: 'completed', report: {
       execution_status: 'completed', summary: '列示1项合同文本问题或风险提示。', scope_note: '单合同范围',
-      limitations: [], rows: [{ finding_id: 'f1', cells: ['项目', '分包', '合同.pdf', 'PDF第39页 · 12.1',
+      limitations: ['第24页未取得可靠正文'], rows: [{ finding_id: 'f1', cells: ['项目', '分包', '合同.pdf', 'PDF第39页 · 12.1',
         '合同原文摘录', '内部歧义', '合同内部约定', '对照原文'],
       evidence: [{ material_id: 7, page: 39, clause: '12.1' }] }],
     } })
@@ -25,6 +25,7 @@ describe('RetrospectiveWorkspace', () => {
     expect(screen.getByRole('link', { name: 'PDF第39页 · 12.1' }).getAttribute('href')).toContain('page=39')
     expect(screen.queryByText(/人工复核|确认问题|生成报告/)).toBeNull()
     expect(screen.getByRole('button', { name: /Word/ })).toBeTruthy()
+    expect(screen.queryByText(/核查限制|未取得可靠正文/)).toBeNull()
   })
 
   it('starts a restored single contract directly with no admission confirmations', async () => {
@@ -57,8 +58,16 @@ describe('RetrospectiveWorkspace', () => {
     api.getBsRetrospective.mockResolvedValue({ state: 'failed', report: { execution_status: 'failed',
       summary: '本次合同倒查未完成，尚不能形成风险检查结论。', scope_note: '单合同范围', rows: [], limitations: ['模型超时'] } })
     render(<RetrospectiveWorkspace taskId={4} conversationId={2}/>)
-    await screen.findByText('模型超时')
+    await screen.findByText('本次合同倒查未完成，尚不能形成风险检查结论。')
     expect(screen.queryByRole('button', { name: /Word|PDF/ })).toBeNull()
     expect(screen.queryByText(/未发现可列示问题/)).toBeNull()
+  })
+
+  it('shows the direct contract review stage instead of admission workflow steps', async () => {
+    api.getBsTask.mockResolvedValue({ materials: [] })
+    api.getBsRetrospective.mockResolvedValue({ state: 'running', report: null,
+      progress: { phase: 'coverage', label: '逐条核对冻结规范与合同', index: 7, total: 18 } })
+    render(<RetrospectiveWorkspace taskId={4} conversationId={2}/>)
+    expect(await screen.findByText('逐条核对冻结规范与合同 · 7/18')).toBeTruthy()
   })
 })

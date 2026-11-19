@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from pathlib import Path
 from types import SimpleNamespace
 
 from . import basis_validation, parsing
@@ -19,6 +20,14 @@ def digest(value) -> str:
 def infer_project_name(sources):
     """复用显式工程名称抽取；只取正文可读页，冲突不猜测。"""
     from .extract import extract_project_name
+    # 同一协议书分别列总包工程和分包工程名称；不能把两个层级当作同名冲突。
+    main_pages = [page for source in sources if source.get('relation') == 'main'
+                  for page in source['pages'] if page['readable']]
+    for label in ('总包工程名称', '分包工程名称'):
+        explicit = {match.group(1).strip(' ：:;；，,。') for page in main_pages
+                    for match in re.finditer(label + r'\s*[:：]\s*([^\r\n]{4,160})', page['text'])}
+        if explicit:
+            return next(iter(explicit)) if len(explicit) == 1 else None
     values = {value for source in sources if source.get("relation") == "main"
               for page in source["pages"] if page["readable"]
               if (value := extract_project_name(SimpleNamespace(pages_json=[page])))}
@@ -167,7 +176,44 @@ def freeze_basis() -> list[dict]:
                        "document": doc, "human_verified": clause.get("human_verified") is True,
                        "page_start": clause.get("page_start") or clause.get("page_physical"),
                        "page_end": clause.get("page_end") or clause.get("page_physical")})
-    return result
+    # 清单叶子不能脱离“不得施工分包”的前提及上位结构/例外理解。
+    negative = json.loads((Path(__file__).with_name('data') / 'negative_list_2024.json').read_text(encoding='utf-8'))
+    rules = {'MOT-NL-2024#' + row['article']: row for row in negative['rules']}
+    for row in result:
+        if row['doc_id'] == 'MOT-NL-2024':
+            rule = rules.get(row['clause_id'], {})
+            row['scope_context'] = '\n'.join(filter(None, [negative['meta']['preamble'], rule.get('parent_context')]))
+    return result + _historical_basis()
+
+
+def _historical_basis(root=None) -> list[dict]:
+    """倒查专用官方选段；与准入及暂停专项的数据分离，不伪造人工确认。"""
+    from html import unescape
+    root = Path(root) if root is not None else Path(__file__).with_name("data") / "retrospective_basis"
+    manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+    documents, originals = {}, {}
+    for document in manifest["documents"]:
+        path = root / document["source_file"]
+        if path.resolve().parent != root.resolve():
+            raise ValueError("历史依据来源路径无效")
+        raw = path.read_bytes()
+        if hashlib.sha256(raw).hexdigest() != document["source_sha256"]:
+            raise ValueError("历史依据原件指纹不一致")
+        # HTML标签间空白不改变原文；不纠错、不替换数字或标点。
+        text = unescape(re.sub(r"<[^>]+>", "", raw.decode("utf-8")))
+        compact = re.sub(r"\s+", "", text)
+        if document["effective_source_quote"] not in compact:
+            raise ValueError("历史依据施行日期缺少原文支持")
+        documents[document["doc_id"]] = document
+        originals[document["doc_id"]] = compact
+    rows = []
+    for clause in manifest["clauses"]:
+        doc_id = clause["doc_id"]
+        if re.sub(r"\s+", "", clause["text"]) not in originals[doc_id]:
+            raise ValueError("历史依据选段与官方原件不一致")
+        rows.append({**clause, "document": documents[doc_id], "human_verified": False,
+                     "page_start": None, "page_end": None})
+    return rows
 
 
 def infer_contract_date(sources) -> tuple[str | None, list[str]]:

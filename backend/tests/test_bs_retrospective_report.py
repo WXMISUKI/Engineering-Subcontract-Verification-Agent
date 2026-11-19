@@ -18,12 +18,14 @@ def test_retrospective_export_uses_landscape_for_pdf_and_word():
     pdf_data = report_template_render.pdf_bytes(report, "digest", "2026-11-19")
     with fitz.open(stream=pdf_data, filetype="pdf") as pdf:
         assert pdf[0].rect.width > pdf[0].rect.height
+        assert '内容指纹' not in ''.join(page.get_text() for page in pdf)
 
     word_data = report_template_render.word_bytes(report, "digest", "2026-11-19")
     assert word_data[:2] == b"PK"
     document = Document(BytesIO(word_data))
     assert document.sections[0].page_width > document.sections[0].page_height
     assert len(document.tables[0].columns) == 8
+    assert not any('内容指纹' in p.text for p in document.paragraphs)
 
 
 def test_retrospective_report_has_eight_stable_columns_and_widths():
@@ -31,6 +33,21 @@ def test_retrospective_report_has_eight_stable_columns_and_widths():
     table = next(block for block in report["template_document"]["blocks"] if block["type"] == "table")
     assert len(table["headers"]) == 8
     assert abs(sum(table["widths"]) - 1) < 1e-9
+
+
+def test_public_limits_use_execution_coverage_without_promoting_model_claims_to_facts():
+    raw = _report()
+    raw['limitations'] = ['第5页材料未提供社保，human_verified=false，请7日内补正。']
+    raw['coverage'] = {'batches_total': 2, 'batches_completed': 1, 'batches': [
+        {'state': 'completed', 'pages': [1, 2]}, {'state': 'failed', 'pages': [3, 4]}]}
+    raw['execution_status'] = 'partial'
+    report = build_report(raw, project_name='项目', sources=[])
+    assert report['analysis_notes'] == raw['limitations']
+    public = '\n'.join(report['limitations'])
+    assert 'PDF第3、4页' in public and '未完成' in public
+    assert not any(word in public for word in ('社保', 'human_verified', '7日'))
+    visible = str(report['template_document']['blocks'])
+    assert '核查限制' not in visible and 'PDF第3、4页' not in visible
 
 
 def test_long_retrospective_table_repeats_headers_and_keeps_last_row():

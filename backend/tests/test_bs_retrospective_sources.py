@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
 from app.plus.blockchain_supervision.retrospective_sources import (
-    analysis_batches, clause_index, freeze_material, infer_contract_date, original_citation, reading_limitations,
+    analysis_batches, clause_index, freeze_material, infer_contract_date, infer_project_name, original_citation, reading_limitations,
 )
 
 
@@ -45,5 +45,47 @@ def test_dates_are_not_guessed_from_project_schedule_or_conflicting_labels():
     assert infer_contract_date([source]) == ("2023-12-22", [])
     source = freeze_material(material(["签订日期：2023年12月22日", "签署日期：2024年1月2日"]))
     assert infer_contract_date([source])[0] is None
+
+
+def test_project_name_distinguishes_overall_project_from_subcontract_scope():
+    source = freeze_material(material(['总包工程名称：某公路新建工程。\n分包工程名称：某公路新建工程吊装分包。']))
+    source['relation'] = 'main'
+    assert infer_project_name([source]) == '某公路新建工程'
+    source['pages'].append({'page': 2, 'readable': True, 'text': '总包工程名称：另一个公路工程。'})
+    assert infer_project_name([source]) is None
+
+
+def test_historical_official_sources_are_traceable_without_faking_human_review():
+    from app.plus.blockchain_supervision.retrospective_sources import _historical_basis
+    rows = _historical_basis()
+    assert len(rows) == 6
+    wages = next(row for row in rows if row['clause_id'] == 'SC-724-2019-RETRO#35')
+    assert '施工总承包单位也不得因争议不按照规定代发工资' in wages['text']
+    assert wages['document']['effective_from'] == '2020-05-01'
+    assert wages['document']['source_url'].startswith('https://www.gov.cn/gongbao/')
+    assert all(not row['human_verified'] and not row['document']['human_verified'] for row in rows)
+    safety = next(row for row in rows if row['clause_id'] == 'SC-393-2003-RETRO#24')
+    assert '承担连带责任' in safety['text']
+
+
+def test_historical_source_or_excerpt_tampering_is_rejected(tmp_path):
+    import json
+    import shutil
+    import pytest
+    from pathlib import Path
+    from app.plus.blockchain_supervision import retrospective_sources
+    root = Path(retrospective_sources.__file__).with_name('data') / 'retrospective_basis'
+    copy = tmp_path / 'basis'
+    shutil.copytree(root, copy)
+    original = (copy / 'wages.html').read_bytes()
+    (copy / 'wages.html').write_bytes(original + b'changed')
+    with pytest.raises(ValueError, match='指纹'):
+        retrospective_sources._historical_basis(copy)
+    (copy / 'wages.html').write_bytes(original)
+    manifest = json.loads((copy / 'manifest.json').read_text(encoding='utf-8'))
+    manifest['clauses'][0]['text'] = '伪造的规范原文不得进入报告'
+    (copy / 'manifest.json').write_text(json.dumps(manifest, ensure_ascii=False), encoding='utf-8')
+    with pytest.raises(ValueError, match='选段'):
+        retrospective_sources._historical_basis(copy)
     source = freeze_material(material(["计划开工日期：2023年12月22日"]))
     assert infer_contract_date([source])[0] is None

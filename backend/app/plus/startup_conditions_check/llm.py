@@ -24,7 +24,7 @@ def require_model():
 
 class OpenAICompatibleClient:
     def __init__(self, base_url, api_key, model, enable_thinking=False, prompt_cache_key=None, timeout=None,
-                 max_retries=None, provider='legacy'):
+                 max_retries=None, provider='legacy', json_output=False):
         self.base_url = base_url
         self.api_key = api_key
         self.model = model
@@ -33,6 +33,7 @@ class OpenAICompatibleClient:
         self.timeout = timeout
         self.max_retries = max_retries
         self.provider = provider
+        self.json_output = json_output
 
     @property
     def checkpoint_request_mode(self):
@@ -48,7 +49,7 @@ class OpenAICompatibleClient:
         body = {'enable_thinking': self.enable_thinking}
         if self.prompt_cache_key:
             body['prompt_cache_key'] = self.prompt_cache_key
-        return {'extra_body': body}
+        return {'extra_body': body, **({'response_format': {'type': 'json_object'}} if self.json_output else {})}
 
     async def complete(self, messages, on_usage=None):
         from openai import AsyncOpenAI
@@ -93,7 +94,7 @@ def llm_configured(model_code=None):
     return bool(model and os.environ.get('LLM_API_BASE', '').strip() and os.environ.get('LLM_API_KEY', '').strip())
 
 
-def client_from_env(enable_thinking=False, prompt_cache_key=None, model_code=None, max_retries=None):
+def client_from_env(enable_thinking=False, prompt_cache_key=None, model_code=None, max_retries=None, json_output=False):
     provider = os.environ.get('LLM_PROVIDER', 'legacy').strip().lower()
     if provider not in ('legacy', 'moma'):
         raise ValueError('不支持的业务模型 provider')
@@ -116,7 +117,7 @@ def client_from_env(enable_thinking=False, prompt_cache_key=None, model_code=Non
         base_url=base_url, api_key=api_key,
         model=request_model, enable_thinking=enable_thinking,
         prompt_cache_key=prompt_cache_key, timeout=float(os.environ.get('LLM_TIMEOUT_SECONDS', '120')),
-        max_retries=max_retries, provider=provider)
+        max_retries=max_retries, provider=provider, json_output=json_output and provider == 'legacy')
 
 
 def run_sync(coro):

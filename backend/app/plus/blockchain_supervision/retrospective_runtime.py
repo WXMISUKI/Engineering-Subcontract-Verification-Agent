@@ -23,11 +23,19 @@ CHECKPOINT = "retrospective.batch_completed"
 BATCH_STARTED = "retrospective.batch_started"
 
 
+def _progress(db, task_id, run_id, *, phase, label, index=0, total=1, batch_id=None):
+    from . import service
+    service.add_event(db, task_id, BATCH_STARTED, stage=phase, payload={
+        'run_id': run_id, 'phase': phase, 'label': label, 'index': index, 'total': total,
+        'batch_id': batch_id or f'progress:{phase}'}, commit=False)
+
+
 def model_identity(client):
     """冻结非敏感身份；不保存密钥或可能含认证信息的端点。"""
     return {"request_model": getattr(client, "model", None), "provider": getattr(client, "provider", None),
             "endpoint_sha256": digest(getattr(client, "base_url", "")),
             "enable_thinking": getattr(client, "enable_thinking", False),
+            "json_output": getattr(client, "json_output", False),
             "timeout": getattr(client, "timeout", None), "max_retries": getattr(client, "max_retries", 0)}
 
 
@@ -124,7 +132,7 @@ def accept(db, task, actor, *, relations=None):
         raise ValueError("首版仅支持一个分包合同来源集，多个分包主体请分别新建核查")
     model = effective_model_code_or_default(db, "bs_task", task.id)
     try:
-        actual_identity = model_identity(client_from_env(model_code=model, max_retries=0))
+        actual_identity = model_identity(client_from_env(model_code=model, max_retries=0, json_output=True))
     except Exception as exc:
         raise ValueError("所选模型尚未配置可用端点或密钥，合同倒查尚未开始") from exc
     run_id = "retro-" + uuid.uuid4().hex
@@ -211,14 +219,20 @@ async def run(engine, job_id, *, client=None):
             db.commit()
         if not spec:
             raise ValueError("倒查输入快照不存在")
-        actual_client = client if client is not None else client_from_env(model_code=spec["model_code"], max_retries=0)
+        actual_client = client if client is not None else client_from_env(model_code=spec["model_code"], max_retries=0, json_output=True)
         if client is None and model_identity(actual_client) != spec["model_identity"]:
             raise ValueError("模型端点或运行身份已变化，未继续倒查")
         # 已冻结的正文不可因重启重新读取，未完成读取仅用既有解析器处理。
         if frozen is None:
             sources = []
             selected = {row["material_id"]: row["relation"] for row in spec["relations"]}
-            for manifest in spec["materials"]:
+            readable_manifests = [row for row in spec["materials"] if row["material_id"] in selected]
+            for material_index, manifest in enumerate(readable_manifests, 1):
+                with Session(engine) as db:
+                    owned(db)
+                    _progress(db, task_id, run_id, phase='parse', label='解析合同文件',
+                              index=material_index - 1, total=len(readable_manifests))
+                    db.commit()
                 if manifest["material_id"] not in selected:
                     continue
                 with Session(engine) as db:
@@ -260,11 +274,29 @@ async def run(engine, job_id, *, client=None):
                     source["relation"] = selected[material.id]
                     sources.append(source)
             signed, _ = infer_contract_date(sources)
+            with Session(engine) as db:
+                owned(db)
+                _progress(db, task_id, run_id, phase='retrieval', label='检索负面清单及规范依据')
+                db.commit()
+            def retrieve_knowledge():
+                from .retrospective_knowledge import retrieve
+                with Session(engine) as query_db:
+                    query_task = owned(query_db)
+                    query_db.commit()  # 不在网络查询期间持有任务行锁。
+                    knowledge = retrieve(query_db, query_task, sources, spec['basis'], contract_date=signed)
+                    owned(query_db)
+                    query_db.commit()
+                    return knowledge
+            knowledge = await asyncio.to_thread(retrieve_knowledge)
+            from .retrospective_coverage import plan
+            coverage_plan = plan(spec['basis'])
             identity = RunIdentity(run_id=run_id, task_id=task_id, model_code=spec["model_code"],
                 model_identity=spec["model_identity"],
                 material_fingerprint=digest(sources), basis_fingerprint=digest(spec["basis"]),
+                knowledge_fingerprint=digest(knowledge),
+                coverage_version=coverage_plan['version'], coverage_fingerprint=digest(coverage_plan),
                 baseline_date=spec["baseline_date"], contract_date=signed).model_dump(mode="json")
-            frozen = {"run_id": run_id, "sources": sources, "identity": identity}
+            frozen = {"run_id": run_id, "sources": sources, "identity": identity, 'knowledge': knowledge}
             with Session(engine) as db:
                 owned(db)
                 service.add_event(db, task_id, INPUT, stage="check", payload=frozen, commit=False)
@@ -289,8 +321,10 @@ async def run(engine, job_id, *, client=None):
             active_batch_id = batch_id
             with Session(engine) as db:
                 owned(db)
-                service.add_event(db, task_id, BATCH_STARTED, stage="check", payload={
-                    "run_id": run_id, "batch_id": batch_id, "index": index, "total": total}, commit=False)
+                phase = 'coverage' if batch_id.startswith('basis:') else 'contract_check'
+                label = '逐条核对冻结规范与合同' if phase == 'coverage' else '核查合同条款及内部一致性'
+                _progress(db, task_id, run_id, phase=phase, label=label,
+                          index=index - 1, total=total, batch_id=batch_id)
                 db.commit()
 
         def save_checkpoint(batch_id, result):
@@ -316,7 +350,7 @@ async def run(engine, job_id, *, client=None):
 
         result = await analyze(frozen["sources"], spec["basis"], frozen["identity"], client=actual_client,
                                load_checkpoint=load_checkpoint, before_batch=before_batch,
-                               save_checkpoint=save_checkpoint, on_usage=usage)
+                               save_checkpoint=save_checkpoint, on_usage=usage, knowledge=frozen.get('knowledge'))
         if any(row["role"] == "general" for row in spec["materials"]):
             result["limitations"].append("已上传总包合同，本阶段尚未执行上下游辅助比对；单合同检查结果不代表与总包一致。")
             if result["execution_status"] == "completed":
@@ -324,6 +358,10 @@ async def run(engine, job_id, *, client=None):
                 result["execution_status"] = "partial"
                 result["summary"] = summary("partial", len(result["findings"]))
         project_name = spec["project_name"] or infer_project_name(frozen["sources"])
+        with Session(engine) as db:
+            owned(db)
+            _progress(db, task_id, run_id, phase='report', label='汇总问题并生成报告')
+            db.commit()
         report = build_report(result, project_name=project_name, sources=frozen["sources"])
         with Session(engine) as db:
             task = owned(db)

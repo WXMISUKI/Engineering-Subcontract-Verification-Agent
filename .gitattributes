@@ -1,2 +1,3 @@
 # 法规原件、官方HTML及提取文本属于哈希核验来源，保留原始字节及空白。
 docs/plus/blockchain-supervision/evidence/** -text -whitespace
+backend/app/plus/blockchain_supervision/data/retrospective_basis/*.html -text -whitespace

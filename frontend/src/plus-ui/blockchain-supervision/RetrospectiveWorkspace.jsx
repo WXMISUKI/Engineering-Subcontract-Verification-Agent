@@ -130,13 +130,11 @@ export default function RetrospectiveWorkspace({ conversationId, taskId, onTaskC
     </div>}
     {taskId != null && !setup && !report && <div role="status" className="mx-6 mt-5 text-sm text-[#5F6368]">
       {status?.state === 'failed' ? (status.error || '倒查未完成，未生成风险结论') : <span className="inline-flex items-center gap-2"><RefreshCw size={15} className="animate-spin"/>合同正在读取或核查，完成后报告自动显示。可离开页面后返回查看。</span>}
-      {status?.progress && <p className="mt-2 text-xs">正在检查第{status.progress.index}/{status.progress.total}批条款</p>}
+      {status?.progress && <p className="mt-2 text-xs">{status.progress.label || '正在核查合同条款'}{status.progress.total > 1 ? ` · ${status.progress.index}/${status.progress.total}` : ''}</p>}
     </div>}
     {report && <div className="min-w-0 flex-1 overflow-auto px-6 py-4">
-      <div className="border-b border-[#DADCE0] pb-3"><h2 className="text-sm font-semibold">{report.summary}</h2><p className="mt-1 text-xs leading-relaxed text-[#5F6368]">{report.scope_note}</p>
-        {report.coverage && <p className="mt-1 text-xs text-[#5F6368]">已完成{report.coverage.batches_completed}/{report.coverage.batches_total}批条款检查；位置采用PDF物理页码。</p>}
+      <div className="border-b border-[#DADCE0] pb-3"><h2 className="text-sm font-semibold">{report.summary?.replace('部分范围受限，详见核查限制。', '')}</h2>
       </div>
-      {report.limitations?.length > 0 && <details open className="my-3 text-xs text-[#6B5B00]"><summary>核查限制（{report.limitations.length}项）</summary><ul className="mt-1 list-disc space-y-1 pl-5">{report.limitations.map((item, i) => <li key={i}>{item}</li>)}</ul></details>}
       {report.execution_status !== 'failed' && <div className="mt-3 overflow-x-auto"><table className="w-full min-w-[1450px] table-fixed border-collapse text-left text-xs">
         <colgroup>{[7, 5, 10, 10, 20, 22, 10, 16].map((width, i) => <col key={i} style={{ width: `${width}%` }}/>)}</colgroup>
         <thead><tr>{(report.columns || COLUMNS).map((column) => <th key={column} className="border border-[#DADCE0] bg-[#F8F9FA] px-2 py-2 font-semibold">{column}</th>)}</tr></thead>

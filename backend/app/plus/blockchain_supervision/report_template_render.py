@@ -17,6 +17,8 @@ from .report_template_v13 import _dimension_summary, _item_text
 
 
 def _footer(payload, digest, exported_at):
+    if payload.get('review_mode') == 'contract_retrospective':
+        return ''
     return "内容指纹：%s　导出时间：%s。校验码对应系统导出时内容，人工填写后的文件请另行留档。" % (
         digest[:16], exported_at or datetime.now().isoformat(timespec="seconds"))
 
@@ -99,7 +101,7 @@ def _format_overview(document):
 def word_bytes(payload, digest, exported_at=None):
     """Dispatch by frozen template identity; V1.4 is block-rendered."""
     document = payload["template_document"]
-    if document.get("template_id") in {"v1.4", "contract-retrospective.v1"}:
+    if document.get("template_id") in {"v1.4", "contract-retrospective.v1", "contract-retrospective.v2", "contract-retrospective.v3"}:
         return word_bytes_v14(payload, digest, exported_at)
     doc = Document(Path(__file__).with_name("templates") / "review_opinion_v13.docx")
     body = doc.element.body
@@ -319,7 +321,7 @@ def word_bytes_v14(payload, digest, exported_at=None):
     section.bottom_margin = Cm(2.5)
     section.left_margin = Cm(3.2)
     section.right_margin = Cm(3.2)
-    retrospective = document.get("template_id") == "contract-retrospective.v1"
+    retrospective = document.get("template_id") in {"contract-retrospective.v1", "contract-retrospective.v2", "contract-retrospective.v3"}
     if retrospective:
         section.left_margin = section.right_margin = Cm(1.25)
         section.top_margin = section.bottom_margin = Cm(1.5)
@@ -379,7 +381,8 @@ def word_bytes_worksheet_v14(payload, digest, exported_at=None):
             _add_text(doc, "", size=4, space_after=2)
         if sheet.get("rows") and sheet.get("kind") == "key_value":
             _add_table(doc, ["项目", "内容"], [list(row) for row in sheet["rows"]])
-    _add_text(doc, _footer(payload, digest, exported_at), size=8, space_after=0)
+    if footer := _footer(payload, digest, exported_at):
+        _add_text(doc, footer, size=8, space_after=0)
     output = io.BytesIO()
     doc.save(output)
     return output.getvalue()
@@ -464,7 +467,8 @@ def pdf_bytes(payload, digest, exported_at=None):
         else:
             paragraph(block["text"], 12 if block["type"] == "heading" else 10.5, block["type"] == "heading")
     if document.get("template_id") != "v1.4":
-        paragraph(_footer(payload, digest, exported_at), 8)
+        if footer := _footer(payload, digest, exported_at):
+            paragraph(footer, 8)
     output = doc.tobytes()
     doc.close()
     return output

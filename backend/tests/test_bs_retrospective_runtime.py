@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 
 from app.plus.blockchain_supervision import ai_review_jobs, retrospective_runtime as runtime, service
-from app.plus.blockchain_supervision.models import BsAiReviewJob, BsMaterial, BsReviewVersion, BsTask
+from app.plus.blockchain_supervision.models import BsAiReviewJob, BsMaterial, BsReviewVersion, BsTask, BsTaskEvent
 from app.plus.blockchain_supervision.retrospective_analysis import TOPICS
 from app.plus.blockchain_supervision.retrospective_sources import analysis_batches, freeze_material
 from test_bs_report_version_http import _client
@@ -29,6 +29,23 @@ class Client:
         if self.error:
             raise self.error
         payload = json.loads(messages[1]['content'])
+        if payload.get('analysis_type') == 'basis_coverage':
+            if on_usage:
+                on_usage({'prompt_tokens': 20, 'completion_tokens': 10, 'total_tokens': 30})
+            part = payload['batch']['parts'][0]
+            return json.dumps({'checked_topics': list(TOPICS), 'limitations': [], 'findings': [], 'checks': [
+                {'clause_id': row['clause_id'], 'state': 'checked', 'reason': '已对照合同费用约定。',
+                 'evidence': [{'material_id': part['material_id'], 'page': part['page'],
+                               'quote': '工期延长费用均不调整。'}]} for row in payload['basis']]})
+        if payload.get('analysis_type') == 'internal_consistency':
+            if on_usage:
+                on_usage({'prompt_tokens': 20, 'completion_tokens': 10, 'total_tokens': 30})
+            return json.dumps({'findings': []})
+        if 'candidates' in payload:
+            if on_usage:
+                on_usage({'prompt_tokens': 20, 'completion_tokens': 10, 'total_tokens': 30})
+            return json.dumps({'decisions': [{'finding_id': row['finding_id'], 'keep': True,
+                                             'reason': '相同条件费用约定直接冲突。'} for row in payload['candidates']]})
         material_id = payload['batch']['parts'][0]['material_id']
         if on_usage:
             on_usage({'prompt_tokens': 20, 'completion_tokens': 10, 'total_tokens': 30})
@@ -76,12 +93,31 @@ def test_idempotent_accept_and_automatic_saved_report(tmp_path, monkeypatch):
     assert len(result['report']['rows']) == 1
     assert len(result['report']['rows'][0]['cells']) == 8
     assert result['report']['identity']['model_identity']['request_model'] == 'synthetic-model'
-    assert client.calls == 1
+    assert client.calls == 4
     asyncio.run(runtime.run(engine, job_id))
-    assert client.calls == 1
+    assert client.calls == 4
     with Session(engine) as db:
         assert db.query(BsReviewVersion).filter_by(task_id=task_id).count() == 1
         assert db.get(BsTask, task_id).state == 'done'
+
+
+def test_basis_coverage_is_frozen_executed_and_saved_without_changing_public_template(tmp_path, monkeypatch):
+    basis = [{'clause_id': 'D#1', 'doc_id': 'D', 'text': '延期费用应按双方约定处理。',
+              'document': {'effective_from': '2020-01-01'}, 'human_verified': False}]
+    http, engine, task_id, _, job_id, client, _ = prepared(tmp_path, monkeypatch)
+    with Session(engine) as db:
+        spec = db.query(BsTaskEvent).filter_by(task_id=task_id, event_type=runtime.SPEC).first()
+        payload = dict(spec.payload_json)
+        payload['basis'] = basis
+        spec.payload_json = payload
+        db.commit()
+    asyncio.run(runtime.run(engine, job_id))
+    report = http.get(f'/api/plus/blockchain-supervision/tasks/{task_id}/retrospective').json()['report']
+    assert report['identity']['coverage_version'] == 'bs.contract-basis-coverage.v1'
+    assert report['basis_coverage']['counts'] == {'checked': 1, 'not_applicable': 0, 'pending': 0}
+    assert len(report['basis_coverage']['scans']) == 1
+    assert '核查限制' not in str(report['template_document'])
+    assert client.calls == 5
 
 
 def test_unknown_response_checkpoint_is_not_rebilled(tmp_path, monkeypatch):

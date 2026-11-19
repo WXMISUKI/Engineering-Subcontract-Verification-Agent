@@ -292,3 +292,24 @@ async def test_sdk_retry_setting_is_scoped_to_batch_client(monkeypatch):
     await OpenAICompatibleClient('https://example.invalid/v1', 'synthetic', 'synthetic').complete([])
     await OpenAICompatibleClient('https://example.invalid/v1', 'synthetic', 'synthetic', max_retries=0).complete([])
     assert retry_settings == ['sdk-default', 0]
+
+
+@pytest.mark.asyncio
+async def test_json_output_is_opt_in_and_sent_as_native_sdk_parameter(monkeypatch):
+    requests = []
+    class FakeSdk:
+        def __init__(self, **kwargs):
+            self.chat = type('Chat', (), {'completions': self})()
+        async def create(self, **kwargs):
+            requests.append(kwargs)
+            return type('Response', (), {'choices': [type('Choice', (), {
+                'message': type('Message', (), {'content': '{}'})()})()]})()
+        async def close(self):
+            pass
+    monkeypatch.setattr(openai, 'AsyncOpenAI', FakeSdk)
+    for enabled in (False, True):
+        await OpenAICompatibleClient('https://example.invalid/v1', 'synthetic', 'synthetic',
+                                     json_output=enabled).complete([])
+    assert 'response_format' not in requests[0]
+    assert requests[1]['response_format'] == {'type': 'json_object'}
+    assert requests[1]['extra_body'] == {'enable_thinking': False}
