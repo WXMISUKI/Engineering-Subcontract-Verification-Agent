@@ -29,6 +29,10 @@ class Client:
         if self.error:
             raise self.error
         payload = json.loads(messages[1]['content'])
+        if payload.get('analysis_type') == 'upstream_extract':
+            if on_usage:
+                on_usage({'prompt_tokens': 20, 'completion_tokens': 10, 'total_tokens': 30})
+            return json.dumps({'checked_topics': payload['topic_ids'], 'facts': [], 'terms': []})
         if payload.get('analysis_type') == 'basis_coverage':
             if on_usage:
                 on_usage({'prompt_tokens': 20, 'completion_tokens': 10, 'total_tokens': 30})
@@ -96,9 +100,9 @@ def test_idempotent_accept_and_automatic_saved_report(tmp_path, monkeypatch):
     assert len(result['report']['rows']) == 1
     assert len(result['report']['rows'][0]['cells']) == 8
     assert result['report']['identity']['model_identity']['request_model'] == 'synthetic-model'
-    assert client.calls == 4
+    assert client.calls == 6
     asyncio.run(runtime.run(engine, job_id))
-    assert client.calls == 4
+    assert client.calls == 6
     with Session(engine) as db:
         assert db.query(BsReviewVersion).filter_by(task_id=task_id).count() == 1
         assert db.get(BsTask, task_id).state == 'done'
@@ -152,7 +156,7 @@ def test_basis_coverage_is_frozen_executed_and_saved_without_changing_public_tem
     assert report['basis_coverage']['counts'] == {'checked': 1, 'not_applicable': 0, 'pending': 0}
     assert len(report['basis_coverage']['scans']) == 1
     assert '核查限制' not in str(report['template_document'])
-    assert client.calls == 5
+    assert client.calls == 7
 
 
 def test_unknown_response_checkpoint_is_not_rebilled(tmp_path, monkeypatch):
@@ -175,6 +179,21 @@ def test_changed_runtime_identity_stops_before_call(tmp_path, monkeypatch):
     asyncio.run(runtime.run(engine, job_id))
     assert client.calls == 0
     assert http.get(f'/api/plus/blockchain-supervision/tasks/{task_id}/retrospective').json()['state'] == 'failed'
+
+
+def test_legacy_accepted_run_does_not_gain_upstream_calls_or_new_identity(tmp_path, monkeypatch):
+    http, engine, task_id, _, job_id, client, _ = prepared(tmp_path, monkeypatch)
+    with Session(engine) as db:
+        event = db.query(BsTaskEvent).filter_by(event_type=runtime.SPEC).one()
+        payload = dict(event.payload_json)
+        payload.pop('upstream_version')
+        event.payload_json = payload
+        db.commit()
+    asyncio.run(runtime.run(engine, job_id))
+    report = http.get(f'/api/plus/blockchain-supervision/tasks/{task_id}/retrospective').json()['report']
+    assert client.calls == 4
+    assert report['identity'].get('upstream_version') is None
+    assert 'upstream' not in report
 
 
 def test_admission_mutations_cannot_change_a_retrospective_run(tmp_path, monkeypatch):

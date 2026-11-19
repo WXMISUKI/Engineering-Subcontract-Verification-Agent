@@ -4,7 +4,7 @@ from copy import deepcopy
 from .retrospective_contracts import COLUMNS
 from .retrospective_sources import reading_limitations
 
-TEMPLATE_ID = "contract-retrospective.v3"
+TEMPLATE_ID = "contract-retrospective.v4"
 
 
 def build_report(result, *, project_name, sources):
@@ -34,10 +34,12 @@ def build_report(result, *, project_name, sources):
     report['analysis_summary'] = report.get('analysis_summary', report['summary'])
     report['summary'] = report['summary'].replace('部分范围受限，详见核查限制。', '')
     rows = []
+    roles = {source['material_id']: '总包' if source['role'] == 'general' else '分包' for source in sources}
     for finding in report["findings"]:
         refs = finding["evidence"]
         basis = finding["basis"]
         internal = finding["kind"] == "internal_ambiguity"
+        upstream = finding['kind'] == 'upstream_risk'
         label = {"historical": "历史适用判断", "current": "现行规则提示",
                  "contract_text": "合同文本分析"}[finding["time_scope"]]
         basis_files = [row["document"].get("doc_title") or row["doc_id"] for row in basis]
@@ -46,10 +48,16 @@ def build_report(result, *, project_name, sources):
         if internal:
             basis_files = ["合同内部约定对照（见本行原文）"]
             basis_text = ["\n".join(f"第{ref['page']}页 {ref['clause']}：{ref['quote']}" for ref in refs)]
-        cells = [project_name or "合同未唯一载明", "分包",
-                 "\n".join(dict.fromkeys(ref["file_name"] for ref in refs)),
-                 "\n".join(dict.fromkeys(f"PDF第{ref['page']}页 · {ref['clause']}" for ref in refs)),
-                 "\n".join(f"第{ref['page']}页：{ref['quote']}" for ref in refs),
+        def source_label(ref):
+            return f"{roles.get(ref['material_id'], '分包')}《{ref['file_name']}》" if upstream else ref['file_name']
+        if upstream:
+            upstream_refs = [ref for ref in refs if roles.get(ref['material_id']) == '总包']
+            basis_files = ['上游合同约定（合同约束）']
+            basis_text = [f"{source_label(ref)} PDF第{ref['page']}页 {ref['clause']}：{ref['quote']}" for ref in upstream_refs]
+        cells = [project_name or "合同未唯一载明", "总包／分包" if upstream else "分包",
+                 "\n".join(dict.fromkeys(source_label(ref) for ref in refs)),
+                 "\n".join(dict.fromkeys(f"{source_label(ref) + ' ' if upstream else ''}PDF第{ref['page']}页 · {ref['clause']}" for ref in refs)),
+                 "\n".join(f"{source_label(ref) + ' ' if upstream else ''}第{ref['page']}页：{ref['quote']}" for ref in refs),
                  f"【{finding['kind_label']}／{label}】\n{finding['message']}",
                  "\n".join(dict.fromkeys(basis_files)), "\n".join(basis_text)]
         rows.append({"finding_id": finding["finding_id"], "kind": finding["kind"],

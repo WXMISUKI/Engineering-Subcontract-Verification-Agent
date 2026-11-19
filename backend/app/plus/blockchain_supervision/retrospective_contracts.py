@@ -122,6 +122,7 @@ class RunIdentity(ContractModel):
     basis_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
     knowledge_fingerprint: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     coverage_version: str | None = None
+    upstream_version: str | None = None
     coverage_fingerprint: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     baseline_date: str
     contract_date: str | None = None

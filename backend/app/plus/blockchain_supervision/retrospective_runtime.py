@@ -145,10 +145,12 @@ def accept(db, task, actor, *, relations=None):
     task.state, task.started_at = "running", datetime.now(timezone.utc).replace(tzinfo=None)
     baseline = (task.baseline_date or datetime.now(ZoneInfo("Asia/Shanghai")).date()).isoformat()
     job = ai_review_jobs.enqueue(db, task.id, run_id, [JOB_GROUP])
+    from .retrospective_upstream_contracts import VERSION as upstream_version
     service.add_event(db, task.id, SPEC, stage="check", payload={
         "run_id": run_id, "model_code": model, "model_identity": actual_identity,
         "baseline_date": baseline, "materials": manifest,
         "relations": relations, "input_version": retrospective_input.INPUT_VERSION,
+        "upstream_version": upstream_version,
         "basis": freeze_basis(), "project_name": task.project_name}, commit=False)
     db.commit()
     schedule(db.get_bind(), job["id"])
@@ -310,6 +312,7 @@ async def run(engine, job_id, *, client=None):
                 material_fingerprint=digest(sources), basis_fingerprint=digest(spec["basis"]),
                 knowledge_fingerprint=digest(knowledge),
                 coverage_version=coverage_plan['version'], coverage_fingerprint=digest(coverage_plan),
+                upstream_version=spec.get('upstream_version'),
                 baseline_date=spec["baseline_date"], contract_date=signed).model_dump(mode="json")
             frozen = {"run_id": run_id, "sources": sources, "identity": identity, 'knowledge': knowledge}
             with Session(engine) as db:
@@ -336,8 +339,10 @@ async def run(engine, job_id, *, client=None):
             active_batch_id = batch_id
             with Session(engine) as db:
                 owned(db)
-                phase = 'coverage' if batch_id.startswith('basis:') else 'contract_check'
-                label = '逐条核对冻结规范与合同' if phase == 'coverage' else '核查合同条款及内部一致性'
+                phase = ('upstream' if batch_id.startswith('upstream:') else
+                         'coverage' if batch_id.startswith('basis:') else 'contract_check')
+                label = {'coverage': '逐条核对冻结规范与合同', 'contract_check': '核查合同条款及内部一致性',
+                         'upstream': '核对总分包合同约定及适用条件'}[phase]
                 _progress(db, task_id, run_id, phase=phase, label=label,
                           index=index - 1, total=total, batch_id=batch_id)
                 db.commit()
@@ -369,12 +374,29 @@ async def run(engine, job_id, *, client=None):
                     raise RuntimeError("倒查用量未落盘，已停止后续请求")
                 db.commit()
 
-        # P1先冻结两侧；总包比较由P2接入，不能把总包当成分包正文扫描。
         sub_sources = [row for row in frozen["sources"] if row["role"] in {"sub", "labor"}]
         result = await analyze(sub_sources, spec["basis"], frozen["identity"], client=actual_client,
                                load_checkpoint=load_checkpoint, before_batch=before_batch,
                                save_checkpoint=save_checkpoint, on_usage=usage, knowledge=frozen.get('knowledge'))
-        if any(row["role"] == "general" for row in spec["materials"]):
+        if frozen['identity'].get('upstream_version'):
+            from .retrospective_upstream import compare
+            from .retrospective_contracts import summary
+            # 原检查完全未执行成功时先保留失败，避免无边界追加后续请求。
+            upstream = (await compare(frozen['sources'], frozen['identity'], client=actual_client,
+                load_checkpoint=load_checkpoint, before_batch=before_batch,
+                save_checkpoint=save_checkpoint, on_usage=usage)
+                if result['execution_status'] != 'failed' else
+                {'version': spec.get('upstream_version'), 'state': 'not_executed', 'findings': [],
+                 'limitations': ['分包合同检查未执行完成，未继续上下游比较。']})
+            result['upstream'] = upstream
+            result['findings'] = list({row['finding_id']: row for row in
+                                      result['findings'] + upstream['findings']}.values())
+            result['limitations'].extend(upstream['limitations'])
+            if upstream['state'] != 'completed' and result['execution_status'] == 'completed':
+                result['execution_status'] = 'partial'
+            result['summary'] = summary(result['execution_status'], len(result['findings']))
+            result['scope_note'] = '本报告为分包合同文本及总包辅助比较；覆盖状态分别记录，不认证实际履约或合同全部合规。'
+        elif any(row["role"] == "general" for row in spec["materials"]):
             result["limitations"].append("已上传总包合同，本阶段尚未执行上下游辅助比对；单合同检查结果不代表与总包一致。")
             if result["execution_status"] == "completed":
                 from .retrospective_contracts import summary

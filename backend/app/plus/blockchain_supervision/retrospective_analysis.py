@@ -175,6 +175,9 @@ def _in_force(document, at):
 
 
 def validate_candidate(raw, sources, basis, identity):
+    if isinstance(raw, dict) and raw.get('kind') == 'upstream_risk':
+        from .retrospective_upstream_contracts import validate_upstream_candidate
+        return validate_upstream_candidate(raw, sources)
     # 模型有时把同条内的两项对立约定作为一个连续引文返回。仅按原文分号
     # 切成两个来源片段，字词不变；是否构成歧义仍须自动上下文复核。
     if (isinstance(raw, dict) and raw.get('kind') == 'internal_ambiguity'
@@ -235,7 +238,7 @@ def _asserts_unconfirmed_trigger(message):
     return False
 
 
-async def review_candidates(rows, sources, identity, *, client, on_usage=None, final=False):
+async def review_candidates(rows, sources, identity, *, client, on_usage=None, final=False, upstream_context=None):
     """同模型自动复核语义支撑；只可保留/排除，不能生成新事实或改写引文。"""
     contexts = []
     keys = {(ref['material_id'], ref['page']) for row in rows for ref in row['evidence']}
@@ -252,6 +255,9 @@ async def review_candidates(rows, sources, identity, *, client, on_usage=None, f
         '只概括实际存在的两项约定及未明确的边界，不增加假设场景、审批命令或事实。'
         '仅描述未发生的违法行为、合同已禁止的行为、无关准入材料、没有直接依据的行业惯例，均不能构成合同文本风险。'
         '核对义务主体（建设单位/总包/分包）、合同关系、法条适用对象和时间；工程款争议与工资支付须区分。'
+        'upstream_risk仅比较同一项目范围的上下游合同约定，总包是合同约束而非法规范，不要求伪造法条。'
+        '核对业主保留、总包自履行、可传导义务及文件优先级，付款比例不同本身不构成风险。'
+        '上下游候选必须有双侧原文且明确适用条件；未检索到对应条款不能推断遗漏。'
         '严格区分conditional_risk与text_nonconformity：条件性风险不要求触发条件已证实。'
         '当合同确有对应工作范围、规范确有限制、候选明确写出待核工法/重量和例外且没有违法定性时，'
         '不得仅因参数未载明、条件尚未核实或规则晚于签约日而排除current口径的条件性风险。'
@@ -269,7 +275,8 @@ async def review_candidates(rows, sources, identity, *, client, on_usage=None, f
                         '独立问题分别保留；不得为了去重丢弃其他问题。')
     result = await request_json(client, instruction,
         {'contract_date': identity.get('contract_date'), 'baseline_date': identity['baseline_date'],
-         'candidates': rows, 'full_evidence_pages': contexts}, on_usage=on_usage,
+         'candidates': rows, 'full_evidence_pages': contexts,
+         **({'upstream_context': upstream_context} if upstream_context is not None else {})}, on_usage=on_usage,
          response_schema=strict_response_schema(ReviewResponse))
     decisions = result.get('decisions')
     # 保留决定已给出完整专业说明时，该说明也是理由；仅做无损字段兼容，不补事实。
