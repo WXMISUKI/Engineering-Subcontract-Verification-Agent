@@ -6,7 +6,7 @@ from pydantic import Field
 from .retrospective_contracts import Citation, ContractModel, KINDS
 from .retrospective_sources import digest, original_citation
 
-VERSION = 'bs.contract-upstream.v2'
+VERSION = 'bs.contract-upstream.v3'
 TOPICS = ('scope', 'price', 'payment', 'schedule', 'quality', 'safety',
           'environment', 'wages', 'insurance', 'equipment', 'priority')
 
@@ -44,6 +44,17 @@ class RelationshipCheck(ContractModel):
 
 class RelationshipResponse(ContractModel):
     checks: list[RelationshipCheck] = Field(min_length=3, max_length=3)
+
+
+class SelectedRelationshipCheck(ContractModel):
+    dimension: Literal['project', 'parties', 'scope']
+    state: Literal['matched', 'mismatch', 'uncertain']
+    reason: str = Field(min_length=4, max_length=1600)
+    evidence_ids: list[str] = Field(max_length=8)
+
+
+class SelectedRelationshipResponse(ContractModel):
+    checks: list[SelectedRelationshipCheck] = Field(min_length=3, max_length=3)
 
 
 def bind_refs(refs, sources, *, allowed_ids=None):
@@ -138,6 +149,19 @@ class TermCheck(ContractModel):
 
 class ComparisonResponse(ContractModel):
     checks: list[TermCheck] = Field(max_length=6)
+
+
+class SelectedTermCheck(ContractModel):
+    term_id: str
+    state: Literal['aligned', 'not_applicable', 'risk', 'pending']
+    reason: str = Field(min_length=4, max_length=2400)
+    applicability: str = Field(max_length=1600)
+    conditions: str = Field(max_length=1600)
+    evidence_ids: list[str] = Field(max_length=12)
+
+
+class SelectedComparisonResponse(ContractModel):
+    checks: list[SelectedTermCheck] = Field(max_length=6)
 
 
 class UpstreamCandidate(ContractModel):

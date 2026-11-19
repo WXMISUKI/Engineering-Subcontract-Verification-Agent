@@ -96,6 +96,37 @@ def test_relationship_requires_all_dimensions_and_both_sides():
         bind_relationship({'checks': checks}, sources(), facts)
 
 
+def test_scope_containment_accepts_distinct_original_ranges_without_admission_documents():
+    src = sources()
+    src[0]['pages'][0]['text'] = '嘉松工程。建工公司。范围：桥梁及附属工程。'
+    src[1]['pages'][0]['text'] = '嘉松工程。建工公司。范围：桥梁预制构件安装。'
+    dims = [('project', 'project_name', 'project_name', '嘉松工程', '嘉松工程'),
+            ('parties', 'contractor', 'employer', '建工公司', '建工公司'),
+            ('scope', 'scope', 'scope', '桥梁及附属工程', '桥梁预制构件安装')]
+    facts = [{'field': field, 'value': value, 'evidence': [{'role': role}]}
+             for _, left, right, parent, child in dims
+             for field, value, role in [(left, parent, 'general'), (right, child, 'sub')]]
+    checks = [{'dimension': dim, 'state': 'matched', 'reason': '双侧工程内容支持子项包含。',
+               'evidence': [ref(1, parent), ref(2, child)]}
+              for dim, _, _, parent, child in dims]
+    assert bind_relationship({'checks': checks}, src, facts)['state'] == 'matched'
+
+
+@pytest.mark.parametrize('fault', ['foreign', 'duplicate'])
+def test_selected_evidence_rejects_unknown_or_repeated_ids(fault):
+    from app.plus.blockchain_supervision.retrospective_upstream import evidence_catalog, resolve_selected
+    from app.plus.blockchain_supervision.retrospective_upstream_contracts import SelectedComparisonResponse
+    catalog = evidence_catalog([{'evidence': candidate()['evidence']}])
+    first = next(iter(catalog))
+    raw = {'checks': [{'term_id': 'quality', 'state': 'risk', 'reason': '同一检测对象责任边界不同。',
+        'applicability': '相同对象', 'conditions': '无变更',
+        'evidence_ids': ['foreign'] if fault == 'foreign' else [first, first]}]}
+    with pytest.raises(ValueError, match='证据编号'):
+        resolve_selected(raw, SelectedComparisonResponse, catalog)
+    raw['checks'][0]['evidence_ids'] = list(catalog)
+    assert resolve_selected(raw, SelectedComparisonResponse, catalog)['checks'][0]['evidence'] == candidate()['evidence']
+
+
 @pytest.mark.parametrize('fault', ['one_side', 'fabricated', 'law', 'current', 'basis'])
 def test_upstream_finding_rejects_unverifiable_or_wrong_semantics(fault):
     row = candidate()
@@ -155,6 +186,12 @@ class UpstreamClient:
                                    'message': row['message']} for row in payload['candidates']]}
         else:
             raise AssertionError(phase)
+        if phase in {'upstream_relationship', 'upstream_compare'}:
+            for check in value['checks']:
+                refs = check.pop('evidence')
+                check['evidence_ids'] = [key for reference in refs
+                    for key, item in payload['evidence_catalog'].items()
+                    if all(item[k] == reference[k] for k in ('material_id', 'page', 'quote'))]
         return json.dumps(value, ensure_ascii=False)
 
 
@@ -258,7 +295,7 @@ def test_pending_comparison_never_becomes_an_omission_finding():
             if payload.get('analysis_type') == 'upstream_compare':
                 return json.dumps({'checks': [{'term_id': term['term_id'], 'state': 'pending',
                     'reason': '尚未找到同一检测对象的对应条款，无法确认是否适用。',
-                    'applicability': '', 'conditions': '', 'evidence': []}
+                    'applicability': '', 'conditions': '', 'evidence_ids': []}
                     for term in payload['upstream_terms']]})
             return await super().complete(messages, on_usage, response_schema)
     result = asyncio.run(compare(sources(), {}, client=MissingCounterpart()))
@@ -344,7 +381,7 @@ def test_real_runtime_persists_dual_evidence_and_same_report_exports(tmp_path, m
     result = http.get(base + '/retrospective').json()
     report = result['report']
     assert report, result
-    assert report['identity']['upstream_version'] == 'bs.contract-upstream.v2'
+    assert report['identity']['upstream_version'] == 'bs.contract-upstream.v3'
     assert report['upstream']['state'] == 'completed'
     assert {row['kind'] for row in report['rows']} == {'internal_ambiguity', 'upstream_risk'}
     row = next(row for row in report['rows'] if row['kind'] == 'upstream_risk')
