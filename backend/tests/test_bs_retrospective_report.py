@@ -65,3 +65,14 @@ def test_long_retrospective_table_repeats_headers_and_keeps_last_row():
         for page in pdf:
             assert all(word[0] >= 0 and word[2] <= page.rect.width + 1 and word[3] <= page.rect.height + 1
                        for word in page.get_text('words'))
+
+
+def test_retrospective_first_page_has_data_even_when_first_row_needs_the_next_page():
+    report = _report()
+    table = next(block for block in report['template_document']['blocks'] if block['type'] == 'table')
+    table['rows'] = [['首行项目', '分包', '合同.pdf', '第39页', '合同原文摘录。',
+                      '内部约定边界存在歧义。', '合同内部约定', '\n'.join(['两处原文对照。'] * 32)]]
+    with fitz.open(stream=report_template_render.pdf_bytes(report, 'digest'), filetype='pdf') as pdf:
+        assert len(pdf) > 1
+        assert '首行项目' in pdf[0].get_text()
+        assert '合同文件' in pdf[1].get_text()

@@ -441,7 +441,8 @@ def pdf_bytes(payload, digest, exported_at=None):
             columns = wrap_row(row)
             total = max(map(len, columns))
             row_height = total * line_height + 2 * padding
-            if row_height <= height - 2 * margin - header_height and y + row_height > height - margin:
+            if (payload.get('review_mode') != 'contract_retrospective'
+                    and row_height <= height - 2 * margin - header_height and y + row_height > height - margin):
                 new_page()
                 cells(headers, True)
             offset = 0
