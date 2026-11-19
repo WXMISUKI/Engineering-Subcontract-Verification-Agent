@@ -144,7 +144,8 @@ def validate_evidence(evidence, materials):
         for p in m.pages_json or []) for m in materials)
 
 
-async def request_json(client, system, payload, *, on_usage=None, diagnostic_context=None, timeout_seconds=None):
+async def request_json(client, system, payload, *, on_usage=None, diagnostic_context=None, timeout_seconds=None,
+                       response_schema=None):
     # 明确预算：不允许条款提取把单次请求无限放大；超限进入可见限制。
     body = json.dumps(payload, ensure_ascii=False)
     if len(body) > MAX_REQUEST_JSON_CHARS:
@@ -157,6 +158,8 @@ async def request_json(client, system, payload, *, on_usage=None, diagnostic_con
             on_usage(raw_usage)
 
     usage_kwargs = {'on_usage': collect_usage} if on_usage is not None else {}
+    if response_schema is not None and getattr(client, 'supports_json_schema', False) is True:
+        usage_kwargs['response_schema'] = response_schema
     request_id = uuid.uuid4().hex
     started = time.monotonic()
     context = _safe_diagnostic_context(payload, diagnostic_context)

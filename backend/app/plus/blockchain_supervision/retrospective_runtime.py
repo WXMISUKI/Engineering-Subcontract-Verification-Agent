@@ -23,6 +23,13 @@ CHECKPOINT = "retrospective.batch_completed"
 BATCH_STARTED = "retrospective.batch_started"
 
 
+def usage_dedupe_key(run_id, batch_id):
+    """完整请求身份稳定散列，避免规范补查子请求超过台账120字符上限。"""
+    if not batch_id:
+        raise ValueError("倒查用量缺少请求批次身份")
+    return "bs-retro:" + digest({"run_id": run_id, "batch_id": batch_id})
+
+
 def _progress(db, task_id, run_id, *, phase, label, index=0, total=1, batch_id=None):
     from . import service
     service.add_event(db, task_id, BATCH_STARTED, stage=phase, payload={
@@ -36,6 +43,7 @@ def model_identity(client):
             "endpoint_sha256": digest(getattr(client, "base_url", "")),
             "enable_thinking": getattr(client, "enable_thinking", False),
             "json_output": getattr(client, "json_output", False),
+            "json_schema": getattr(client, "supports_json_schema", False) is True,
             "timeout": getattr(client, "timeout", None), "max_retries": getattr(client, "max_retries", 0)}
 
 
@@ -337,15 +345,21 @@ async def run(engine, job_id, *, client=None):
         def usage(raw):
             # 复用可信用量记账；失败必须显式终止，不用未知账实状态宣告完成。
             from ...services.token_service import record, usage_counts
+            from ...models.models import TokenUsage
             input_count, output_count, token_count = usage_counts(raw)
+            key = usage_dedupe_key(run_id, active_batch_id)
             with Session(engine) as db:
                 task = owned(db)
                 record(db=db, user_id=task.created_by, user_type=task.created_by_type,
                        conversation_id=task.conversation_id, input_count=input_count, output_count=output_count,
                        token_count=token_count, raw_usage=raw, model_code=spec["model_code"],
-                       dedupe_key=f"bs-retro:{run_id}:{active_batch_id}",
+                       dedupe_key=key,
                        source="plus:blockchain-supervision", stage="contract_retrospective",
                        billing_scene="subcontract_review", scope_type="bs_task", scope_id=str(task_id))
+                # 共享记账入口保留旁路语义；倒查必须确认写入成功才继续请求。
+                db.flush()
+                if db.query(TokenUsage.id).filter_by(dedupe_key=key).one_or_none() is None:
+                    raise RuntimeError("倒查用量未落盘，已停止后续请求")
                 db.commit()
 
         result = await analyze(frozen["sources"], spec["basis"], frozen["identity"], client=actual_client,

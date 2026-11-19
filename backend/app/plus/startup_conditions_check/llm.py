@@ -51,7 +51,14 @@ class OpenAICompatibleClient:
             body['prompt_cache_key'] = self.prompt_cache_key
         return {'extra_body': body, **({'response_format': {'type': 'json_object'}} if self.json_output else {})}
 
-    async def complete(self, messages, on_usage=None):
+    @property
+    def supports_json_schema(self):
+        # 百炼官方结构化输出支持清单；其他兼容端点不推测支持，也不失败后自动降级。
+        return self.provider == 'legacy' and (
+            self.model == 'qwen4-max' or self.model.startswith((
+                'qwen3.7-flash', 'qwen3.7-plus', 'qwen3.7-max', 'qwen3.8-flash', 'qwen3.8-max')))
+
+    async def complete(self, messages, on_usage=None, *, response_schema=None):
         from openai import AsyncOpenAI
         retry_options = {'max_retries': self.max_retries} if self.max_retries is not None else {}
         if self.provider == 'moma':
@@ -59,10 +66,18 @@ class OpenAICompatibleClient:
             retry_options['http_client'] = httpx.AsyncClient(follow_redirects=False, timeout=self.timeout)
         client = AsyncOpenAI(base_url=self.base_url, api_key=self.api_key, timeout=self.timeout, **retry_options)
         try:
+            options = self._extra()
+            if response_schema is not None:
+                if not self.supports_json_schema:
+                    raise ValueError('该模型尚未确认支持严格JSON Schema')
+                options['response_format'] = {'type': 'json_schema', 'json_schema': {
+                    'name': 'contract_retrospective', 'strict': True, 'schema': response_schema}}
             response = await client.chat.completions.create(
-                model=self.model, messages=messages, stream=False, temperature=0.2, **self._extra())
+                model=self.model, messages=messages, stream=False, temperature=0.2, **options)
             if on_usage is not None:
                 on_usage(response.usage.model_dump() if response.usage is not None else {})
+            if response_schema is not None and (not response.choices or response.choices[0].finish_reason != 'stop'):
+                raise RuntimeError('结构化响应未完整结束，不能作为完成结果')
             if self.provider == 'moma' and (not response.choices or response.choices[0].finish_reason != 'stop'
                                              or not (response.choices[0].message.content or '').strip()):
                 raise RuntimeError('模型响应为空或未完整结束，需人工核实')

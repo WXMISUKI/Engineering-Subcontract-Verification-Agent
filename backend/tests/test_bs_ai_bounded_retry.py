@@ -313,3 +313,49 @@ async def test_json_output_is_opt_in_and_sent_as_native_sdk_parameter(monkeypatc
     assert 'response_format' not in requests[0]
     assert requests[1]['response_format'] == {'type': 'json_object'}
     assert requests[1]['extra_body'] == {'enable_thinking': False}
+
+
+@pytest.mark.asyncio
+async def test_strict_json_schema_reaches_sdk_without_changing_default_requests(monkeypatch):
+    from app.plus.blockchain_supervision.semantic_review import request_json
+    from app.plus.blockchain_supervision.retrospective_contracts import BatchResponse, strict_response_schema
+    requests, usages = [], []
+    class FakeSdk:
+        def __init__(self, **kwargs):
+            self.chat = type('Chat', (), {'completions': self})()
+        async def create(self, **kwargs):
+            requests.append(kwargs)
+            return type('Response', (), {'usage': None, 'choices': [type('Choice', (), {
+                'finish_reason': 'stop', 'message': type('Message', (), {'content': '{}'})()})()]})()
+        async def close(self):
+            pass
+    monkeypatch.setattr(openai, 'AsyncOpenAI', FakeSdk)
+    client = OpenAICompatibleClient('https://example.invalid/v1', 'synthetic', 'qwen3.7-flash', json_output=True)
+    schema = strict_response_schema(BatchResponse)
+    await request_json(client, '只输出JSON对象', {}, on_usage=usages.append, response_schema=schema)
+    await request_json(client, '只输出JSON对象', {})
+    assert requests[0]['response_format'] == {'type': 'json_schema', 'json_schema': {
+        'name': 'contract_retrospective', 'strict': True, 'schema': schema}}
+    assert set(schema['required']) == {'checked_topics', 'findings', 'limitations'}
+    assert set(schema['$defs']['FindingCandidate']['required']) == set(schema['$defs']['FindingCandidate']['properties'])
+    assert requests[1]['response_format'] == {'type': 'json_object'}
+    assert usages == [{}]
+
+
+@pytest.mark.asyncio
+async def test_truncated_structured_response_records_usage_and_fails_without_retry(monkeypatch):
+    requests, usages = [], []
+    class FakeSdk:
+        def __init__(self, **kwargs):
+            self.chat = type('Chat', (), {'completions': self})()
+        async def create(self, **kwargs):
+            requests.append(kwargs)
+            return type('Response', (), {'usage': None, 'choices': [type('Choice', (), {
+                'finish_reason': 'length', 'message': type('Message', (), {'content': '{}'})()})()]})()
+        async def close(self):
+            pass
+    monkeypatch.setattr(openai, 'AsyncOpenAI', FakeSdk)
+    client = OpenAICompatibleClient('https://example.invalid/v1', 'synthetic', 'qwen3.7-flash', max_retries=0)
+    with pytest.raises(RuntimeError, match='未完整结束'):
+        await client.complete([], on_usage=usages.append, response_schema={'type': 'object'})
+    assert len(requests) == 1 and usages == [{}]

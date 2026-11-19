@@ -7,7 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 SCHEMA_VERSION = "bs.contract-retrospective.v1"
-PROMPT_VERSION = "bs.contract-retrospective-prompt.v9"
+PROMPT_VERSION = "bs.contract-retrospective-prompt.v11"
 RUN_KEY = "retrospective_run_id"
 JOB_GROUP = "contract_retrospective"
 COLUMNS = ["项目名称", "总包/分包", "合同文件", "合同条款位置", "合同相关摘录",
@@ -64,6 +64,51 @@ class BatchResponse(ContractModel):
     checked_topics: list[str] = Field(max_length=8)
     findings: list[FindingCandidate] = Field(max_length=80)
     limitations: list[str] = Field(max_length=40)
+
+
+class ConsistencyResponse(ContractModel):
+    findings: list[FindingCandidate] = Field(max_length=40)
+
+
+class ReviewDecision(ContractModel):
+    finding_id: str
+    keep: bool
+    reason: str = Field(min_length=1, max_length=2000)
+    message: str = Field(max_length=2400)
+
+
+class ReviewResponse(ContractModel):
+    decisions: list[ReviewDecision]
+
+
+class BasisCheck(ContractModel):
+    clause_id: str
+    state: Literal['checked', 'not_applicable', 'pending']
+    reason: str = Field(min_length=1, max_length=1800)
+    evidence: list[Citation] = Field(max_length=6)
+
+
+class CoverageResponse(BatchResponse):
+    checks: list[BasisCheck]
+
+
+def strict_response_schema(model):
+    """从既有结果契约生成Provider约束；事实/来源/条件仍由业务校验。"""
+    schema = model.model_json_schema()
+    def normalize(node):
+        if isinstance(node, dict):
+            node.pop('default', None)
+            node.pop('title', None)
+            if node.get('type') == 'object':
+                node['required'] = list(node.get('properties', {}))
+                node['additionalProperties'] = False
+            for value in node.values():
+                normalize(value)
+        elif isinstance(node, list):
+            for value in node:
+                normalize(value)
+    normalize(schema)
+    return schema
 
 
 class RunIdentity(ContractModel):

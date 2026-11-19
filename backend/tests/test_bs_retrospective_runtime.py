@@ -99,6 +99,35 @@ def test_idempotent_accept_and_automatic_saved_report(tmp_path, monkeypatch):
     with Session(engine) as db:
         assert db.query(BsReviewVersion).filter_by(task_id=task_id).count() == 1
         assert db.get(BsTask, task_id).state == 'done'
+        from app.models.models import TokenUsage
+        usage = db.query(TokenUsage).filter_by(stage='contract_retrospective').all()
+        assert len(usage) == client.calls
+        assert len({row.dedupe_key for row in usage}) == client.calls
+        assert all(len(row.dedupe_key) <= 120 for row in usage)
+
+
+def test_usage_key_preserves_run_and_subrequest_identity_within_column_limit():
+    batch = 'basis:' + 'a' * 64 + ':' + 'b' * 64
+    identities = [('retro-' + 'c' * 32, batch + suffix)
+                  for suffix in ('', ':consistency', ':review', ':final')]
+    identities.append(('retro-' + 'd' * 32, batch))
+    keys = [runtime.usage_dedupe_key(*identity) for identity in identities]
+    assert len(set(keys)) == len(identities)
+    assert all(len(key) <= 120 for key in keys)
+    assert keys == [runtime.usage_dedupe_key(*identity) for identity in identities]
+
+
+def test_missing_usage_record_stops_before_next_paid_request(tmp_path, monkeypatch):
+    from app.services import token_service
+    http, engine, task_id, _, job_id, client, _ = prepared(tmp_path, monkeypatch)
+    monkeypatch.setattr(token_service, 'record', lambda **kwargs: None)
+    asyncio.run(runtime.run(engine, job_id))
+    result = http.get(f'/api/plus/blockchain-supervision/tasks/{task_id}/retrospective').json()
+    assert client.calls == 1
+    assert result['state'] == 'failed'
+    assert result['report'] is None
+    with Session(engine) as db:
+        assert db.query(BsReviewVersion).filter_by(task_id=task_id).count() == 0
 
 
 def test_basis_coverage_is_frozen_executed_and_saved_without_changing_public_template(tmp_path, monkeypatch):

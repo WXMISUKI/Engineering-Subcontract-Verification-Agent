@@ -107,6 +107,7 @@ async def scan(sources, basis, identity, *, client, load_checkpoint=None, before
                                         validate_candidate, review_candidates)
     from .retrospective_sources import analysis_batches
     from .semantic_review import request_json
+    from .retrospective_contracts import CoverageResponse, strict_response_schema
     coverage_plan = plan(basis)
     if identity.get('coverage_fingerprint') and identity['coverage_fingerprint'] != digest(coverage_plan):
         raise ValueError('规范覆盖计划与冻结身份不一致')
@@ -138,11 +139,17 @@ async def scan(sources, basis, identity, *, client, load_checkpoint=None, before
                     '无法判断或仅凭一般行业知识时用pending，不能虚构引文。'
                     '法规职责针对实际行为时，只审查合同有没有明确相反约定，不推定行为已发生。'
                      '没有发现不必生成风险。checks理由不得要求准入缺件、编造审批决定或法律。'
-                     'checked_topics须逐字返回全部8个topic_ids；规范驱动补查不局限于这些主题。'),
+                     'checked_topics须逐字返回全部8个topic_ids；规范驱动补查不局限于这些主题。'
+                     '最终仍返回一个完整对象，禁止直接返回checks数组或findings数组。完整外层结构：'
+                     '{"checked_topics":["scope","price","payment","schedule","quality","safety","responsibility","consistency"],'
+                     '"findings":[],"limitations":[],"checks":[{"clause_id":"复制本次basis的实际ID",'
+                     '"state":"checked","reason":"针对本批的具体核对结果","evidence":[]}]}。'
+                     'checks须覆盖全部本次basis；findings有发现时使用前述发现项字段，无发现时为空。'),
                     {'analysis_type': 'basis_coverage', 'contract_date': identity.get('contract_date'),
                      'baseline_date': identity['baseline_date'], 'topic_ids': list(TOPICS),
                      'topic_descriptions': TOPICS,
-                     'batch': prompt_batch(batch), 'basis': group}, on_usage=on_usage)
+                     'batch': prompt_batch(batch), 'basis': group}, on_usage=on_usage,
+                     response_schema=strict_response_schema(CoverageResponse))
                 if raw.get('checked_topics') != list(TOPICS):
                     raise ValueError('规范补查未确认完整主题执行')
                 checks = validate_checks(raw, group, sources)

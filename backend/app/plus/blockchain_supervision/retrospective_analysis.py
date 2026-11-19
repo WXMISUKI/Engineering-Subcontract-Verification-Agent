@@ -8,7 +8,8 @@ from datetime import date
 
 from pydantic import ValidationError
 
-from .retrospective_contracts import FindingCandidate, KINDS, execution_status, summary
+from .retrospective_contracts import (FindingCandidate, KINDS, execution_status, summary,
+    BatchResponse, ConsistencyResponse, ReviewResponse, strict_response_schema)
 from .retrospective_sources import analysis_batches, clause_index, digest, original_citation, reading_limitations
 from .semantic_review import request_json
 
@@ -48,12 +49,12 @@ knowledge仅为经过原件校验的检索参考，basis才是可引用的冻结
 不要把当前提示或未核实的条件描述成已经违法/无效。
 输出JSON对象。checked_topics必须逐字复制topic_ids的8个英文标识，不得填中文关键词。
 无发现时的完整合法示例：{"checked_topics":["scope","price","payment","schedule","quality","safety","responsibility","consistency"],"findings":[],"limitations":[]}。
-有发现时使用相同外层结构，findings中每项如下（整数等为类型说明）：{
-"kind":"internal_ambiguity|text_nonconformity|conditional_risk|current_notice",
-"time_scope":"contract_text|historical|current","message":"专业事实与风险说明",
-"conditions":"条件性风险的明确条件；其他可空","applicability":"规范适用于该合同的事实条件；内部歧义可空",
-"evidence":[{"material_id":整数,"page":PDF物理页整数,"quote":"同页连续逐字摘录","clause":"原条款号"}],
-"basis":[{"clause_id":"只能复制给定依据ID","quote":"依据中的连续原文"}]}。
+有发现时也必须返回同一外层对象，绝不能直接返回findings数组或单个发现项。
+findings每项包含kind、time_scope、message、conditions、applicability、evidence、basis。
+kind只能取internal_ambiguity、text_nonconformity、conditional_risk、current_notice之一；time_scope只能取contract_text、historical、current之一。
+conditions说明条件性风险的触发条件；applicability说明规范适用于合同的事实；无内容时用空字符串。
+evidence的material_id和page必须是输入中的真实整数，quote是同一物理页连续原文，clause是原条款号。
+basis的clause_id只能复制输入ID，quote只能复制对应text中的连续原文；内部歧义的basis为空数组。
 limitations是实质核查限制的字符串数组，没有则空。
 内部歧义须两段不同且相关原文。规范相关问题须有basis。不足以支持具体风险的事项只写限制。
 通用条款写明“具体详见专用条款”时，专用条款的具体金额、比例或程序不自动构成矛盾。
@@ -65,6 +66,9 @@ text_nonconformity仅限合同日期有效且条款和document均human_verified=
 kind与time_scope对应：internal_ambiguity=contract_text；text_nonconformity=historical；current_notice=current；conditional_risk须明确历史或当前口径和触发条件。
 当本段某主题没有相关条款，也记录该主题已检查，不生成材料缺失问题。
 本批正文之外的related为跨段对照候选；目录可能有界截取，不得据局部目录判断条款遗漏。
+最终输出必须从{开始到}结束，仅一个JSON对象，完整结构示例如下；示例中的证据仅说明结构，必须替换为输入的真实原文和ID：
+{"checked_topics":["scope","price","payment","schedule","quality","safety","responsibility","consistency"],"findings":[{"kind":"internal_ambiguity","time_scope":"contract_text","message":"同一条件下两项费用处理约定不一致，适用边界未明确。","conditions":"","applicability":"","evidence":[{"material_id":1,"page":1,"quote":"第一段连续原文","clause":"12.1"},{"material_id":1,"page":1,"quote":"另一段连续原文","clause":"12.2"}],"basis":[]}],"limitations":[]}
+没有可验证发现时findings为空数组，但checked_topics和limitations仍必须返回。
 """
 
 
@@ -265,7 +269,8 @@ async def review_candidates(rows, sources, identity, *, client, on_usage=None, f
                         '独立问题分别保留；不得为了去重丢弃其他问题。')
     result = await request_json(client, instruction,
         {'contract_date': identity.get('contract_date'), 'baseline_date': identity['baseline_date'],
-         'candidates': rows, 'full_evidence_pages': contexts}, on_usage=on_usage)
+         'candidates': rows, 'full_evidence_pages': contexts}, on_usage=on_usage,
+         response_schema=strict_response_schema(ReviewResponse))
     decisions = result.get('decisions')
     # 保留决定已给出完整专业说明时，该说明也是理由；仅做无损字段兼容，不补事实。
     # 排除决定、无说明决定仍必须给出reason，不能把缺项/未知决定当作通过。
@@ -362,7 +367,8 @@ async def analyze(sources, basis, identity, *, client, load_checkpoint=None,
                                   for ref in references if ref['clause_id'] in {row['clause_id'] for row in selected}],
                     "clause_directory": directory,
                     "scope": "单分包合同文本检查；总包辅助比对尚未执行；召回依据不代表全部适用规范",
-                }, on_usage=account_usage, diagnostic_context={"batch_index": index + 1, "batch_total": len(batches),
+                }, on_usage=account_usage, response_schema=strict_response_schema(BatchResponse),
+                    diagnostic_context={"batch_index": index + 1, "batch_total": len(batches),
                                                         "model_code": identity["model_code"]})
                 if (not isinstance(raw.get("findings"), list) or len(raw["findings"]) > 80
                         or not isinstance(raw.get("limitations"), list) or len(raw["limitations"]) > 40
@@ -382,13 +388,14 @@ async def analyze(sources, basis, identity, *, client, load_checkpoint=None,
                     '超期协商与一般不调整是否存在适用边界不清，应由两段具体原文说明，不能直接认定无效。'
                     '只提出可比对的实质歧义，不把常规风险分担或文字重复本身当问题。不追求数量。'
                     '每段quote复制同一物理页的连续原文，不插省略号，不跨页；两段可在同页。'
-                    '返回合法JSON，空结果为{"findings":[]}。每项完整示例：'
-                    '{"kind":"internal_ambiguity","time_scope":"contract_text","message":"两段约定的具体差异及未明确的适用边界。",'
+                    '返回单个JSON对象，空结果为{"findings":[]}。有发现时的完整外层示例：'
+                    '{"findings":[{"kind":"internal_ambiguity","time_scope":"contract_text","message":"两段约定的具体差异及未明确的适用边界。",'
                     '"evidence":[{"material_id":1,"page":1,"quote":"第一段连续原文","clause":"12.1"},'
                     '{"material_id":1,"page":1,"quote":"另一段连续原文","clause":"12.1"}],'
-                    '"basis":[],"conditions":"","applicability":""}。ID和页码必须复制输入实际值。',
+                    '"basis":[],"conditions":"","applicability":""}]}。ID和页码必须复制输入实际值。不得直接返回数组或单个发现项。',
                     {'analysis_type': 'internal_consistency', 'batch': prompt_batch(batch),
-                     'related': related_spans(batch, sources)}, on_usage=account_usage)
+                     'related': related_spans(batch, sources)}, on_usage=account_usage,
+                     response_schema=strict_response_schema(ConsistencyResponse))
                 if (not isinstance(internal.get('findings'), list) or len(internal['findings']) > 40
                         or any(not isinstance(row, dict) or row.get('kind') != 'internal_ambiguity'
                                for row in internal['findings'])):
