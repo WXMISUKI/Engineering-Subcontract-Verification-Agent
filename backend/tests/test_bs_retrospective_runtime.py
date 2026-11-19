@@ -28,7 +28,14 @@ class Client:
         self.calls += 1
         if self.error:
             raise self.error
-        payload = json.loads(messages[1]['content'])
+        content = messages[1]['content']
+        payload = json.loads(content[0]['text'] if isinstance(content, list) else content)
+        if payload.get('analysis_type') == 'citation_visual':
+            if on_usage:
+                on_usage({'prompt_tokens': 20, 'completion_tokens': 10, 'total_tokens': 30})
+            return json.dumps({'checks': [{'reference_id': key, 'readable': True,
+                'observed_quote': ref['quote'], 'reason': '模拟原页逐字一致。'}
+                for key, ref in payload['references'].items()]})
         if payload.get('analysis_type') == 'upstream_extract':
             if on_usage:
                 on_usage({'prompt_tokens': 20, 'completion_tokens': 10, 'total_tokens': 30})
@@ -69,6 +76,7 @@ def prepared(tmp_path, monkeypatch, *, text=None):
     monkeypatch.setattr(runtime, 'schedule', lambda *args: False)
     monkeypatch.setattr(runtime, 'freeze_basis', lambda: [])
     monkeypatch.setattr(runtime, '_file_hash', lambda material: str(material.id).zfill(64))
+    monkeypatch.setattr(runtime, '_render_citation_page', lambda *args: b'\x89PNG\r\n\x1a\nsynthetic')
     from app.services.billing import bindings
     from app.plus.startup_conditions_check import llm
     monkeypatch.setattr(bindings, 'effective_model_code_or_default', lambda *args: 'synthetic')
@@ -102,9 +110,9 @@ def test_idempotent_accept_and_automatic_saved_report(tmp_path, monkeypatch):
     assert len(result['report']['rows']) == 1
     assert len(result['report']['rows'][0]['cells']) == 8
     assert result['report']['identity']['model_identity']['request_model'] == 'synthetic-model'
-    assert client.calls == 6
+    assert client.calls == 7
     asyncio.run(runtime.run(engine, job_id))
-    assert client.calls == 6
+    assert client.calls == 7
     with Session(engine) as db:
         assert db.query(BsReviewVersion).filter_by(task_id=task_id).count() == 1
         assert db.get(BsTask, task_id).state == 'done'
@@ -158,7 +166,7 @@ def test_basis_coverage_is_frozen_executed_and_saved_without_changing_public_tem
     assert report['basis_coverage']['counts'] == {'checked': 1, 'not_applicable': 0, 'pending': 0}
     assert len(report['basis_coverage']['scans']) == 1
     assert '核查限制' not in str(report['template_document'])
-    assert client.calls == 7
+    assert client.calls == 8
 
 
 def test_unknown_response_checkpoint_is_not_rebilled(tmp_path, monkeypatch):
@@ -189,6 +197,7 @@ def test_legacy_accepted_run_does_not_gain_upstream_calls_or_new_identity(tmp_pa
         event = db.query(BsTaskEvent).filter_by(event_type=runtime.SPEC).one()
         payload = dict(event.payload_json)
         payload.pop('upstream_version')
+        payload.pop('visual_version')
         event.payload_json = payload
         db.commit()
     asyncio.run(runtime.run(engine, job_id))

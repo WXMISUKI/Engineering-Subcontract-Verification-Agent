@@ -448,7 +448,8 @@ def test_real_runtime_persists_dual_evidence_and_same_report_exports(tmp_path, m
             self.internal = Client()
 
         async def complete(self, messages, on_usage=None, response_schema=None):
-            payload = json.loads(messages[1]['content'])
+            content = messages[1]['content']
+            payload = json.loads(content[0]['text'] if isinstance(content, list) else content)
             if payload.get('analysis_type', '').startswith('upstream_') or any(
                     row['kind'] == 'upstream_risk' for row in payload.get('candidates', [])):
                 return await UpstreamClient.complete(self, messages, on_usage, response_schema)
@@ -459,6 +460,7 @@ def test_real_runtime_persists_dual_evidence_and_same_report_exports(tmp_path, m
     monkeypatch.setattr(runtime, 'schedule', lambda *args: False)
     monkeypatch.setattr(runtime, 'freeze_basis', lambda: [])
     monkeypatch.setattr(runtime, '_file_hash', lambda m: str(m.id).zfill(64))
+    monkeypatch.setattr(runtime, '_render_citation_page', lambda *args: b'\x89PNG\r\n\x1a\nsynthetic')
     monkeypatch.setattr(bindings, 'effective_model_code_or_default', lambda *args: 'synthetic')
     monkeypatch.setattr(llm, 'client_from_env', lambda **kwargs: client)
     with Session(engine) as db:

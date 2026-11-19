@@ -123,6 +123,7 @@ class RunIdentity(ContractModel):
     knowledge_fingerprint: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     coverage_version: str | None = None
     upstream_version: str | None = None
+    visual_version: str | None = None
     coverage_fingerprint: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     baseline_date: str
     contract_date: str | None = None

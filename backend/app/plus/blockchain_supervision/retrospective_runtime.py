@@ -76,6 +76,18 @@ def _file_hash(material):
     return checksum.hexdigest()
 
 
+def _render_citation_page(material, page, expected_hash):
+    from ..structural_check.ocr_text import _render_pages
+    from .retrospective_visual import DPI
+    path = _path(material)
+    if path is None or _file_hash(material) != expected_hash:
+        raise ValueError('问题引用原件已变化，停止原页核对')
+    rendered = _render_pages(str(path), [page - 1], DPI)
+    if page - 1 not in rendered or _file_hash(material) != expected_hash:
+        raise ValueError('问题引用页不存在或原件在渲染期间变化')
+    return rendered[page - 1]['png']
+
+
 def _materials(db, task_id):
     return (db.query(BsMaterial).filter_by(task_id=task_id, superseded_by_id=None,
                                          replacement_target_id=None).order_by(BsMaterial.id).all())
@@ -151,11 +163,13 @@ def accept(db, task, actor, *, relations=None):
     baseline = (task.baseline_date or datetime.now(ZoneInfo("Asia/Shanghai")).date()).isoformat()
     job = ai_review_jobs.enqueue(db, task.id, run_id, [JOB_GROUP])
     from .retrospective_upstream_contracts import VERSION as upstream_version
+    from .retrospective_visual import VERSION as visual_version
     service.add_event(db, task.id, SPEC, stage="check", payload={
         "run_id": run_id, "model_code": model, "model_identity": actual_identity,
         "baseline_date": baseline, "materials": manifest,
         "relations": relations, "input_version": retrospective_input.INPUT_VERSION,
         "upstream_version": upstream_version,
+        "visual_version": visual_version,
         "basis": freeze_basis(), "project_name": task.project_name}, commit=False)
     db.commit()
     schedule(db.get_bind(), job["id"])
@@ -318,6 +332,7 @@ async def run(engine, job_id, *, client=None):
                 knowledge_fingerprint=digest(knowledge),
                 coverage_version=coverage_plan['version'], coverage_fingerprint=digest(coverage_plan),
                 upstream_version=spec.get('upstream_version'),
+                visual_version=spec.get('visual_version'),
                 baseline_date=spec["baseline_date"], contract_date=signed).model_dump(mode="json")
             frozen = {"run_id": run_id, "sources": sources, "identity": identity, 'knowledge': knowledge}
             with Session(engine) as db:
@@ -345,9 +360,11 @@ async def run(engine, job_id, *, client=None):
             with Session(engine) as db:
                 owned(db)
                 phase = ('upstream' if batch_id.startswith('upstream:') else
-                         'coverage' if batch_id.startswith('basis:') else 'contract_check')
+                         'coverage' if batch_id.startswith('basis:') else
+                         'citation_check' if batch_id.startswith('visual:') else 'contract_check')
                 label = {'coverage': '逐条核对冻结规范与合同', 'contract_check': '核查合同条款及内部一致性',
-                         'upstream': '核对总分包合同约定及适用条件'}[phase]
+                         'upstream': '核对总分包合同约定及适用条件',
+                         'citation_check': '核对问题引用原页'}[phase]
                 _progress(db, task_id, run_id, phase=phase, label=label,
                           index=index - 1, total=total, batch_id=batch_id)
                 db.commit()
@@ -412,6 +429,21 @@ async def run(engine, job_id, *, client=None):
                 from .retrospective_contracts import summary
                 result["execution_status"] = "partial"
                 result["summary"] = summary("partial", len(result["findings"]))
+        if frozen['identity'].get('visual_version') and result['execution_status'] != 'failed':
+            from .retrospective_visual import verify_findings
+
+            def render_page(material_id, page, file_sha256):
+                with Session(engine) as db:
+                    owned(db)
+                    material = db.get(BsMaterial, material_id)
+                    if material is None or material.task_id != task_id:
+                        raise ValueError('问题引用原件不属于当前任务')
+                    db.commit()  # 渲染期间不占用任务行锁。
+                    return _render_citation_page(material, page, file_sha256)
+
+            result = await verify_findings(result, frozen['sources'], client=actual_client,
+                render_page=render_page, load_checkpoint=load_checkpoint,
+                before_batch=before_batch, save_checkpoint=save_checkpoint, on_usage=usage)
         project_name = spec["project_name"] or infer_project_name(sub_sources)
         with Session(engine) as db:
             owned(db)
