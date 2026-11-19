@@ -286,6 +286,12 @@ async def review_candidates(rows, sources, identity, *, client, on_usage=None, f
         'upstream_risk仅比较同一项目范围的上下游合同约定，总包是合同约束而非法规范，不要求伪造法条。'
         '核对业主保留、总包自履行、可传导义务及文件优先级，付款比例不同本身不构成风险。'
         '上下游候选必须有双侧原文且明确适用条件；未检索到对应条款不能推断遗漏。'
+        '对费用边界分别核对工作对象、委托主体、独立费用、配合费用及明确排除；配合费与独立费用不是同一概念。'
+        '分包同页既有“包含配合费用”又有独立“试验和检验费用由分包人承担”等句时，两句均须解释，不能只取配合费句就推定全部费用限于配合费。'
+        '总包明确由业主另行委托且报价不含某类检测费，而分包对同类检测对象另列广义费用承担、未见明确排除时，'
+        '可以只陈述两侧约定及同一检测对象下排除范围尚不明确的条件性合同解释风险；无需证明已实际收费或已违约。'
+        '保留时须删除已重复收费、已违法等未证实定性；如明确为不同检测对象，或已有排除/优先条款解决边界，则排除并指出具体原文。'
+        '总包保留费用本身不能证明分包文本已作同样排除；常规自检费用正常传导也不自动形成风险。'
         '严格区分conditional_risk与text_nonconformity：条件性风险不要求触发条件已证实。'
         '当合同确有对应工作范围、规范确有限制、候选明确写出待核工法/重量和例外且没有违法定性时，'
         '不得仅因参数未载明、条件尚未核实或规则晚于签约日而排除current口径的条件性风险。'
@@ -293,10 +299,16 @@ async def review_candidates(rows, sources, identity, *, client, on_usage=None, f
         '不得在专业说明中擅自加入“非”“除外”等改变原文条件、责任主体或义务方向的字词。'
         '“外购梁预制、运输除外”只针对所列工序，不能缩写为“非外购梁”或解释为全部外购梁安装均除外。'
         '新规只能作有具体合同对应的现行提示，不能认定旧约定违法。不得以问题数量为目标。'
-        '返回JSON：{"decisions":[{"finding_id":"复制候选ID","keep":false,"reason":"简短事实理由","message":"保留时的准确专业说明；排除时空字符串"}]}。'
+        '返回JSON：{"decisions":[{"finding_id":"复制候选ID","keep":false,"reason":"简短事实理由","message":""}]}。'
+        'keep=true时message填准确专业说明；keep=false时message必须是空字符串，不复制示例说明文字。'
+        'upstream_risk只作保留/排除及去重，message置空，沿用比较阶段已与双侧引文绑定的说明，不借其他候选事实重写。'
         '每个候选恰好一项，不得漏项或重复，不返回修改后的候选。')
     if final:
         instruction += ('这是全合同报告收尾检查。对同一实质问题的跨批重复，仅保留直接证据最充分、说明最准确的一项。'
+                        '同一检测对象的同一费用边界问题，即使总包条款号不同或分别引用检验费/配合费，也应归为同一实质问题，不能分别保留重复提示。'
+                        '每项改写只能使用该候选自身evidence支持的事实、条款编号和条件；不能借其他候选引文补充本项未引用的事实。'
+                        '若某候选缺少总包明确排除费用的证据，应优先保留直接引用该排除约定的重复候选，而非用其他页补写。'
+                        '费用范围未明应表述为尚待明确的边界，不能将条件性的解释风险直接写成已经冲突。'
                         '重点核对不同文件层级、不同工作对象和前提是否被混淆；具体施工方案与总体施工组织设计并非当然同一对象。'
                         '两项原文均写同一原因时，不能改写其中一项为非该原因；纠正说明只能陈述真实原文。'
                         '条件性风险按“合同已载事实→规范适用条件/例外→尚待核实的条件→条件成立时风险”表达。'
@@ -333,6 +345,13 @@ async def review_candidates(rows, sources, identity, *, client, on_usage=None, f
             continue
         message = messages[row['finding_id']]
         decisions_row = next(value for value in decisions if value['finding_id'] == row['finding_id'])
+        if row['kind'] == 'upstream_risk':
+            # 多候选上下文可用于反证及去重，不能把其他候选事实借入本项说明。
+            # 保留比较阶段与本项双侧证据绑定的说明，仍由最终原页核对把关。
+            if message:
+                decisions_row['proposed_message'] = message
+            decisions_row['message_source'] = 'validated_comparison_candidate'
+            message = ''
         if final and row['kind'] == 'conditional_risk' and _asserts_unconfirmed_trigger(message or row['message']):
             # 同一响应的理由往往已正确说明条件；只取已返回且仍通过原文校验的说明，不重复付费润色。
             alternative = decisions_row['reason']

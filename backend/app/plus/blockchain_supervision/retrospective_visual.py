@@ -13,7 +13,7 @@ from .retrospective_contracts import ContractModel, strict_response_schema, summ
 from .retrospective_sources import digest
 from .semantic_review import request_json
 
-VERSION = 'bs.contract-citation-visual.v2'
+VERSION = 'bs.contract-citation-visual.v3'
 DPI = 180
 
 
@@ -40,7 +40,9 @@ reason仅说明原页位置或读取困难，不进行比对或纠错推理。�
 
 
 def _norm(text):
-    return re.sub(r'\s+', '', text)
+    # 同一冒号的全/半角字形不改变合同事实；不做NFKC等宽泛规范化，
+    # 避免把金额、单位、比较符号或责任主体的实质差异一并消掉。
+    return re.sub(r'\s+', '', text).replace('：', ':')
 
 
 def validate_page(raw, references):

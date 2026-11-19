@@ -7,7 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 SCHEMA_VERSION = "bs.contract-retrospective.v1"
-PROMPT_VERSION = "bs.contract-retrospective-prompt.v12"
+PROMPT_VERSION = "bs.contract-retrospective-prompt.v13"
 RUN_KEY = "retrospective_run_id"
 JOB_GROUP = "contract_retrospective"
 COLUMNS = ["项目名称", "总包/分包", "合同文件", "合同条款位置", "合同相关摘录",

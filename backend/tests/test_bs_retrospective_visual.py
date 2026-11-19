@@ -110,6 +110,20 @@ def test_match_requires_observed_exact_text_only_whitespace_is_ignored():
     assert check('发包人承担责任。') == 'differs'
 
 
+@pytest.mark.parametrize(('expected', 'observed', 'state'), [
+    ('1.3 承包范围: 构件安装', '1.3 承包范围：构件安装', 'matches'),
+    ('费用：由分包人承担', '费用:由发包人承担', 'differs'),
+    ('单体自重≥200吨', '单体自重>200吨', 'differs'),
+    ('金额：100.50元', '金额：10050元', 'differs'),
+    ('面积：15万㎡', '面积：15万m2', 'differs'),
+    ('费用不含检测费', '费用含检测费', 'differs'),
+])
+def test_only_colon_typography_is_equivalent_without_erasing_material_differences(expected, observed, state):
+    checks = visual.validate_page({'checks': [{'reference_id': 'V001', 'readable': True,
+        'observed_quote': observed, 'reason': '原页读取。'}]}, {'V001': {'quote': expected}})
+    assert checks[0]['state'] == state
+
+
 def test_provider_failure_stops_without_retry_and_does_not_confirm_remaining_pages():
     client, cache = Client(error=TimeoutError()), {}
     report = run(client=client, save_checkpoint=lambda key, row: cache.update({key: row}))

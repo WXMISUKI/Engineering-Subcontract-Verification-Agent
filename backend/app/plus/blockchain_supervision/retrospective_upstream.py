@@ -2,6 +2,8 @@
 import json
 import re
 
+from pydantic import ValidationError
+
 from .retrospective_analysis import ExecutionBoundaryError, prompt_batch, review_candidates
 from .retrospective_contracts import strict_response_schema
 from .retrospective_sources import analysis_batches, digest, reading_limitations
@@ -68,6 +70,24 @@ evidence_ids从evidence_catalog选择已有证据编号，不生成evidence、qu
 
 def _key(phase, payload):
     return 'upstream:' + phase + ':' + digest({'version': VERSION, 'input': payload})
+
+
+def _validation_failure(exc):
+    """保存可行动的校验原因；不把原始响应、HTTP信息或业务字段值写入诊断。"""
+    codes = {
+        '条款提取外层结构不完整': 'invalid_extraction_shape',
+        '条款提取主题执行字段缺失或重复': 'invalid_topic_acknowledgement',
+        '提取与略过的原文编号冲突、重复或不属于当前批次': 'invalid_skipped_evidence',
+        '证据编号重复或不属于本次候选': 'invalid_evidence_selection',
+        '上游条款比较记录重复或漏项': 'invalid_comparison_coverage',
+        '比较引用了本次未提供的条款': 'unprovided_comparison_evidence',
+        '比较决定未引用对应上游约定': 'missing_corresponding_upstream_evidence',
+        '比较决定缺少分包原文': 'missing_subcontract_evidence',
+    }
+    if isinstance(exc, ValidationError):
+        return {'code': 'response_schema_invalid', 'error_types': sorted({
+            row['type'] for row in exc.errors(include_input=False, include_url=False, include_context=False)})}
+    return {'code': codes.get(str(exc), 'validation_failed') if type(exc) is ValueError else 'execution_failed'}
 
 
 def _compact_ref(ref):
@@ -202,6 +222,7 @@ async def compare(sources, identity, *, client, load_checkpoint=None, before_bat
             raise
         except Exception as exc:
             result = {'state': 'failed', 'error_type': type(exc).__name__, 'findings': [],
+                      'failure_detail': _validation_failure(exc),
                       'limitations': ['上下游' + phase + '未完成，不能据此确认条款衔接。']}
             if not isinstance(exc, (ValueError, TypeError, KeyError)):
                 provider_failed = True

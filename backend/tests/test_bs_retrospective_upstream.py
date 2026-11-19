@@ -385,6 +385,39 @@ def test_automatic_rejection_is_retained_as_a_decision_without_report_risk():
     assert result['automatic_review']['automatic_review'][0]['keep'] is False
 
 
+def test_upstream_final_reviewer_cannot_borrow_another_candidates_facts_or_clause_numbers():
+    from app.plus.blockchain_supervision.retrospective_analysis import review_candidates
+    row = validate_upstream_candidate(candidate(), sources())
+    class BorrowedFacts:
+        async def complete(self, messages, **kwargs):
+            return json.dumps({'decisions': [{'finding_id': row['finding_id'], 'keep': True,
+                'reason': '同一检测对象的费用范围待明确。',
+                'message': '总包第99.9条已确认重复收费100万元。'}]})
+    kept, decisions = asyncio.run(review_candidates([row], sources(),
+        {'baseline_date': '2026-11-19'}, client=BorrowedFacts(), final=True))
+    assert kept == [row]
+    assert decisions[0]['proposed_message'] == '总包第99.9条已确认重复收费100万元。'
+    assert decisions[0]['message_source'] == 'validated_comparison_candidate'
+
+
+def test_validation_diagnostic_identifies_failure_without_echoing_model_data():
+    from app.plus.blockchain_supervision.retrospective_upstream import _validation_failure
+    from app.plus.blockchain_supervision.retrospective_upstream_contracts import SelectedExtractionResponse
+    from pydantic import ValidationError
+    assert _validation_failure(ValueError('提取与略过的原文编号冲突、重复或不属于当前批次')) == {
+        'code': 'invalid_skipped_evidence'}
+    secret = 'private-contract-or-provider-content'
+    assert secret not in json.dumps(_validation_failure(ValueError(secret)))
+    try:
+        SelectedExtractionResponse.model_validate({'checked_topics': [], 'facts': [], 'terms': [],
+            'skipped_evidence': [], secret: secret})
+    except ValidationError as exc:
+        diagnostic = _validation_failure(exc)
+    assert diagnostic['code'] == 'response_schema_invalid'
+    assert 'too_short' in diagnostic['error_types'] and 'extra_forbidden' in diagnostic['error_types']
+    assert secret not in json.dumps(diagnostic)
+
+
 def test_pending_comparison_never_becomes_an_omission_finding():
     from app.plus.blockchain_supervision.retrospective_upstream import compare
     class MissingCounterpart(UpstreamClient):
@@ -481,7 +514,7 @@ def test_real_runtime_persists_dual_evidence_and_same_report_exports(tmp_path, m
     result = http.get(base + '/retrospective').json()
     report = result['report']
     assert report, result
-    assert report['identity']['upstream_version'] == 'bs.contract-upstream.v5'
+    assert report['identity']['upstream_version'] == 'bs.contract-upstream.v6'
     assert report['upstream']['state'] == 'completed'
     assert {row['kind'] for row in report['rows']} == {'internal_ambiguity', 'upstream_risk'}
     row = next(row for row in report['rows'] if row['kind'] == 'upstream_risk')
