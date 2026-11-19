@@ -1769,6 +1769,9 @@ def validate_task_materials(db: Session, task: BsTask) -> dict:
     材料集走 `_rule_materials`（剔除父容器、已替代旧版和待生效候选）：容器不是证据，
     旧版/候选也不能参与构成计数；解析中的候选仍从全量材料单独计算 pending 闸。
     """
+    if task_review_mode.is_retrospective(task):
+        from .retrospective_input import readiness
+        return readiness(db, task)
     all_materials = db.query(BsMaterial).filter(BsMaterial.task_id == task.id).all()
     materials = _rule_materials(db, task)
     validation_roles = []
@@ -2425,6 +2428,8 @@ def _material_write_allowed(task) -> bool:
     层改成一并拒绝非 setup，就会把「补 preparing 门」变成「顺手收紧既有语义」，
     造成与 T10-B 无关的回归。契约 §7.3.3 要求的正是 preparing 期必须拒绝。
     """
+    if task is not None and task_review_mode.is_retrospective(task):
+        return task.state == TASK_STATE_SETUP
     return task is not None and task.state != TASK_STATE_PREPARING
 
 

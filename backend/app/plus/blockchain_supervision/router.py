@@ -49,8 +49,9 @@ async def _guard_retrospective_write(request: Request, db: Session = Depends(get
     suffix = match[2] or ""
     if suffix == "/retrospective/start" or (not suffix and request.method == "DELETE"):
         return
-    setup_write = suffix in {"/materials/upload", "/section"} or (
-        request.method == "DELETE" and re.fullmatch(r"/materials/\d+", suffix))
+    setup_write = suffix in {"/materials/upload", "/section", "/retrospective/contracts", "/general-source-sets"} or (
+        request.method == "DELETE" and re.fullmatch(r"/materials/\d+", suffix)) or bool(
+        re.fullmatch(r"/materials/\d+/(?:role|general-source-set)", suffix))
     if setup_write and task.state == "setup":
         return
     raise HTTPException(status_code=409, detail="合同倒查使用独立核查与自动报告流程；核查开始后合同与输入不可修改")
@@ -1044,7 +1045,7 @@ async def upload_material(task_id: int, request: Request, file: UploadFile = Fil
     _require_setup(task, "核查已开始，不能再上传材料")
     if task_review_mode.is_retrospective(task) and (
             not (file.filename or "").lower().endswith(".pdf") or role not in {"sub", "labor", "general"}
-            or replaces_material_id is not None or supplement_generation_id):
+            or supplement_generation_id):
         raise HTTPException(status_code=400, detail="合同倒查仅接收明确归属的合同PDF；更换已运行的合同请新建核查")
     supplement_label = None
     if supplement_generation_id:
@@ -1167,7 +1168,8 @@ async def upload_material(task_id: int, request: Request, file: UploadFile = Fil
                                       packet_id=effective_packet_id,
                                       material_category=effective_material_category,
                                       replacement_target_id=(replaced.id if replaced is not None else None),
-                                      defer_read=True,
+                                      defer_read=not (task_review_mode.is_retrospective(task) and replaced is not None),
+                                      background=task_review_mode.is_retrospective(task) and replaced is not None,
                                       operator=user.id, supplement_link=supplement_link)
     if replaced is not None:
         # 解析跨请求进行；用任务事件保留上传操作者，worker 重启后仍能把
@@ -1192,6 +1194,8 @@ async def upload_material(task_id: int, request: Request, file: UploadFile = Fil
 def correct_role(task_id: int, material_id: int, body: RoleCorrectIn,
                  db: Session = Depends(get_db), user=Depends(get_current_any_user)):
     task = _get_task(db, task_id, user)
+    if task_review_mode.is_retrospective(task) and body.role not in {"general", "sub", "labor"}:
+        raise HTTPException(status_code=400, detail="合同倒查仅支持总包、专业分包或劳务分包归类")
     try:
         validate_role(body.role)
     except ValueError as exc:
@@ -1215,6 +1219,20 @@ class RetrospectiveRelation(BaseModel):
 
 class RetrospectiveStart(BaseModel):
     relations: list[RetrospectiveRelation] | None = None
+
+
+@router.patch("/tasks/{task_id}/retrospective/contracts")
+def save_retrospective_contracts(task_id: int, body: RetrospectiveStart,
+                                 db: Session = Depends(get_db), user=Depends(get_current_any_user)):
+    task = _get_task(db, task_id, user)
+    if not task_review_mode.is_retrospective(task):
+        raise HTTPException(status_code=409, detail="该任务不是合同倒查阶段")
+    from .retrospective_input import save_relations
+    try:
+        return save_relations(db, task, [row.model_dump() for row in body.relations or []], operator=user.id)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 def _require_admission_mode(task):

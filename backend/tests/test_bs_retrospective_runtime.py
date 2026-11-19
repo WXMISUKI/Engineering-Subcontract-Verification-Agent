@@ -62,6 +62,7 @@ def prepared(tmp_path, monkeypatch, *, text=None):
     client = Client()
     monkeypatch.setattr(runtime, 'schedule', lambda *args: False)
     monkeypatch.setattr(runtime, 'freeze_basis', lambda: [])
+    monkeypatch.setattr(runtime, '_file_hash', lambda material: str(material.id).zfill(64))
     from app.services.billing import bindings
     from app.plus.startup_conditions_check import llm
     monkeypatch.setattr(bindings, 'effective_model_code_or_default', lambda *args: 'synthetic')
@@ -74,12 +75,14 @@ def prepared(tmp_path, monkeypatch, *, text=None):
             parse_state='done', degradations_json=[], pages_json=[{'page': 1, 'text': text or
                 '签订日期：2023年12月22日\n12.1 工期延长的费用可另行协商。\n12.2 工期延长费用均不调整。'}])
         db.add(material)
+        db.add(BsMaterial(task_id=task_id, file_name='总包合同.pdf', role='general', pages=1,
+            parse_state='done', degradations_json=[], pages_json=[{'page': 1, 'text': '工程名称：隔离合同项目。质量要求按约定执行。'}]))
         db.commit()
     accepted = http.post(f'/api/plus/blockchain-supervision/tasks/{task_id}/retrospective/start', json={})
     assert accepted.status_code == 202, accepted.text
     with Session(engine) as db:
         job_id = db.query(BsAiReviewJob).filter_by(task_id=task_id).one().id
-        material_id = db.query(BsMaterial).filter_by(task_id=task_id).one().id
+        material_id = db.query(BsMaterial).filter_by(task_id=task_id, role='sub').one().id
     return http, engine, task_id, material_id, job_id, client, accepted.json()
 
 
@@ -99,6 +102,9 @@ def test_idempotent_accept_and_automatic_saved_report(tmp_path, monkeypatch):
     with Session(engine) as db:
         assert db.query(BsReviewVersion).filter_by(task_id=task_id).count() == 1
         assert db.get(BsTask, task_id).state == 'done'
+        frozen = db.query(BsTaskEvent).filter_by(task_id=task_id, event_type=runtime.INPUT).one().payload_json
+        assert {s['role'] for s in frozen['sources']} == {'general', 'sub'}
+        assert all(s['file_sha256'] for s in frozen['sources'])
         from app.models.models import TokenUsage
         usage = db.query(TokenUsage).filter_by(stage='contract_retrospective').all()
         assert len(usage) == client.calls
@@ -238,6 +244,9 @@ def test_upload_pdf_parse_to_saved_report_isolated_from_business_storage(tmp_pat
                          data={'role': 'sub'})
     assert uploaded.status_code == 200, uploaded.text
     assert uploaded.json()['parse_state'] == 'uploaded'
+    general = http.post(base + '/materials/upload', files={'file': ('总包合同.pdf', pdf_data, 'application/pdf')},
+                        data={'role': 'general'})
+    assert general.status_code == 200, general.text
     accepted = http.post(base + '/retrospective/start', json={})
     assert accepted.status_code == 202, accepted.text
     with Session(engine) as db:

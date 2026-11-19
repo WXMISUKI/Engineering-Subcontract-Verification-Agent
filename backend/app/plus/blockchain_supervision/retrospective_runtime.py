@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
-from . import ai_review_jobs, parsing, review_mode
+from . import ai_review_jobs, parsing, review_mode, retrospective_input
 from .models import BsMaterial, BsReviewVersion, BsTask, BsTaskEvent
 from .retrospective_contracts import JOB_GROUP, RUN_KEY, RunIdentity
 from .retrospective_sources import digest, freeze_basis, freeze_material, infer_contract_date
@@ -124,28 +124,23 @@ def accept(db, task, actor, *, relations=None):
         if (task.options_snapshot_json or {}).get(RUN_KEY):
             return status(db, task)
         raise ValueError("倒查任务状态已变化，请刷新")
+    validation = retrospective_input.readiness(db, task, relations=relations)
+    if not validation["hard_ok"]:
+        raise ValueError("；".join(validation["hard_gaps"]))
+    relations = validation["contract_relations"]
     materials = _materials(db, task.id)
-    subs = [row for row in materials if row.role in {"sub", "labor"}]
-    if not subs or any(row.role not in {"sub", "labor", "general"} or not row.file_name.lower().endswith(".pdf")
-                       for row in materials):
-        raise ValueError("请上传分包合同PDF；倒查仅接收合同及明确归属的合同附件，不要求准入材料")
-    if any(row.parse_state in {"parsing", "uploading"} for row in materials):
-        raise ValueError("合同正在读取，请稍后开始")
-    relations = relations or ([{"material_id": subs[0].id, "relation": "main"}] if len(subs) == 1 else [])
-    if (len(relations) != len(subs) or {row["material_id"] for row in relations} != {row.id for row in subs}
-            or sum(row["relation"] == "main" for row in relations) != 1
-            or any(row["relation"] not in {"main", "attachment", "supplement"} for row in relations)):
-        raise ValueError("请明确一个分包合同正文，其余文件明确选择附件或补充协议，不自动合并不同合同")
-    if len({row.subject_id for row in subs if row.subject_id is not None}) > 1:
-        raise ValueError("首版仅支持一个分包合同来源集，多个分包主体请分别新建核查")
+    manifest = [{"material_id": row.id, "role": row.role, "file_sha256": _file_hash(row),
+                 "revision_no": row.revision_no, "subject_id": row.subject_id,
+                 "general_source_set_id": row.general_source_set_id,
+                 "general_source_set_version": row.general_source_set_version} for row in materials]
+    if any(not row["file_sha256"] for row in manifest):
+        raise ValueError("合同原件不存在，不能开始核查")
     model = effective_model_code_or_default(db, "bs_task", task.id)
     try:
         actual_identity = model_identity(client_from_env(model_code=model, max_retries=0, json_output=True))
     except Exception as exc:
         raise ValueError("所选模型尚未配置可用端点或密钥，合同倒查尚未开始") from exc
     run_id = "retro-" + uuid.uuid4().hex
-    manifest = [{"material_id": row.id, "role": row.role, "file_sha256": _file_hash(row),
-                 "revision_no": row.revision_no} for row in materials]
     task.options_snapshot_json = {**(task.options_snapshot_json or {}), RUN_KEY: run_id}
     task.state, task.started_at = "running", datetime.now(timezone.utc).replace(tzinfo=None)
     baseline = (task.baseline_date or datetime.now(ZoneInfo("Asia/Shanghai")).date()).isoformat()
@@ -153,7 +148,8 @@ def accept(db, task, actor, *, relations=None):
     service.add_event(db, task.id, SPEC, stage="check", payload={
         "run_id": run_id, "model_code": model, "model_identity": actual_identity,
         "baseline_date": baseline, "materials": manifest,
-        "relations": relations, "basis": freeze_basis(), "project_name": task.project_name}, commit=False)
+        "relations": relations, "input_version": retrospective_input.INPUT_VERSION,
+        "basis": freeze_basis(), "project_name": task.project_name}, commit=False)
     db.commit()
     schedule(db.get_bind(), job["id"])
     return status(db, task)
@@ -248,6 +244,10 @@ async def run(engine, job_id, *, client=None):
                     material = db.get(BsMaterial, manifest["material_id"])
                     if material is None or material.task_id != task_id or _file_hash(material) != manifest["file_sha256"]:
                         raise ValueError("合同原件已变化，不能沿用原运行")
+                    if spec.get("input_version") == retrospective_input.INPUT_VERSION and any(
+                            getattr(material, key) != manifest[key] for key in (
+                                "role", "revision_no", "subject_id", "general_source_set_id", "general_source_set_version")):
+                        raise ValueError("合同归属或版本已变化，不能沿用原运行")
                     path = _path(material)
                     needs_read = material.parse_state == "uploaded" and path is not None
                     if material.parse_state == "parsing":
@@ -280,8 +280,15 @@ async def run(engine, job_id, *, client=None):
                     material = db.get(BsMaterial, manifest["material_id"])
                     source = freeze_material(material, file_sha256=manifest["file_sha256"])
                     source["relation"] = selected[material.id]
+                    source["general_source_set_id"] = manifest.get("general_source_set_id")
+                    source["general_source_set_version"] = manifest.get("general_source_set_version")
+                    if spec.get("input_version") == retrospective_input.INPUT_VERSION and (
+                            material.parse_state != "done" or not any(
+                                p["readable"] and p["text"].strip() for p in source["pages"])):
+                        raise ValueError("合同正文未能读取，未开始条款核查")
                     sources.append(source)
-            signed, _ = infer_contract_date(sources)
+            sub_sources = [row for row in sources if row["role"] in {"sub", "labor"}]
+            signed, _ = infer_contract_date(sub_sources)
             with Session(engine) as db:
                 owned(db)
                 _progress(db, task_id, run_id, phase='retrieval', label='检索负面清单及规范依据')
@@ -291,7 +298,7 @@ async def run(engine, job_id, *, client=None):
                 with Session(engine) as query_db:
                     query_task = owned(query_db)
                     query_db.commit()  # 不在网络查询期间持有任务行锁。
-                    knowledge = retrieve(query_db, query_task, sources, spec['basis'], contract_date=signed)
+                    knowledge = retrieve(query_db, query_task, sub_sources, spec['basis'], contract_date=signed)
                     owned(query_db)
                     query_db.commit()
                     return knowledge
@@ -362,7 +369,9 @@ async def run(engine, job_id, *, client=None):
                     raise RuntimeError("倒查用量未落盘，已停止后续请求")
                 db.commit()
 
-        result = await analyze(frozen["sources"], spec["basis"], frozen["identity"], client=actual_client,
+        # P1先冻结两侧；总包比较由P2接入，不能把总包当成分包正文扫描。
+        sub_sources = [row for row in frozen["sources"] if row["role"] in {"sub", "labor"}]
+        result = await analyze(sub_sources, spec["basis"], frozen["identity"], client=actual_client,
                                load_checkpoint=load_checkpoint, before_batch=before_batch,
                                save_checkpoint=save_checkpoint, on_usage=usage, knowledge=frozen.get('knowledge'))
         if any(row["role"] == "general" for row in spec["materials"]):
@@ -371,7 +380,7 @@ async def run(engine, job_id, *, client=None):
                 from .retrospective_contracts import summary
                 result["execution_status"] = "partial"
                 result["summary"] = summary("partial", len(result["findings"]))
-        project_name = spec["project_name"] or infer_project_name(frozen["sources"])
+        project_name = spec["project_name"] or infer_project_name(sub_sources)
         with Session(engine) as db:
             owned(db)
             _progress(db, task_id, run_id, phase='report', label='汇总问题并生成报告')
