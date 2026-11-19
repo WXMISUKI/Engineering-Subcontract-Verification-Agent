@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import RetrospectiveWorkspace from '../src/plus-ui/blockchain-supervision/RetrospectiveWorkspace'
 
 const api = vi.hoisted(() => ({
@@ -117,6 +117,27 @@ describe('RetrospectiveWorkspace', () => {
       progress: { phase: 'coverage', label: '逐条核对冻结规范与合同', index: 7, total: 18 } })
     render(<RetrospectiveWorkspace taskId={4} conversationId={2}/>)
     expect(await screen.findByText('逐条核对冻结规范与合同 · 7/18批')).toBeTruthy()
+  })
+
+  it('uses three shared stages and keeps accepted materials read only when navigating back', async () => {
+    api.getBsTask.mockResolvedValue({ state: 'running', materials: [
+      { material_id: 6, role: 'general', file_name: '总包合同.pdf' },
+      { material_id: 7, role: 'sub', file_name: '分包合同.pdf' },
+    ], validation: { contract_relations: [{ material_id: 6, relation: 'main' }, { material_id: 7, relation: 'main' }] } })
+    api.getBsRetrospective.mockResolvedValue({ state: 'running', report: null })
+    render(<RetrospectiveWorkspace taskId={4} conversationId={2}/>)
+    await screen.findByText('合同智能核查')
+    const flow = within(screen.getByTestId('prototype-flow-header'))
+    expect(flow.getAllByRole('button')).toHaveLength(3)
+    expect(flow.getByRole('button', { name: /审查报告/ }).disabled).toBe(true)
+    fireEvent.click(flow.getByRole('button', { name: /上传资料/ }))
+    await screen.findByText('材料已锁定为查看态')
+    expect(screen.getByLabelText('总包合同.pdf的合同关系').disabled).toBe(true)
+    expect(screen.queryByTestId('materials-edit')).toBeNull()
+    expect(screen.queryByText('开始核查')).toBeNull()
+    fireEvent.click(screen.getByTestId('materials-back'))
+    expect(screen.getByText('合同智能核查')).toBeTruthy()
+    expect(api.startBsRetrospective).not.toHaveBeenCalled()
   })
 
   it('keeps project text editable until blur and restores saved metadata', async () => {

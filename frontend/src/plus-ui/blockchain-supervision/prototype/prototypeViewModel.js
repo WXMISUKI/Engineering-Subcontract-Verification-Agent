@@ -47,19 +47,25 @@ export function stageIndexOf(key) {
 // 与此刻停在哪一阶段无关，且单调不回退；否则从人工复核退回上传材料会把后续
 // 阶段一并锁死，再也回不去（2026-10-29 实机反馈）。
 // `reachedIndex` 由页面级外壳记录（跨阶段切换不清零，作废结论时复位）。
-export function buildPrototypeFlow(taskState, stage = null, reachedIndex = null) {
-  const derived = stageFromTaskState(taskState)
+export function buildPrototypeFlow(taskState, stage = null, reachedIndex = null, reviewMode = 'admission') {
+  const stages = reviewMode === 'contract_retrospective'
+    ? PROTOTYPE_STAGES.filter((item) => item.key !== 'review').map((item) => item.key === 'upload' ? { ...item, label: '上传资料' } : item)
+    : PROTOTYPE_STAGES
+  const indexes = Object.fromEntries(stages.map((item, index) => [item.key, index]))
+  const derived = reviewMode === 'contract_retrospective'
+    ? (taskState === 'done' ? 'report' : ['running', 'preparing', 'review', 'failed'].includes(taskState) ? 'run' : 'upload')
+    : stageFromTaskState(taskState)
   const current = stage || derived
-  const currentIndex = STAGE_INDEX[current] ?? 0
+  const currentIndex = indexes[current] ?? 0
   const reached = Math.max(
-    STAGE_INDEX[derived] ?? 0,
+    indexes[derived] ?? 0,
     currentIndex,
     Number.isInteger(reachedIndex) ? reachedIndex : 0,
   )
   return {
     current,
     reachedIndex: reached,
-    stages: PROTOTYPE_STAGES.map((stage, index) => ({
+    stages: stages.map((stage, index) => ({
       ...stage,
       state: index < currentIndex ? 'done' : index === currentIndex ? 'active' : 'upcoming',
       reachable: index <= reached,

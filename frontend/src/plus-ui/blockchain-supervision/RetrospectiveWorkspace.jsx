@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Download, RefreshCw } from 'lucide-react'
+import { Download } from 'lucide-react'
 import { associateBsGeneralSourceSet, createBsTask, deleteBsMaterial, downloadBsReport, getBsRetrospective, getBsTask,
   patchBsSection, removeBsGeneralSourceSetMember, saveBlob, saveBsRetrospectiveContracts, setBsMaterialRole,
   startBsRetrospective, uploadBsMaterial } from './lib/api'
 import PrototypeUploadPage from './prototype/PrototypeUploadPage'
+import PrototypeV3Shell from './prototype/PrototypeV3Shell'
+import CheckRunView from './components/CheckRunView'
 import { buildPrototypeTask } from './prototype/prototypeViewModel'
 import { validateUploadFiles } from './lib/uploadFiles'
 
@@ -20,6 +22,7 @@ export default function RetrospectiveWorkspace({ conversationId, taskId, onTaskC
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [retry, setRetry] = useState(0)
+  const [view, setView] = useState(null)
   const mutation = useRef(false)
   const scope = `${conversationId}:${taskId}`
   const activeScope = useRef(scope)
@@ -51,11 +54,15 @@ export default function RetrospectiveWorkspace({ conversationId, taskId, onTaskC
   }, [conversationId, taskId, retry])
 
   useEffect(() => {
+    setView(null)
     setSection({}); sectionDirty.current = false; setUploadRole('general')
   }, [conversationId, taskId])
 
   const setup = taskId == null || (status?.state === 'not_started' && task?.state === 'setup')
   const report = status?.report
+  const stage = setup ? 'upload' : view || (report ? 'report' : 'run')
+  const reached = setup ? 0 : report ? 2 : 1
+  useEffect(() => { if (report) setView('report') }, [report?.identity?.run_id, Boolean(report)])
   const validation = task?.validation
   const relations = validation?.contract_relations || []
   const relationMap = Object.fromEntries(relations.map((row) => [row.material_id, row.relation]))
@@ -112,7 +119,7 @@ export default function RetrospectiveWorkspace({ conversationId, taskId, onTaskC
       const detail = await refresh(taskId)
       if (!detail.validation?.hard_ok || detail.validation.parsing_pending) return
       const result = await startBsRetrospective(taskId, detail.validation.contract_relations)
-      setStatus(result); setRetry((value) => value + 1)
+      setView('run'); setStatus(result); setRetry((value) => value + 1)
     } catch (exc) { setError(exc.message); setRetry((value) => value + 1) }
     finally { mutation.current = false; setBusy(false) }
   }
@@ -144,7 +151,7 @@ export default function RetrospectiveWorkspace({ conversationId, taskId, onTaskC
     finally { setBusy(false) }
   }
 
-  return <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto bg-white text-[#202124]">
+  return <PrototypeV3Shell reviewMode="contract_retrospective" taskState={setup ? 'setup' : report ? 'done' : 'running'} stage={stage} reachedIndex={reached} onStageSelect={setView}><section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto bg-white text-[#202124]">
     <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[#DADCE0] px-6 py-3">
       <div><h1 className="text-base font-semibold">分包合同文本倒查</h1><p className="mt-0.5 text-xs text-[#5F6368]">合同核查完成后自动保存报告，可直接查看、对照和导出</p></div>
       {report && report.execution_status !== 'failed' && <div className="flex gap-2">
@@ -155,11 +162,12 @@ export default function RetrospectiveWorkspace({ conversationId, taskId, onTaskC
     {error && <div role="alert" className="mx-6 mt-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{error}
       {taskId != null && <button type="button" onClick={() => { setError(''); setRetry((value) => value + 1) }} className="ml-3 underline">刷新状态</button>}
     </div>}
-    {setup && <>
+    {stage === 'upload' && <>
       <input ref={inputRef} aria-label="上传合同PDF" type="file" accept="application/pdf,.pdf" multiple hidden disabled={busy}
         onChange={(event) => { const files = Array.from(event.target.files || []); event.target.value = ''; upload(files) }} />
       <PrototypeUploadPage task={uploadTask} reviewMode="contract_retrospective" uploadRole={uploadRole}
-        busy={busy} onReset={onReset} resetting={resetting} contractRelations={relationMap}
+        readOnly={!setup} onExit={() => setView(report ? 'report' : 'run')}
+        busy={busy} onReset={setup ? onReset : undefined} resetting={resetting} contractRelations={relationMap}
         onRoleChange={setUploadRole} onSectionChange={changeSection} onSectionBlur={commitSection} onContractRelationChange={changeRelation}
         onSelectFiles={() => inputRef.current?.click()} onDropFiles={upload}
         onMaterialRoleChange={(id, role) => changeInput(() => setBsMaterialRole(taskId, id, role))}
@@ -168,11 +176,8 @@ export default function RetrospectiveWorkspace({ conversationId, taskId, onTaskC
         onRemove={(id) => changeInput(() => deleteBsMaterial(taskId, id))}
         onReplace={(id, file) => upload([file], id)} onStart={start} />
     </>}
-    {taskId != null && !setup && !report && <div role="status" className="mx-6 mt-5 text-sm text-[#5F6368]">
-      {status?.state === 'failed' ? (status.error || '倒查未完成，未生成风险结论') : <span className="inline-flex items-center gap-2"><RefreshCw size={15} className="animate-spin"/>合同正在读取或核查，完成后报告自动显示。可离开页面后返回查看。</span>}
-      {status?.progress && <p className="mt-2 text-xs">{status.progress.label || '正在核查合同条款'}{status.progress.total > 1 ? ` · ${status.progress.index}/${status.progress.total}批` : ''}</p>}
-    </div>}
-    {report && <div className="min-w-0 flex-1 overflow-auto px-6 py-4">
+    {stage === 'run' && <div className="min-h-0 flex-1 overflow-auto p-6"><CheckRunView reviewMode="contract_retrospective" retrospective={status || {}} onRefresh={() => setRetry((value) => value + 1)} onOpenReport={() => setView('report')}/></div>}
+    {stage === 'report' && report && <div className="min-w-0 flex-1 overflow-auto px-6 py-4">
       <div className="border-b border-[#DADCE0] pb-3"><h2 className="text-sm font-semibold">{report.summary?.replace('部分范围受限，详见核查限制。', '')}</h2>
       </div>
       {report.execution_status !== 'failed' && <div className="mt-3 overflow-x-auto"><table className="w-full min-w-[1450px] table-fixed border-collapse text-left text-xs">
@@ -183,5 +188,5 @@ export default function RetrospectiveWorkspace({ conversationId, taskId, onTaskC
         </td>)}</tr>)}</tbody>
       </table>{!report.rows?.length && <p className="py-5 text-sm">当前已检查范围内未发现可列示问题。</p>}</div>}
     </div>}
-  </section>
+  </section></PrototypeV3Shell>
 }

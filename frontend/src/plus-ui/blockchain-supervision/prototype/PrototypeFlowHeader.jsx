@@ -1,7 +1,7 @@
 import { buildPrototypeFlow } from './prototypeViewModel'
 
-export default function PrototypeFlowHeader({ taskState, stage, reachedIndex = null, onStageSelect }) {
-  const flow = buildPrototypeFlow(taskState, stage, reachedIndex)
+export default function PrototypeFlowHeader({ taskState, stage, reachedIndex = null, onStageSelect, reviewMode = 'admission' }) {
+  const flow = buildPrototypeFlow(taskState, stage, reachedIndex, reviewMode)
   return (
     <ol className="flex list-none items-center border-b border-[#F2EDE5] bg-[#FAFAF7] px-6 py-2" aria-label="审查流程" data-testid="prototype-flow-header">
       {flow.stages.map((stage, index) => (
