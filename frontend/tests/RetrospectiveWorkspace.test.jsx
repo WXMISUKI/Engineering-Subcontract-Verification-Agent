@@ -9,7 +9,7 @@ const api = vi.hoisted(() => ({
   setBsMaterialRole: vi.fn(), patchBsSection: vi.fn(),
 }))
 
-vi.mock('../src/plus-ui/blockchain-supervision/lib/api', () => api)
+vi.mock('../src/plus-ui/blockchain-supervision/lib/api', async (importOriginal) => ({ ...(await importOriginal()), ...api }))
 
 afterEach(() => { cleanup(); vi.clearAllMocks() })
 

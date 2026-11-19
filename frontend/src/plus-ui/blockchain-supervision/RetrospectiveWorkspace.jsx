@@ -1,17 +1,14 @@
 import { useBsEventStream } from './hooks/useBsEventStream'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Download } from 'lucide-react'
 import { associateBsGeneralSourceSet, createBsTask, deleteBsMaterial, downloadBsReport, getBsRetrospective, getBsTask,
   patchBsSection, removeBsGeneralSourceSetMember, saveBlob, saveBsRetrospectiveContracts, setBsMaterialRole,
   startBsRetrospective, uploadBsMaterial } from './lib/api'
 import PrototypeUploadPage from './prototype/PrototypeUploadPage'
 import PrototypeV3Shell from './prototype/PrototypeV3Shell'
 import CheckRunView from './components/CheckRunView'
+import ReportView from './components/ReportView'
 import { buildPrototypeTask } from './prototype/prototypeViewModel'
 import { validateUploadFiles } from './lib/uploadFiles'
-
-const COLUMNS = ['项目名称', '总包/分包', '合同文件', '合同条款位置', '合同相关摘录', '不符合或风险说明', '依据文件', '依据条款及原文摘录']
-const button = 'inline-flex items-center gap-1.5 rounded border border-[#DADCE0] px-3 py-1.5 text-sm disabled:opacity-50'
 
 export default function RetrospectiveWorkspace({ conversationId, taskId, onTaskCreated, onReset, resetting = false }) {
   const [task, setTask] = useState(null)
@@ -46,7 +43,7 @@ export default function RetrospectiveWorkspace({ conversationId, taskId, onTaskC
           getBsTask(taskId, { signal: controller.signal }), getBsRetrospective(taskId, { signal: controller.signal }),
         ])
         if (dead) return
-        setTask(detail); setStatus(result); setError('')
+        setTask(detail); setStatus(result)
         if (['queued', 'running'].includes(result.state) || detail.materials?.some((m) => ['parsing', 'uploading'].includes(m.parse_state))) timer = setTimeout(tick, 2500)
       } catch (exc) { if (!dead) { setError(exc.message); timer = setTimeout(tick, 5000) } }
     }
@@ -156,10 +153,6 @@ export default function RetrospectiveWorkspace({ conversationId, taskId, onTaskC
   return <PrototypeV3Shell reviewMode="contract_retrospective" taskState={setup ? 'setup' : report ? 'done' : 'running'} stage={stage} reachedIndex={reached} onStageSelect={setView}><section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto bg-white text-[#202124]">
     <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[#DADCE0] px-6 py-3">
       <div><h1 className="text-base font-semibold">分包合同文本倒查</h1><p className="mt-0.5 text-xs text-[#5F6368]">合同核查完成后自动保存报告，可直接查看、对照和导出</p></div>
-      {report && report.execution_status !== 'failed' && <div className="flex gap-2">
-        <button type="button" disabled={busy} onClick={() => download('docx')} className={button}><Download size={15}/> Word</button>
-        <button type="button" disabled={busy} onClick={() => download('pdf')} className={button}><Download size={15}/> PDF</button>
-      </div>}
     </header>
     {error && <div role="alert" className="mx-6 mt-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{error}
       {taskId != null && <button type="button" onClick={() => { setError(''); setRetry((value) => value + 1) }} className="ml-3 underline">刷新状态</button>}
@@ -179,16 +172,6 @@ export default function RetrospectiveWorkspace({ conversationId, taskId, onTaskC
         onReplace={(id, file) => upload([file], id)} onStart={start} />
     </>}
     {stage === 'run' && <div className="min-h-0 flex-1 overflow-auto p-6"><CheckRunView reviewMode="contract_retrospective" retrospective={status || {}} events={events} onRefresh={() => setRetry((value) => value + 1)} onOpenReport={() => setView('report')}/></div>}
-    {stage === 'report' && report && <div className="min-w-0 flex-1 overflow-auto px-6 py-4">
-      <div className="border-b border-[#DADCE0] pb-3"><h2 className="text-sm font-semibold">{report.summary?.replace('部分范围受限，详见核查限制。', '')}</h2>
-      </div>
-      {report.execution_status !== 'failed' && <div className="mt-3 overflow-x-auto"><table className="w-full min-w-[1450px] table-fixed border-collapse text-left text-xs">
-        <colgroup>{[7, 5, 10, 10, 20, 22, 10, 16].map((width, i) => <col key={i} style={{ width: `${width}%` }}/>)}</colgroup>
-        <thead><tr>{(report.columns || COLUMNS).map((column) => <th key={column} className="border border-[#DADCE0] bg-[#F8F9FA] px-2 py-2 font-semibold">{column}</th>)}</tr></thead>
-        <tbody>{report.rows?.map((row) => <tr key={row.finding_id}>{row.cells.map((cell, index) => <td key={index} className="break-words whitespace-pre-wrap border border-[#DADCE0] px-2 py-2 align-top leading-relaxed">
-          {index === 3 ? row.evidence.map((ref, j) => <div key={j}><a className="text-[#176B5B] underline" href={`/api/plus/blockchain-supervision/materials/${ref.material_id}/file#page=${ref.page}`} target="_blank" rel="noreferrer">{ref.file_name ? `${ref.file_name} · ` : ''}PDF第{ref.page}页{ref.clause ? ` · ${ref.clause}` : ''}</a></div>) : cell}
-        </td>)}</tr>)}</tbody>
-      </table>{!report.rows?.length && <p className="py-5 text-sm">当前已检查范围内未发现可列示问题。</p>}</div>}
-    </div>}
+    {stage === 'report' && report && <ReportView reviewMode="contract_retrospective" report={report} materials={task?.materials || []} exporting={busy ? 'busy' : null} onExport={(_, fmt) => download(fmt)} onBack={() => setView('run')}/>}
   </section></PrototypeV3Shell>
 }
