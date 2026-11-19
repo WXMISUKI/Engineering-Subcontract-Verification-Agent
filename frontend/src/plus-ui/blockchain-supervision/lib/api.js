@@ -155,6 +155,14 @@ export async function getBsRetrospective(taskId, { signal } = {}) {
   return _json(r, '合同倒查状态')
 }
 
+export async function saveBsRetrospectiveContracts(taskId, relations) {
+  const r = await fetch(`${BASE}/tasks/${taskId}/retrospective/contracts`, {
+    method: 'PATCH', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ relations }),
+  })
+  return _json(r, '保存合同关系')
+}
+
 // 任务级计时与 Token 用量只读视图；shadow 阶段只展示真实用量，不扣余额。
 export async function getBsTaskUsage(taskId, { signal } = {}) {
   const r = await fetch(`${BASE}/tasks/${taskId}/usage`, { credentials: 'include', signal })

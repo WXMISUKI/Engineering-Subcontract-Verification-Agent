@@ -610,6 +610,7 @@ export default function BlockchainSupervisionWorkbench({ conversationId, onExitP
         )}
         {reviewMode === 'contract_retrospective' && !['loading', 'error'].includes(phase) && (
           <RetrospectiveWorkspace conversationId={conversationId} taskId={taskId}
+            onReset={handleRestart} resetting={restarting}
             onTaskCreated={(id) => { setTaskId(id); openSetup(id) }} onError={setError} />
         )}
         {reviewMode !== 'contract_retrospective' && phase === 'setup' && (

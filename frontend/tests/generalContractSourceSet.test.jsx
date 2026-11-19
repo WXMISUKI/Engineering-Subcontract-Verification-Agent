@@ -103,3 +103,10 @@ it('keeps source-set controls read-only after setup has ended', () => {
   expect(screen.queryByLabelText('选择总包材料：总包合同32.pdf')).toBeNull()
   expect(screen.queryByRole('button', { name: '从来源集中解除：总包合同31.pdf' })).toBeNull()
 })
+
+
+it('keeps the admission date help and packet upload category', () => {
+  renderSourceSetPage({ materials: [] })
+  expect(screen.getAllByText('以该日期有效的规则版本核查').length).toBeGreaterThan(0)
+  expect(screen.getByTestId('upload-category').textContent).toContain('报审资料包')
+})
