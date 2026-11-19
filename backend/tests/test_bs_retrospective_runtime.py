@@ -32,7 +32,9 @@ class Client:
         if payload.get('analysis_type') == 'upstream_extract':
             if on_usage:
                 on_usage({'prompt_tokens': 20, 'completion_tokens': 10, 'total_tokens': 30})
-            return json.dumps({'checked_topics': payload['topic_ids'], 'facts': [], 'terms': []})
+            return json.dumps({'checked_topics': payload['topic_ids'], 'facts': [], 'terms': [],
+                'skipped_evidence': [{'evidence_id': key, 'reason': '此模拟不生成上游条款。'}
+                    for key in payload['evidence_catalog']]})
         if payload.get('analysis_type') == 'basis_coverage':
             if on_usage:
                 on_usage({'prompt_tokens': 20, 'completion_tokens': 10, 'total_tokens': 30})

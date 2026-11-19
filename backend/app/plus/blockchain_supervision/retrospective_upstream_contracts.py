@@ -6,18 +6,25 @@ from pydantic import Field
 from .retrospective_contracts import Citation, ContractModel, KINDS
 from .retrospective_sources import digest, original_citation
 
-VERSION = 'bs.contract-upstream.v3'
+VERSION = 'bs.contract-upstream.v4'
 TOPICS = ('scope', 'price', 'payment', 'schedule', 'quality', 'safety',
           'environment', 'wages', 'insurance', 'equipment', 'priority')
 
 
-class ProfileFact(ContractModel):
+class ProfileFactFields(ContractModel):
     field: Literal['project_name', 'contract_section', 'employer', 'contractor', 'scope']
     value: str = Field(min_length=2, max_length=1200)
+
+
+class ProfileFact(ProfileFactFields):
     evidence: list[Citation] = Field(min_length=1, max_length=4)
 
 
-class ContractTerm(ContractModel):
+class SelectedProfileFact(ProfileFactFields):
+    evidence_ids: list[str] = Field(min_length=1, max_length=4)
+
+
+class ContractTermFields(ContractModel):
     topic: Literal['scope', 'price', 'payment', 'schedule', 'quality', 'safety',
                    'environment', 'wages', 'insurance', 'equipment', 'priority']
     statement: str = Field(min_length=4, max_length=1200)
@@ -26,13 +33,32 @@ class ContractTerm(ContractModel):
     conditions: str = Field(max_length=1200)
     exceptions: str = Field(max_length=1200)
     priority: str = Field(max_length=1200)
+
+
+class ContractTerm(ContractTermFields):
     evidence: list[Citation] = Field(min_length=1, max_length=6)
+
+
+class SelectedContractTerm(ContractTermFields):
+    evidence_ids: list[str] = Field(min_length=1, max_length=6)
 
 
 class ExtractionResponse(ContractModel):
     checked_topics: list[str] = Field(min_length=11, max_length=11)
     facts: list[ProfileFact] = Field(max_length=24)
     terms: list[ContractTerm] = Field(max_length=60)
+
+
+class SkippedEvidence(ContractModel):
+    evidence_id: str
+    reason: str = Field(min_length=4, max_length=600)
+
+
+class SelectedExtractionResponse(ContractModel):
+    checked_topics: list[str] = Field(min_length=11, max_length=11)
+    facts: list[SelectedProfileFact] = Field(max_length=24)
+    terms: list[SelectedContractTerm] = Field(max_length=60)
+    skipped_evidence: list[SkippedEvidence] = Field(max_length=300)
 
 
 class RelationshipCheck(ContractModel):
@@ -108,6 +134,51 @@ def bind_extraction(raw, batch, sources):
                 rejected.append({'kind': kind, 'index': index, 'error_type': type(exc).__name__})
     state = ('partial' if facts or terms else 'failed') if rejected else 'completed'
     return {'state': state, 'facts': facts, 'terms': terms, 'rejected': rejected}
+
+
+def bind_selected_extraction(raw, batch, sources, catalog):
+    """逐项恢复本批已有原文，复用严格来源/局部范围校验；一项错误不丢整批。"""
+    if not isinstance(raw, dict) or any(not isinstance(raw.get(key), list) or len(raw[key]) > limit
+                                       for key, limit in [('facts', 24), ('terms', 60)]):
+        raise ValueError('条款提取外层结构不完整')
+    parsed = SelectedExtractionResponse.model_validate({**raw, 'facts': [], 'terms': []})
+    if set(parsed.checked_topics) != set(TOPICS):
+        raise ValueError('条款提取主题执行字段缺失或重复')
+    result = {'facts': [], 'terms': [], 'rejected': []}
+    referenced = set()
+    for kind, schema in [('facts', SelectedProfileFact), ('terms', SelectedContractTerm)]:
+        for index, value in enumerate(raw[kind]):
+            try:
+                item = schema.model_validate(value).model_dump()
+                ids = item.pop('evidence_ids')
+                if len(ids) != len(set(ids)) or any(key not in catalog for key in ids):
+                    raise ValueError('证据编号重复或不属于本批正文')
+                item['evidence'] = [dict(catalog[key]) for key in ids]
+                bound = bind_extraction({'checked_topics': parsed.checked_topics,
+                    'facts': [item] if kind == 'facts' else [],
+                    'terms': [item] if kind == 'terms' else []}, batch, sources)
+                result[kind].extend(bound[kind])
+                if bound[kind]:
+                    referenced.update(ids)
+                result['rejected'].extend({**row, 'index': index} for row in bound['rejected'])
+            except (ValueError, TypeError, KeyError) as exc:
+                result['rejected'].append({'kind': kind, 'index': index, 'error_type': type(exc).__name__})
+    result['state'] = ('partial' if result['facts'] or result['terms'] else 'failed') if result['rejected'] else 'completed'
+    claimed = {key for kind in ('facts', 'terms') for row in raw[kind]
+               if isinstance(row, dict) and isinstance(row.get('evidence_ids'), list)
+               for key in row['evidence_ids'] if isinstance(key, str)}
+    skipped = [row.evidence_id for row in parsed.skipped_evidence]
+    if len(skipped) != len(set(skipped)) or any(key not in catalog or key in claimed for key in skipped):
+        raise ValueError('提取与略过的原文编号冲突、重复或不属于当前批次')
+    result['skipped_evidence'] = [row.model_dump() for row in parsed.skipped_evidence]
+    result['unaccounted_evidence_ids'] = sorted(set(catalog) - referenced - set(skipped))
+    if result['unaccounted_evidence_ids']:
+        result['state'] = 'partial'
+        result.setdefault('limitations', []).append('部分原文片段没有提取或略过记录，不能确认已完整核对。')
+    if len(raw['facts']) == 24 or len(raw['terms']) == 60:
+        result['state'] = 'partial'
+        result.setdefault('limitations', []).append('单批提取达到输出项数上限，尚不能确认所有约定已提取。')
+    return result
 
 
 def bind_relationship(raw, sources, facts):

@@ -77,6 +77,99 @@ def test_same_page_quote_may_cross_contiguous_parts_but_not_unprovided_text():
     assert bind_extraction(raw, omitted, src)['state'] == 'failed'
 
 
+def test_extraction_selects_local_original_text_and_isolates_foreign_ids():
+    from app.plus.blockchain_supervision.retrospective_upstream import extraction_catalog
+    from app.plus.blockchain_supervision.retrospective_upstream_contracts import bind_selected_extraction
+    src = sources()[:1]
+    batch = analysis_batches(src)[0]
+    catalog = extraction_catalog(batch)
+    key = next(iter(catalog))
+    raw = {'checked_topics': list(TOPICS), 'facts': [
+        {'field': 'project_name', 'value': '嘉松工程', 'evidence_ids': [key]},
+        {'field': 'employer', 'value': '虚构单位', 'evidence_ids': [key]}],
+        'skipped_evidence': [], 'terms': [{'topic': 'quality', 'statement': '检测对象及费用约定',
+            'obligation_holder': 'general', 'transmission': 'self_perform',
+            'conditions': '', 'exceptions': '', 'priority': '', 'evidence_ids': ['foreign']}]}
+    result = bind_selected_extraction(raw, batch, src, catalog)
+    assert result['state'] == 'partial' and len(result['rejected']) == 2
+    assert result['facts'][0]['evidence'][0]['quote'] == catalog[key]['quote']
+    assert result['facts'][0]['value'] == '嘉松工程'
+    # 即使目录被错误混入其他批次片段，仍由原局部范围校验拒绝。
+    catalog['foreign'] = {'material_id': 2, 'page': 1, 'quote': sources()[1]['pages'][0]['text'], 'clause': ''}
+    result = bind_selected_extraction(raw, batch, sources(), catalog)
+    assert not result['terms']
+
+
+def test_extraction_catalog_preserves_each_substantive_original_fragment():
+    from app.plus.blockchain_supervision.retrospective_upstream import extraction_catalog
+    src = sources()[:1]
+    src[0]['pages'][0]['text'] = '检测工作由业主负责。' * 180 + '\n由承包人负责配合并报价。'
+    batch = analysis_batches(src)[0]
+    refs = list(extraction_catalog(batch).values())
+    assert ''.join(row['quote'] for row in refs) == src[0]['pages'][0]['text']
+    assert len(refs) > 1
+
+
+def test_extraction_catalog_separates_numbered_obligations_without_changing_text():
+    from app.plus.blockchain_supervision.retrospective_upstream import extraction_catalog
+    text = '(19) 检测由业主委托，报价不含检测费，承包人承担配合费。\n\n(20) 供电申请配合费由承包人承担。'
+    src = sources()[:1]
+    src[0]['pages'][0]['text'] = text
+    refs = list(extraction_catalog(analysis_batches(src)[0]).values())
+    assert len(refs) == 2
+    assert ''.join(row['quote'] for row in refs) == text
+    assert all(not ('(19)' in row['quote'] and '(20)' in row['quote']) for row in refs)
+
+
+def test_unaccounted_or_rejected_evidence_is_not_completed_coverage():
+    from app.plus.blockchain_supervision.retrospective_upstream import extraction_catalog
+    from app.plus.blockchain_supervision.retrospective_upstream_contracts import bind_selected_extraction
+    src = sources()[:1]
+    batch = analysis_batches(src)[0]
+    catalog = extraction_catalog(batch)
+    key = next(iter(catalog))
+    raw = {'checked_topics': list(TOPICS), 'facts': [], 'terms': [], 'skipped_evidence': []}
+    result = bind_selected_extraction(raw, batch, src, catalog)
+    assert result['state'] == 'partial' and key in result['unaccounted_evidence_ids']
+    raw['facts'] = [{'field': 'employer', 'value': '虚构单位', 'evidence_ids': [key]}]
+    result = bind_selected_extraction(raw, batch, src, catalog)
+    assert result['rejected'] and key in result['unaccounted_evidence_ids']
+    raw['facts'] = []
+    raw['skipped_evidence'] = [{'evidence_id': key, 'reason': '本片段无独立的身份或义务'}]
+    result = bind_selected_extraction(raw, batch, src, catalog)
+    assert result['state'] == 'completed' and not result['unaccounted_evidence_ids']
+
+
+@pytest.mark.parametrize('fault', ['unknown', 'duplicate', 'referenced'])
+def test_extraction_skip_accounting_rejects_conflicting_ids(fault):
+    from app.plus.blockchain_supervision.retrospective_upstream import extraction_catalog
+    from app.plus.blockchain_supervision.retrospective_upstream_contracts import bind_selected_extraction
+    src = sources()[:1]
+    batch = analysis_batches(src)[0]
+    catalog = extraction_catalog(batch)
+    key = next(iter(catalog))
+    skip = {'evidence_id': 'foreign' if fault == 'unknown' else key, 'reason': '本片段无独立的身份或义务'}
+    raw = {'checked_topics': list(TOPICS), 'facts': [], 'terms': [], 'skipped_evidence': [skip]}
+    if fault == 'duplicate':
+        raw['skipped_evidence'].append(dict(skip))
+    if fault == 'referenced':
+        raw['facts'].append({'field': 'project_name', 'value': '嘉松工程', 'evidence_ids': [key]})
+    with pytest.raises(ValueError, match='冲突|重复|不在'):
+        bind_selected_extraction(raw, batch, src, catalog)
+
+
+def test_extraction_output_limit_does_not_claim_all_obligations_extracted():
+    from app.plus.blockchain_supervision.retrospective_upstream import extraction_catalog
+    from app.plus.blockchain_supervision.retrospective_upstream_contracts import bind_selected_extraction
+    src = sources()[:1]
+    batch = analysis_batches(src)[0]
+    catalog = extraction_catalog(batch)
+    fact = {'field': 'project_name', 'value': '嘉松工程', 'evidence_ids': [next(iter(catalog))]}
+    raw = {'checked_topics': list(TOPICS), 'facts': [fact] * 24, 'terms': [], 'skipped_evidence': []}
+    result = bind_selected_extraction(raw, batch, src, catalog)
+    assert result['state'] == 'partial' and '上限' in result['limitations'][0]
+
+
 def test_relationship_requires_all_dimensions_and_both_sides():
     dims = {'project': ('project_name', 'project_name', '嘉松工程'),
             'parties': ('contractor', 'employer', '建工公司'), 'scope': ('scope', 'scope', '桥梁吊装')}
@@ -186,12 +279,17 @@ class UpstreamClient:
                                    'message': row['message']} for row in payload['candidates']]}
         else:
             raise AssertionError(phase)
-        if phase in {'upstream_relationship', 'upstream_compare'}:
-            for check in value['checks']:
+        if phase in {'upstream_relationship', 'upstream_compare', 'upstream_extract'}:
+            for check in (value['facts'] + value['terms'] if phase == 'upstream_extract' else value['checks']):
                 refs = check.pop('evidence')
-                check['evidence_ids'] = [key for reference in refs
+                check['evidence_ids'] = list(dict.fromkeys(key for reference in refs
                     for key, item in payload['evidence_catalog'].items()
-                    if all(item[k] == reference[k] for k in ('material_id', 'page', 'quote'))]
+                    if all(item[k] == reference[k] for k in ('material_id', 'page'))
+                    and reference['quote'] in item['quote']))
+            if phase == 'upstream_extract':
+                referenced = {key for item in value['facts'] + value['terms'] for key in item['evidence_ids']}
+                value['skipped_evidence'] = [{'evidence_id': key, 'reason': '无独立的合同义务。'}
+                    for key in payload['evidence_catalog'] if key not in referenced]
         return json.dumps(value, ensure_ascii=False)
 
 
@@ -381,7 +479,7 @@ def test_real_runtime_persists_dual_evidence_and_same_report_exports(tmp_path, m
     result = http.get(base + '/retrospective').json()
     report = result['report']
     assert report, result
-    assert report['identity']['upstream_version'] == 'bs.contract-upstream.v3'
+    assert report['identity']['upstream_version'] == 'bs.contract-upstream.v4'
     assert report['upstream']['state'] == 'completed'
     assert {row['kind'] for row in report['rows']} == {'internal_ambiguity', 'upstream_risk'}
     row = next(row for row in report['rows'] if row['kind'] == 'upstream_risk')
