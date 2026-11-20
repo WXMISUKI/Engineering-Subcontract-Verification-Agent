@@ -1,5 +1,6 @@
 """倒查复用准入参考检索；来源、授权、原件指纹与原文校验仍由公共链路执行。"""
 from copy import deepcopy
+from datetime import date
 
 from . import knowledge_runs
 from .retrospective_analysis import _words
@@ -45,8 +46,8 @@ def retrieve(db, task, sources, basis, *, contract_date=None, baseline_date=_BAS
         return {'status': 'local_only', 'references': [], 'queries': [], 'limitations': []}
     # 复用原有按文件归并查询、超时、授权范围、原件哈希、逐字原文及父项/例外验证。
     try:
-        result = knowledge_runs.retrieve_reference_run(db, task, {'basis_sources': planned},
-                                                      as_of=as_of)
+        result = knowledge_runs.retrieve_reference_run(
+            db, task, {'basis_sources': planned}, as_of=as_of)
     except Exception:
         return {'status': 'unavailable', 'references': [], 'queries': [],
                 'limitations': ['在线知识检索未完成；本次保留已冻结的本地规范原文对照结果。']}

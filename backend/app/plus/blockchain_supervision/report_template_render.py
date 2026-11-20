@@ -101,7 +101,7 @@ def _format_overview(document):
 def word_bytes(payload, digest, exported_at=None):
     """Dispatch by frozen template identity; V1.4 is block-rendered."""
     document = payload["template_document"]
-    if document.get("template_id") in {"v1.4", "contract-retrospective.v1", "contract-retrospective.v2", "contract-retrospective.v3"}:
+    if document.get("template_id") in {"v1.4", "contract-retrospective.v1", "contract-retrospective.v2", "contract-retrospective.v3", "contract-retrospective.v4", "contract-retrospective.v5", "contract-retrospective.v6"}:
         return word_bytes_v14(payload, digest, exported_at)
     doc = Document(Path(__file__).with_name("templates") / "review_opinion_v13.docx")
     body = doc.element.body
@@ -321,7 +321,7 @@ def word_bytes_v14(payload, digest, exported_at=None):
     section.bottom_margin = Cm(2.5)
     section.left_margin = Cm(3.2)
     section.right_margin = Cm(3.2)
-    retrospective = document.get("template_id") in {"contract-retrospective.v1", "contract-retrospective.v2", "contract-retrospective.v3"}
+    retrospective = document.get("template_id") in {"contract-retrospective.v1", "contract-retrospective.v2", "contract-retrospective.v3", "contract-retrospective.v4", "contract-retrospective.v5", "contract-retrospective.v6"}
     if retrospective:
         section.left_margin = section.right_margin = Cm(1.25)
         section.top_margin = section.bottom_margin = Cm(1.5)
@@ -441,7 +441,8 @@ def pdf_bytes(payload, digest, exported_at=None):
             columns = wrap_row(row)
             total = max(map(len, columns))
             row_height = total * line_height + 2 * padding
-            if row_height <= height - 2 * margin - header_height and y + row_height > height - margin:
+            if (payload.get('review_mode') != 'contract_retrospective'
+                    and row_height <= height - 2 * margin - header_height and y + row_height > height - margin):
                 new_page()
                 cells(headers, True)
             offset = 0

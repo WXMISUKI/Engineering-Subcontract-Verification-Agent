@@ -23,7 +23,10 @@ def test_missing_reply_or_unproven_nonapplicability_cannot_be_coverage():
     assert checks[0]['state'] == 'pending'
     checked = validate_checks({'checks': [{'clause_id': 'D#1', 'state': 'checked',
         'reason': '本批已检查，未出现相关合同约定。', 'evidence': []}]}, units, [])
-    assert checked[0]['state'] == 'checked'
+    assert checked[0]['state'] == 'pending'
+    observed = validate_checks({'checks': [{'clause_id': 'D#1', 'state': 'not_observed',
+        'reason': '本批未见对应约定，仅记录本批观察。', 'evidence': []}]}, units, [])
+    assert observed[0]['state'] == 'not_observed'
 
 
 def test_failed_scan_keeps_unit_pending_even_when_another_scan_checked():
@@ -32,6 +35,37 @@ def test_failed_scan_keeps_unit_pending_even_when_another_scan_checked():
         {'clause_id': 'D#1', 'state': 'checked', 'reason': '合同有约定', 'evidence': []}]},
         {'state': 'failed', 'basis_ids': ['D#1'], 'checks': []}])
     assert result['counts'] == {'checked': 0, 'not_applicable': 0, 'pending': 1}
+
+
+@pytest.mark.parametrize('other', ['not_observed', 'not_applicable'])
+def test_actual_checked_clause_and_other_scanned_batches_are_not_lost(other):
+    p = plan([{'clause_id': 'D#1', 'doc_id': 'D', 'text': '工资须支付。'}])
+    def scan(state, batch):
+        return {'state': 'completed', 'batch_id': batch, 'basis_ids': ['D#1'], 'checks': [
+            {'clause_id': 'D#1', 'state': state, 'reason': '本批具体核对记录', 'evidence': []}]}
+    result = summarize(p, [scan('checked', 'one'), scan(other, 'two')])
+    assert result['counts'] == {'checked': 1, 'not_applicable': 0, 'pending': 0}
+    result = summarize(p, [scan('not_observed', 'one'), scan('not_observed', 'two')])
+    assert result['counts']['pending'] == 1
+    assert '尚不能' in result['clauses'][0]['reason']
+    result = summarize(p, [scan('checked', 'one'), scan('pending', 'two')])
+    assert result['counts']['pending'] == 1
+
+
+def test_coverage_evidence_cannot_borrow_another_batch_or_conflict_with_no_observation():
+    from types import SimpleNamespace
+    from app.plus.blockchain_supervision.retrospective_sources import freeze_material, analysis_batches
+    source = freeze_material(SimpleNamespace(id=1, file_name='合同.pdf', role='sub', pages=1,
+        parse_state='done', degradations_json=[], pages_json=[{'page': 1, 'text':
+            '1.1 工资应按月足额支付。\n1.2 安全费用应专款专用。'}]))
+    batch = analysis_batches([source])[0]
+    ref = {'material_id': 1, 'page': 1, 'quote': '安全费用应专款专用。'}
+    units = [{'clause_id': 'D#1'}]
+    raw = {'checks': [{'clause_id': 'D#1', 'state': 'checked', 'reason': '有合同原文支撑', 'evidence': [ref]}]}
+    assert validate_checks(raw, units, [source], batch=batch)[0]['state'] == 'checked'
+    assert validate_checks(raw, units, [source], batch={**batch, 'parts': batch['parts'][:1]})[0]['state'] == 'pending'
+    raw['checks'][0]['state'] = 'not_observed'
+    assert validate_checks(raw, units, [source], batch=batch)[0]['state'] == 'pending'
 
 
 @pytest.mark.asyncio

@@ -3,8 +3,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.plus.blockchain_supervision.retrospective_analysis import TOPICS, ExecutionBoundaryError, analyze, validate_candidate, select_basis, review_candidates
-from app.plus.blockchain_supervision.retrospective_contracts import SCHEMA_VERSION
+from app.plus.blockchain_supervision.retrospective_analysis import (TOPICS, REVIEW_CHECKLIST,
+    ExecutionBoundaryError, analyze, validate_candidate, select_basis, review_candidates)
+from app.plus.blockchain_supervision.retrospective_contracts import PROMPT_VERSION, SCHEMA_VERSION
 from app.plus.blockchain_supervision.retrospective_sources import freeze_material
 
 
@@ -13,12 +14,46 @@ def inputs():
         parse_state="done", degradations_json=[], pages_json=[{"page": 1, "text":
         "签订日期：2023年12月22日\n12.1 工期延长的费用可另行协商。\n12.2 工期延长费用均不调整。"}]))
     identity = {"schema_version": SCHEMA_VERSION, "task_id": 1, "model_code": "synthetic",
-                "contract_date": "2023-12-22", "baseline_date": "2026-11-19"}
+                "contract_date": "2023-12-22", "baseline_date": "2023-12-22",
+                "current_notice_date": "2026-11-20"}
     candidate = {"kind": "internal_ambiguity", "time_scope": "contract_text",
                  "message": "合同对延期费用能否调整存在不同约定，适用边界尚不明确。", "evidence": [
                      {"material_id": 1, "page": 1, "quote": "工期延长的费用可另行协商。"},
                      {"material_id": 1, "page": 1, "quote": "工期延长费用均不调整。"}]}
     return [source], identity, candidate
+
+
+def test_review_checklist_covers_nine_dimensions_with_contract_evidence_boundaries():
+    assert PROMPT_VERSION == 'bs.contract-retrospective-prompt.v16'
+    assert list(REVIEW_CHECKLIST) == [
+        'scope_and_qualification', 'procedure_and_subcontracting', 'key_staffing',
+        'equipment_and_lifting', 'hazardous_work_and_plans', 'contract_terms_and_upstream',
+        'quality_safety_schedule_environment', 'commercial_terms_and_insurance',
+        'labor_and_wage_protection',
+    ]
+    joined = '\n'.join(REVIEW_CHECKLIST.values())
+    for boundary in ('不据合同认证主体登记', '不能证明审批已经完成', '不推断人员实际到岗',
+                     '不得由合同清单推断设备已进场', '合同不能代替施工方案', '不推断实际支付',
+                     '不证明实际用工', '不得仅凭工程名称/关键词', '不自行设阈值'):
+        assert boundary in joined
+    for topic in ('负面清单', '专项施工方案', '文件优先顺序', '质量保证金', '工资专户', '实际支付',
+                  '信号指挥', '司索', '履约及质量保证金', '独立检测费', '配合费', '索赔程序', '欠薪处置'):
+        assert topic in joined
+
+
+def test_repeated_numbered_titles_do_not_prove_substantive_contract_ambiguity():
+    sources, identity, candidate = inputs()
+    repeated = '\n\n'.join(f'17.2.{i} 完工验收程序' for i in range(100, 111))
+    sources[0]['pages'][0]['text'] += '\n' + repeated
+    candidate['evidence'][1]['quote'] = repeated
+    with pytest.raises(ValueError, match='重复标题'):
+        validate_candidate(candidate, sources, [], identity)
+
+
+def test_normal_repeated_substantive_obligations_remain_valid_evidence():
+    sources, identity, candidate = inputs()
+    # 两项实际费用约定仍可比较；不将任意重复词或条款号视为噪声。
+    assert validate_candidate(candidate, sources, [], identity)['kind'] == 'internal_ambiguity'
 
 
 class Client:
@@ -76,6 +111,69 @@ def test_tunnel_scope_does_not_force_bridge_negative_rules():
     selected = select_basis({'parts': [{'text': '盾构法施工隧道工程专业分包。'}]}, freeze_basis())
     assert 'MOT-NL-2024#二、' in {row['clause_id'] for row in selected}
     assert not any(row['clause_id'].startswith('MOT-NL-2024#一、') for row in selected)
+
+
+def beam_exception_inputs():
+    sources, identity, _ = inputs()
+    quote = '承包范围：箱梁等预制构件安装。'
+    sources[0]['pages'][0]['text'] += '\n' + quote
+    text = '整孔预制安装的预制梁（外购梁预制、运输除外）；'
+    basis = [{'clause_id': 'MOT-NL-2024#一、（三）6', 'text': text,
+              'document': {'effective_from': '2024-01-01'}, 'human_verified': True}]
+    finding = {'kind': 'conditional_risk', 'time_scope': 'current',
+               'message': '合同范围包含箱梁安装，若涉及整孔预制安装的预制梁（非外购梁），存在施工分包范围风险。',
+               'conditions': '具体安装的箱梁为整孔预制安装（非外购梁）时。',
+               'applicability': '本项针对公路工程施工分包范围。',
+               'evidence': [{'material_id': 1, 'page': 1, 'quote': quote}],
+               'basis': [{'clause_id': basis[0]['clause_id'], 'quote': text}]}
+    return sources, identity, basis, finding
+
+
+def test_bound_rule_restores_exact_process_exception_and_keeps_audit():
+    sources, identity, basis, finding = beam_exception_inputs()
+    row = validate_candidate(finding, sources, basis, identity)
+    assert '非外购梁' not in row['message'] + row['conditions']
+    assert '外购梁预制、运输除外' in row['message'] and '外购梁预制、运输除外' in row['conditions']
+    assert row['time_scope'] == 'current' and row['kind'] == 'conditional_risk'
+    assert row['basis'][0]['quote'] == basis[0]['text']
+    assert len(row['basis_exception_corrections']) == 2
+    assert row['basis_exception_corrections'][0]['original'] == finding['message']
+    assert sources[0]['pages'][0]['text'].endswith(finding['evidence'][0]['quote'])
+
+
+def test_correct_or_unrelated_exception_is_not_arbitrarily_rewritten():
+    sources, identity, basis, finding = beam_exception_inputs()
+    finding['message'] = finding['message'].replace('非外购梁', '外购梁预制、运输除外')
+    finding['conditions'] = '若符合规则所列工法且不属于所列工序例外。'
+    row = validate_candidate(finding, sources, basis, identity)
+    assert row['message'] == finding['message'] and 'basis_exception_corrections' not in row
+    basis[0]['clause_id'] = finding['basis'][0]['clause_id'] = 'OTHER#6'
+    finding['message'] = '若其他规则的原文明确约定非外购梁范围，本次仅按该约定提示。'
+    row = validate_candidate(finding, sources, basis, identity)
+    assert row['message'] == finding['message'] and 'basis_exception_corrections' not in row
+
+
+@pytest.mark.parametrize('wrong', ['外购梁均除外', '外购梁不受限制', '非外购梁'])
+def test_unstructured_expansion_of_process_exception_is_rejected(wrong):
+    sources, identity, basis, finding = beam_exception_inputs()
+    finding['message'] = '若涉及整孔预制安装，' + wrong + '，可能存在范围风险。'
+    with pytest.raises(ValueError, match='工序例外'):
+        validate_candidate(finding, sources, basis, identity)
+
+
+@pytest.mark.asyncio
+async def test_final_review_uses_the_same_exception_guard_and_preserves_original_explanation():
+    sources, identity, basis, finding = beam_exception_inputs()
+    row = validate_candidate(finding, sources, basis, identity)
+    class Reviewer:
+        async def complete(self, *args, **kwargs):
+            return json.dumps({'decisions': [{'finding_id': row['finding_id'], 'keep': True,
+                'reason': '合同涉及安装，需按具体工法和工序核对。', 'message': finding['message']}]})
+    kept, decisions = await review_candidates([row], sources, identity, client=Reviewer(), final=True)
+    assert '非外购梁' not in kept[0]['message']
+    assert len(kept[0]['basis_exception_corrections']) == 3
+    assert decisions[0]['message'] == finding['message']
+    assert kept[0]['evidence'] == row['evidence'] and kept[0]['finding_id'] == row['finding_id']
 
 
 @pytest.mark.asyncio

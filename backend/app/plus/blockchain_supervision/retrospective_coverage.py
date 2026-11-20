@@ -2,7 +2,7 @@
 import re
 from .retrospective_sources import digest, original_citation
 
-VERSION = 'bs.contract-basis-coverage.v1'
+VERSION = 'bs.contract-basis-coverage.v2'
 ARCHIVE = {'DG-TJ08-2225-ARCHIVE', 'JS-2014-159-ARCHIVE', 'MOHURD-128-2015',
            'SC-397-2014'}
 
@@ -49,7 +49,7 @@ def plan(basis):
             'units': list(units.values()), 'groups': groups}
 
 
-def validate_checks(raw, units, sources):
+def validate_checks(raw, units, sources, *, batch=None):
     keys = {row['clause_id'] for row in units}
     checks = raw.get('checks')
     if (not isinstance(checks, list) or len(checks) != len(keys)
@@ -59,7 +59,7 @@ def validate_checks(raw, units, sources):
     result = []
     for row in checks:
         state, reason = row.get('state'), row.get('reason')
-        if state not in {'checked', 'not_applicable', 'pending'} or not isinstance(reason, str) or not 1 <= len(reason.strip()) <= 1800:
+        if state not in {'checked', 'not_applicable', 'not_observed', 'pending'} or not isinstance(reason, str) or not 1 <= len(reason.strip()) <= 1800:
             state, reason = 'pending', '模型返回的状态或理由无效，需补核。'
         evidence = row.get('evidence', [])
         if not isinstance(evidence, list) or len(evidence) > 6:
@@ -67,8 +67,16 @@ def validate_checks(raw, units, sources):
         refs = [original_citation(ref, sources) for ref in evidence if isinstance(ref, dict)]
         if len(refs) != len(evidence) or any(ref is None for ref in refs):
             state, reason, refs = 'pending', '合同引文无法逐字定位，需补核。', []
-        if state == 'not_applicable' and not refs:
-            state, reason = 'pending', '不适用结论缺少合同原文支撑。'
+        if batch is not None and any(
+                not any(part['material_id'] == ref['material_id'] and part['page'] == ref['page']
+                        and part['start'] <= ref['start'] + offset < part['end']
+                        for part in batch['parts'])
+                for ref in refs for offset, char in enumerate(ref['quote']) if not char.isspace()):
+            state, reason, refs = 'pending', '合同引文不在本批实际检查范围，需补核。', []
+        if state in {'checked', 'not_applicable'} and not refs:
+            state, reason = 'pending', '核对或不适用结论缺少合同原文支撑。'
+        if state == 'not_observed' and refs:
+            state, reason = 'pending', '本批未见相关约定的记录与所引合同原文冲突，需补核。'
         result.append({'clause_id': row['clause_id'], 'state': state, 'reason': reason, 'evidence': refs})
     return result
 
@@ -89,8 +97,12 @@ def summarize(coverage_plan, scans):
                     and all(r['state'] == 'not_applicable' for r in records)):
                 row.update(state='not_applicable', reason='各正文批次均有原文支持不适用，见检查记录。')
             elif (not failed and records and len(records) == len(related)
-                  and all(r['state'] == 'checked' for r in records)):
+                  and any(r['state'] == 'checked' for r in records)
+                  and all(r['state'] in {'checked', 'not_applicable', 'not_observed'} for r in records)):
                 row.update(state='checked', reason='已对全部可读合同批次逐条核查；表示覆盖完成，不等同合规认证。')
+            elif (not failed and records and len(records) == len(related)
+                  and all(r['state'] == 'not_observed' for r in records)):
+                row.update(state='pending', reason='各批未见对应约定；尚不能据此确认规范不适用或合同存在遗漏。')
             else:
                 row.update(state='pending', reason='适用条件/合同对应尚未确认或执行未完成，见逐批记录。')
             row['checks'] = records
@@ -131,11 +143,11 @@ async def scan(sources, basis, identity, *, client, load_checkpoint=None, before
                     '这是规范驱动的漏检补查，不受topic_ids或关键词限制。逐一核对本次basis全部条款。'
                     '只比较本批合同正文，其他批次单独扫描；不能据本批没有内容就认定全合同缺失。'
                     '额外返回checks数组，每个basis.clause_id恰好一项：'
-                    '{"clause_id":"原ID","state":"checked|not_applicable|pending",'
+                    '{"clause_id":"原ID","state":"checked|not_applicable|not_observed|pending",'
                     '"reason":"具体核对结果、适用条件或尚待核实理由",'
                     '"evidence":[{"material_id":整数,"page":整数,"quote":"合同连续原文","clause":"条款号"}]}。'
-                    'checked是已找到原文并对照，不是合规认证；not_applicable必须有合同原文证明适用条件不成立。'
-                    '本批没有相关合同文字时用checked并写明仅指本批，evidence为空；不得推断其他批次也无约定。'
+                    'checked是已找到原文并对照，不是合规认证，必须引用对应合同原文；not_applicable必须有合同原文证明适用条件不成立。'
+                    '本批没有相关合同文字时用not_observed并写明仅指本批，evidence为空；不得改为not_applicable、checked或推断其他批次也无约定。'
                     '无法判断或仅凭一般行业知识时用pending，不能虚构引文。'
                     '法规职责针对实际行为时，只审查合同有没有明确相反约定，不推定行为已发生。'
                      '没有发现不必生成风险。checks理由不得要求准入缺件、编造审批决定或法律。'
@@ -143,16 +155,18 @@ async def scan(sources, basis, identity, *, client, load_checkpoint=None, before
                      '最终仍返回一个完整对象，禁止直接返回checks数组或findings数组。完整外层结构：'
                      '{"checked_topics":["scope","price","payment","schedule","quality","safety","responsibility","consistency"],'
                      '"findings":[],"limitations":[],"checks":[{"clause_id":"复制本次basis的实际ID",'
-                     '"state":"checked","reason":"针对本批的具体核对结果","evidence":[]}]}。'
+                     '"state":"not_observed","reason":"本批未见对应约定，仅记录本批观察，不判断全合同适用性。","evidence":[]}]}。'
                      'checks须覆盖全部本次basis；findings有发现时使用前述发现项字段，无发现时为空。'),
                     {'analysis_type': 'basis_coverage', 'contract_date': identity.get('contract_date'),
-                     'baseline_date': identity['baseline_date'], 'topic_ids': list(TOPICS),
+                     'baseline_date': identity.get('baseline_date'),
+                     'current_notice_date': identity.get('current_notice_date'),
+                     'topic_ids': list(TOPICS),
                      'topic_descriptions': TOPICS,
                      'batch': prompt_batch(batch), 'basis': group}, on_usage=on_usage,
                      response_schema=strict_response_schema(CoverageResponse))
                 if raw.get('checked_topics') != list(TOPICS):
                     raise ValueError('规范补查未确认完整主题执行')
-                checks = validate_checks(raw, group, sources)
+                checks = validate_checks(raw, group, sources, batch=batch)
                 if not isinstance(raw.get('findings'), list) or len(raw['findings']) > 80:
                     raise ValueError('规范补查发现格式不完整')
                 candidates, rejected = {}, []

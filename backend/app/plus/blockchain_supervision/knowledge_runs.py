@@ -37,6 +37,7 @@ from .reference_snapshots import (CHECK_GROUPS, GROUP_POINTERS, LEGACY_POINTER,
 _DATA_DIR = Path(__file__).with_name("data")
 REFERENCE_RUN_LEASE_SECONDS = 60
 REFERENCE_ORIGINAL_MAX_BYTES = 20 * 1024 * 1024
+_AS_OF_UNSET = object()
 
 
 class ReferenceRunSuperseded(Exception):
@@ -657,9 +658,6 @@ def _fetch_verified_text_parts(db: Session, task: BsTask, scope: dict, source: d
 def _reference_group_budget(source_count: int) -> float:
     """按来源数量分配有界时间，保留至少半个运行租约供后续持久化。"""
     return min(30.0, max(10.0, source_count * 0.5))
-
-
-_AS_OF_UNSET = object()
 
 
 def retrieve_reference_run(db: Session, task: BsTask, run: dict, *, as_of=_AS_OF_UNSET) -> dict:

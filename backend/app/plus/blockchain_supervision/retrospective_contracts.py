@@ -6,12 +6,43 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-SCHEMA_VERSION = "bs.contract-retrospective.v1"
-PROMPT_VERSION = "bs.contract-retrospective-prompt.v13"
+SCHEMA_VERSION = "bs.contract-retrospective.v2"
+PROMPT_VERSION = "bs.contract-retrospective-prompt.v16"
 RUN_KEY = "retrospective_run_id"
 JOB_GROUP = "contract_retrospective"
 COLUMNS = ["项目名称", "总包/分包", "合同文件", "合同条款位置", "合同相关摘录",
            "不符合或风险说明", "依据文件", "依据条款及原文摘录"]
+REPORT_DIMENSIONS = {
+    "scope_and_qualification": "分包范围与主体资格",
+    "procedure_and_subcontracting": "报审程序、审批权限与分包行为",
+    "key_staffing": "关键岗位与作业人员配置",
+    "equipment_and_lifting": "施工设备与起重机械",
+    "hazardous_work_and_plans": "危大工程与专项施工方案",
+    "contract_terms_and_upstream": "分包合同条款与总包衔接",
+    "quality_safety_schedule_environment": "质量、安全、进度与环保约定",
+    "commercial_terms_and_insurance": "计量计价、支付、担保与保险",
+    "labor_and_wage_protection": "农民工工资与用工保障",
+}
+LEGACY_REPORT_DIMENSIONS = {
+    "subcontract_scope": "scope_and_qualification",
+    "parties_and_file_order": "scope_and_qualification",
+    "subcontract_procedure": "procedure_and_subcontracting",
+    "price_and_settlement": "commercial_terms_and_insurance",
+    "schedule_quality_safety": "quality_safety_schedule_environment",
+    "labor_and_wages": "labor_and_wage_protection",
+    "changes_and_claims": "contract_terms_and_upstream",
+    "breach_and_disputes": "contract_terms_and_upstream",
+    "regulatory_applicability": "contract_terms_and_upstream",
+    "other_contract_terms": "contract_terms_and_upstream",
+}
+ALL_REPORT_DIMENSION_IDS = tuple(REPORT_DIMENSIONS) + tuple(LEGACY_REPORT_DIMENSIONS)
+
+
+def report_dimension_id(value: str | None) -> str:
+    """Map pre-v15 findings to the current nine-section report taxonomy."""
+    if value in REPORT_DIMENSIONS:
+        return value
+    return LEGACY_REPORT_DIMENSIONS.get(value or "", "contract_terms_and_upstream")
 KINDS = {
     "text_nonconformity": "文本不符合", "internal_ambiguity": "内部歧义",
     "conditional_risk": "条件性风险", "current_notice": "现行规则提示",
@@ -37,6 +68,12 @@ class BasisCitation(ContractModel):
 
 class FindingCandidate(ContractModel):
     kind: Literal["text_nonconformity", "internal_ambiguity", "conditional_risk", "current_notice"]
+    review_dimension: Literal[
+        "scope_and_qualification", "procedure_and_subcontracting", "key_staffing",
+        "equipment_and_lifting", "hazardous_work_and_plans", "contract_terms_and_upstream",
+        "quality_safety_schedule_environment", "commercial_terms_and_insurance",
+        "labor_and_wage_protection", *ALL_REPORT_DIMENSION_IDS,
+    ] = "contract_terms_and_upstream"
     time_scope: Literal["historical", "current", "contract_text"]
     message: str = Field(min_length=8, max_length=2400)
     evidence: list[Citation] = Field(min_length=1, max_length=12)
@@ -83,7 +120,7 @@ class ReviewResponse(ContractModel):
 
 class BasisCheck(ContractModel):
     clause_id: str
-    state: Literal['checked', 'not_applicable', 'pending']
+    state: Literal['checked', 'not_applicable', 'not_observed', 'pending']
     reason: str = Field(min_length=1, max_length=1800)
     evidence: list[Citation] = Field(max_length=6)
 
@@ -112,7 +149,7 @@ def strict_response_schema(model):
 
 
 class RunIdentity(ContractModel):
-    schema_version: Literal["bs.contract-retrospective.v1"] = SCHEMA_VERSION
+    schema_version: Literal["bs.contract-retrospective.v2"] = SCHEMA_VERSION
     prompt_version: str = PROMPT_VERSION
     run_id: str = Field(min_length=1, max_length=100)
     task_id: int = Field(gt=0)
@@ -122,20 +159,27 @@ class RunIdentity(ContractModel):
     basis_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
     knowledge_fingerprint: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     coverage_version: str | None = None
+    upstream_version: str | None = None
+    visual_version: str | None = None
     coverage_fingerprint: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     baseline_date: str | None = None
+    baseline_date_source: Literal["manual", "subcontract_signing_date", "subcontract_contract",
+                                  "unknown", "unresolved", "legacy"] = "unresolved"
+    current_notice_date: str | None = None
     contract_date: str | None = None
-    baseline_date_source: Literal["manual", "subcontract_contract", "unresolved"] = "unresolved"
 
     @model_validator(mode="after")
     def valid_dates(self):
         if self.baseline_date is not None:
             date.fromisoformat(self.baseline_date)
+        if self.current_notice_date is not None:
+            date.fromisoformat(self.current_notice_date)
         if self.contract_date is not None:
             date.fromisoformat(self.contract_date)
-        if self.baseline_date is None and self.baseline_date_source != "unresolved":
-            raise ValueError("缺少核查基准日时，来源必须为 unresolved")
-        if self.baseline_date is not None and self.baseline_date_source == "unresolved":
+        if self.baseline_date is None and self.baseline_date_source in {
+                "manual", "subcontract_signing_date", "subcontract_contract"}:
+            raise ValueError("缺少核查基准日时，来源不能标记为已确认")
+        if self.baseline_date is not None and self.baseline_date_source in {"unknown", "unresolved"}:
             self.baseline_date_source = "manual"
         return self
 

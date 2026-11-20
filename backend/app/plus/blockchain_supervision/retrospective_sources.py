@@ -6,10 +6,24 @@ import json
 import re
 from pathlib import Path
 from types import SimpleNamespace
+from collections import Counter
 
 from . import basis_validation, parsing
 
 CLAUSE_HEADING = re.compile(r"(?m)^[ \t]*(第[一二三四五六七八九十百零〇\d]+[条章节][^\n]{0,80}|\d{1,2}(?:\.\d{1,2}){1,3}[、.\s：:]?[^\n]{0,80})")
+
+
+def repetitive_heading_evidence(quote):
+    """高度重复的编号标题不能证明两项实质约定矛盾；不改写或修复原始文本。"""
+    lines = [re.sub(r'\s+', '', line) for line in quote.splitlines() if line.strip()]
+    headings = [match.group(1) for line in lines
+                if (match := re.fullmatch(r'\d+(?:\.\d+){1,4}[、.：:]?([^\d]{2,24})', line))]
+    if not headings:
+        return False
+    title, count = Counter(headings).most_common(1)[0]
+    # 少量正常标题/实质条文的重复不触发；至少六个相同短标题占绝大多数正文。
+    text_length = sum(len(re.sub(r'[\d.、：:]', '', line)) for line in lines)
+    return count >= 6 and count * len(title) >= .8 * text_length
 
 
 def digest(value) -> str:

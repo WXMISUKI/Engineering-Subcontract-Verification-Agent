@@ -3,14 +3,14 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 from pathlib import Path
 import uuid
 
 from sqlalchemy.orm import Session
 
-from . import ai_review_jobs, parsing, review_mode
+from . import ai_review_jobs, parsing, review_mode, retrospective_input
 from .models import BsMaterial, BsReviewVersion, BsTask, BsTaskEvent
 from .retrospective_contracts import JOB_GROUP, RUN_KEY, RunIdentity
 from .retrospective_sources import digest, freeze_basis, freeze_material, infer_contract_date
@@ -75,6 +75,18 @@ def _file_hash(material):
     return checksum.hexdigest()
 
 
+def _render_citation_page(material, page, expected_hash):
+    from ..structural_check.ocr_text import _render_pages
+    from .retrospective_visual import DPI
+    path = _path(material)
+    if path is None or _file_hash(material) != expected_hash:
+        raise ValueError('问题引用原件已变化，停止原页核对')
+    rendered = _render_pages(str(path), [page - 1], DPI)
+    if page - 1 not in rendered or _file_hash(material) != expected_hash:
+        raise ValueError('问题引用页不存在或原件在渲染期间变化')
+    return rendered[page - 1]['png']
+
+
 def _materials(db, task_id):
     return (db.query(BsMaterial).filter_by(task_id=task_id, superseded_by_id=None,
                                          replacement_target_id=None).order_by(BsMaterial.id).all())
@@ -93,7 +105,12 @@ def status(db, task, *, version_no=None):
     if report and (version_no is not None or report["identity"]["run_id"] == run_id):
         result.update(report=deepcopy(report), version_no=version.version_no,
                       state=report["execution_status"])
-    result["progress"] = _event(db, task.id, BATCH_STARTED, run_id) if run_id else None
+    progress_event = (db.query(BsTaskEvent).filter_by(task_id=task.id)
+                      .filter(BsTaskEvent.event_type.in_([BATCH_STARTED, CHECKPOINT]))
+                      .order_by(BsTaskEvent.sequence.desc()).all()) if run_id else []
+    latest = next((row.payload_json for row in progress_event if (row.payload_json or {}).get("run_id") == run_id
+                   and "phase" in (row.payload_json or {})), None)
+    result["progress"] = {key: latest[key] for key in ("run_id", "phase", "label", "index", "total", "batch_id", "state") if key in latest} if latest else None
     if job and job.state == "failed" and not result["report"]:
         result["error"] = "合同倒查未完成，执行状态已保存；请查看限制说明或新建核查。"
     return result
@@ -123,40 +140,40 @@ def accept(db, task, actor, *, relations=None):
         if (task.options_snapshot_json or {}).get(RUN_KEY):
             return status(db, task)
         raise ValueError("倒查任务状态已变化，请刷新")
+    validation = retrospective_input.readiness(db, task, relations=relations)
+    if not validation["hard_ok"]:
+        raise ValueError("；".join(validation["hard_gaps"]))
+    relations = validation["contract_relations"]
     materials = _materials(db, task.id)
-    subs = [row for row in materials if row.role in {"sub", "labor"}]
-    if not subs or any(row.role not in {"sub", "labor", "general"} or not row.file_name.lower().endswith(".pdf")
-                       for row in materials):
-        raise ValueError("请上传分包合同PDF；倒查仅接收合同及明确归属的合同附件，不要求准入材料")
-    if any(row.parse_state in {"parsing", "uploading"} for row in materials):
-        raise ValueError("合同正在读取，请稍后开始")
-    relations = relations or ([{"material_id": subs[0].id, "relation": "main"}] if len(subs) == 1 else [])
-    if (len(relations) != len(subs) or {row["material_id"] for row in relations} != {row.id for row in subs}
-            or sum(row["relation"] == "main" for row in relations) != 1
-            or any(row["relation"] not in {"main", "attachment", "supplement"} for row in relations)):
-        raise ValueError("请明确一个分包合同正文，其余文件明确选择附件或补充协议，不自动合并不同合同")
-    if len({row.subject_id for row in subs if row.subject_id is not None}) > 1:
-        raise ValueError("首版仅支持一个分包合同来源集，多个分包主体请分别新建核查")
+    manifest = [{"material_id": row.id, "role": row.role, "file_sha256": _file_hash(row),
+                 "revision_no": row.revision_no, "subject_id": row.subject_id,
+                 "general_source_set_id": row.general_source_set_id,
+                 "general_source_set_version": row.general_source_set_version} for row in materials]
+    if any(not row["file_sha256"] for row in manifest):
+        raise ValueError("合同原件不存在，不能开始核查")
     model = effective_model_code_or_default(db, "bs_task", task.id)
     try:
         actual_identity = model_identity(client_from_env(model_code=model, max_retries=0, json_output=True))
     except Exception as exc:
         raise ValueError("所选模型尚未配置可用端点或密钥，合同倒查尚未开始") from exc
     run_id = "retro-" + uuid.uuid4().hex
-    manifest = [{"material_id": row.id, "role": row.role, "file_sha256": _file_hash(row),
-                 "revision_no": row.revision_no} for row in materials]
     task.options_snapshot_json = {**(task.options_snapshot_json or {}), RUN_KEY: run_id}
     task.state, task.started_at = "running", datetime.now(timezone.utc).replace(tzinfo=None)
-    date_source = service.baseline_date_source(task)
-    explicit_baseline = task.baseline_date if date_source == "manual" else None
-    baseline = explicit_baseline.isoformat() if explicit_baseline else None
+    baseline_source = service.baseline_date_source(task)
+    baseline = (task.baseline_date.isoformat()
+                if baseline_source == "manual" and task.baseline_date else None)
+    current_notice_date = datetime.now(timezone(timedelta(hours=8))).date().isoformat()
     job = ai_review_jobs.enqueue(db, task.id, run_id, [JOB_GROUP])
+    from .retrospective_upstream_contracts import VERSION as upstream_version
+    from .retrospective_visual import VERSION as visual_version
     service.add_event(db, task.id, SPEC, stage="check", payload={
         "run_id": run_id, "model_code": model, "model_identity": actual_identity,
-        "baseline_date": baseline,
-        "baseline_date_source": "manual" if baseline else "contract_date_pending",
-        "materials": manifest,
-        "relations": relations, "basis": freeze_basis(), "project_name": task.project_name}, commit=False)
+        "baseline_date": baseline, "baseline_date_source": baseline_source,
+        "current_notice_date": current_notice_date, "materials": manifest,
+        "relations": relations, "input_version": retrospective_input.INPUT_VERSION,
+        "upstream_version": upstream_version,
+        "visual_version": visual_version,
+        "basis": freeze_basis(), "project_name": task.project_name}, commit=False)
     db.commit()
     schedule(db.get_bind(), job["id"])
     return status(db, task)
@@ -251,6 +268,10 @@ async def run(engine, job_id, *, client=None):
                     material = db.get(BsMaterial, manifest["material_id"])
                     if material is None or material.task_id != task_id or _file_hash(material) != manifest["file_sha256"]:
                         raise ValueError("合同原件已变化，不能沿用原运行")
+                    if spec.get("input_version") == retrospective_input.INPUT_VERSION and any(
+                            getattr(material, key) != manifest[key] for key in (
+                                "role", "revision_no", "subject_id", "general_source_set_id", "general_source_set_version")):
+                        raise ValueError("合同归属或版本已变化，不能沿用原运行")
                     path = _path(material)
                     needs_read = material.parse_state == "uploaded" and path is not None
                     if material.parse_state == "parsing":
@@ -283,11 +304,18 @@ async def run(engine, job_id, *, client=None):
                     material = db.get(BsMaterial, manifest["material_id"])
                     source = freeze_material(material, file_sha256=manifest["file_sha256"])
                     source["relation"] = selected[material.id]
+                    source["general_source_set_id"] = manifest.get("general_source_set_id")
+                    source["general_source_set_version"] = manifest.get("general_source_set_version")
+                    if spec.get("input_version") == retrospective_input.INPUT_VERSION and (
+                            material.parse_state != "done" or not any(
+                                p["readable"] and p["text"].strip() for p in source["pages"])):
+                        raise ValueError("合同正文未能读取，未开始条款核查")
                     sources.append(source)
-            signed, _date_limitations = infer_contract_date(sources)
-            effective_baseline = spec.get("baseline_date") or signed
-            baseline_source = ("manual" if spec.get("baseline_date") else
-                               "subcontract_contract" if signed else "unresolved")
+            sub_sources = [row for row in sources if row["role"] in {"sub", "labor"}]
+            signed, _ = infer_contract_date(sub_sources)
+            baseline_date = spec.get("baseline_date") or signed
+            baseline_date_source = ("manual" if spec.get("baseline_date") else
+                                    "subcontract_signing_date" if signed else "unknown")
             with Session(engine) as db:
                 owned(db)
                 _progress(db, task_id, run_id, phase='retrieval', label='检索负面清单及规范依据')
@@ -298,7 +326,7 @@ async def run(engine, job_id, *, client=None):
                     query_task = owned(query_db)
                     query_db.commit()  # 不在网络查询期间持有任务行锁。
                     knowledge = retrieve(query_db, query_task, sources, spec['basis'],
-                                         contract_date=signed, baseline_date=effective_baseline)
+                                         contract_date=signed, baseline_date=baseline_date)
                     owned(query_db)
                     query_db.commit()
                     return knowledge
@@ -310,8 +338,11 @@ async def run(engine, job_id, *, client=None):
                 material_fingerprint=digest(sources), basis_fingerprint=digest(spec["basis"]),
                 knowledge_fingerprint=digest(knowledge),
                 coverage_version=coverage_plan['version'], coverage_fingerprint=digest(coverage_plan),
-                baseline_date=effective_baseline, contract_date=signed,
-                baseline_date_source=baseline_source).model_dump(mode="json")
+                upstream_version=spec.get('upstream_version'),
+                visual_version=spec.get('visual_version'),
+                baseline_date=baseline_date, baseline_date_source=baseline_date_source,
+                current_notice_date=spec.get("current_notice_date"),
+                contract_date=signed).model_dump(mode="json")
             frozen = {"run_id": run_id, "sources": sources, "identity": identity, 'knowledge': knowledge}
             with Session(engine) as db:
                 owned(db)
@@ -337,8 +368,12 @@ async def run(engine, job_id, *, client=None):
             active_batch_id = batch_id
             with Session(engine) as db:
                 owned(db)
-                phase = 'coverage' if batch_id.startswith('basis:') else 'contract_check'
-                label = '逐条核对冻结规范与合同' if phase == 'coverage' else '核查合同条款及内部一致性'
+                phase = ('upstream' if batch_id.startswith('upstream:') else
+                         'coverage' if batch_id.startswith('basis:') else
+                         'citation_check' if batch_id.startswith('visual:') else 'contract_check')
+                label = {'coverage': '逐条核对冻结规范与合同', 'contract_check': '核查合同条款及内部一致性',
+                         'upstream': '核对总分包合同约定及适用条件',
+                         'citation_check': '核对问题引用原页'}[phase]
                 _progress(db, task_id, run_id, phase=phase, label=label,
                           index=index - 1, total=total, batch_id=batch_id)
                 db.commit()
@@ -346,8 +381,13 @@ async def run(engine, job_id, *, client=None):
         def save_checkpoint(batch_id, result):
             with Session(engine) as db:
                 owned(db)
+                started = _event(db, task_id, BATCH_STARTED, run_id, batch_id) or {}
+                progress = {key: started[key] for key in ("phase", "label", "total") if key in started}
+                if "index" in started:
+                    progress["index"] = started["index"] + 1
+                progress["state"] = result.get("state", "completed")
                 service.add_event(db, task_id, CHECKPOINT, stage="check", payload={
-                    "run_id": run_id, "batch_id": batch_id, "result": result}, commit=False)
+                    **progress, "run_id": run_id, "batch_id": batch_id, "result": result}, commit=False)
                 db.commit()
 
         def usage(raw):
@@ -370,16 +410,50 @@ async def run(engine, job_id, *, client=None):
                     raise RuntimeError("倒查用量未落盘，已停止后续请求")
                 db.commit()
 
-        result = await analyze(frozen["sources"], spec["basis"], frozen["identity"], client=actual_client,
+        sub_sources = [row for row in frozen["sources"] if row["role"] in {"sub", "labor"}]
+        result = await analyze(sub_sources, spec["basis"], frozen["identity"], client=actual_client,
                                load_checkpoint=load_checkpoint, before_batch=before_batch,
                                save_checkpoint=save_checkpoint, on_usage=usage, knowledge=frozen.get('knowledge'))
-        if any(row["role"] == "general" for row in spec["materials"]):
+        if frozen['identity'].get('upstream_version'):
+            from .retrospective_upstream import compare
+            from .retrospective_contracts import summary
+            # 原检查完全未执行成功时先保留失败，避免无边界追加后续请求。
+            upstream = (await compare(frozen['sources'], frozen['identity'], client=actual_client,
+                load_checkpoint=load_checkpoint, before_batch=before_batch,
+                save_checkpoint=save_checkpoint, on_usage=usage)
+                if result['execution_status'] != 'failed' else
+                {'version': spec.get('upstream_version'), 'state': 'not_executed', 'findings': [],
+                 'limitations': ['分包合同检查未执行完成，未继续上下游比较。']})
+            result['upstream'] = upstream
+            result['findings'] = list({row['finding_id']: row for row in
+                                      result['findings'] + upstream['findings']}.values())
+            result['limitations'].extend(upstream['limitations'])
+            if upstream['state'] != 'completed' and result['execution_status'] == 'completed':
+                result['execution_status'] = 'partial'
+            result['summary'] = summary(result['execution_status'], len(result['findings']))
+            result['scope_note'] = '本报告为分包合同文本及总包辅助比较；覆盖状态分别记录，不认证实际履约或合同全部合规。'
+        elif any(row["role"] == "general" for row in spec["materials"]):
             result["limitations"].append("已上传总包合同，本阶段尚未执行上下游辅助比对；单合同检查结果不代表与总包一致。")
             if result["execution_status"] == "completed":
                 from .retrospective_contracts import summary
                 result["execution_status"] = "partial"
                 result["summary"] = summary("partial", len(result["findings"]))
-        project_name = spec["project_name"] or infer_project_name(frozen["sources"])
+        if frozen['identity'].get('visual_version') and result['execution_status'] != 'failed':
+            from .retrospective_visual import verify_findings
+
+            def render_page(material_id, page, file_sha256):
+                with Session(engine) as db:
+                    owned(db)
+                    material = db.get(BsMaterial, material_id)
+                    if material is None or material.task_id != task_id:
+                        raise ValueError('问题引用原件不属于当前任务')
+                    db.commit()  # 渲染期间不占用任务行锁。
+                    return _render_citation_page(material, page, file_sha256)
+
+            result = await verify_findings(result, frozen['sources'], client=actual_client,
+                render_page=render_page, load_checkpoint=load_checkpoint,
+                before_batch=before_batch, save_checkpoint=save_checkpoint, on_usage=usage)
+        project_name = spec["project_name"] or infer_project_name(sub_sources)
         with Session(engine) as db:
             owned(db)
             _progress(db, task_id, run_id, phase='report', label='汇总问题并生成报告')
@@ -398,8 +472,8 @@ async def run(engine, job_id, *, client=None):
             task.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
             task.elapsed_seconds = max(0., (task.completed_at - task.started_at).total_seconds()) if task.started_at else None
             service.add_event(db, task_id, "retrospective.completed", stage="report", payload={
-                "run_id": run_id, "execution_status": result["execution_status"],
-                "finding_count": len(result["findings"])}, commit=False)
+                "run_id": run_id, "execution_status": report["execution_status"],
+                "finding_count": len(report["findings"])}, commit=False)
             db.commit()
     except asyncio.CancelledError:
         raise

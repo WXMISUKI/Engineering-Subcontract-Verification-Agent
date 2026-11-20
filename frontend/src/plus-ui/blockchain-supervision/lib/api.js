@@ -155,6 +155,14 @@ export async function getBsRetrospective(taskId, { signal } = {}) {
   return _json(r, '合同倒查状态')
 }
 
+export async function saveBsRetrospectiveContracts(taskId, relations) {
+  const r = await fetch(`${BASE}/tasks/${taskId}/retrospective/contracts`, {
+    method: 'PATCH', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ relations }),
+  })
+  return _json(r, '保存合同关系')
+}
+
 // 任务级计时与 Token 用量只读视图；shadow 阶段只展示真实用量，不扣余额。
 export async function getBsTaskUsage(taskId, { signal } = {}) {
   const r = await fetch(`${BASE}/tasks/${taskId}/usage`, { credentials: 'include', signal })
@@ -560,6 +568,8 @@ export function bsEventsUrl(taskId, afterSeq) {
 // 该事件被 SSE **静默丢弃** —— 界面时间线少一段且不报错，属「护栏没人读」。
 // 现按后端 EVENT_LABELS 全量补录（顺序也按后端字典顺序，便于逐行对照）。
 export const BS_EVENT_TYPES = [
+  'retrospective.accepted', 'retrospective.input_frozen', 'retrospective.batch_started',
+  'retrospective.batch_completed', 'retrospective.completed', 'retrospective.failed',
   'material.page_text_refresh',
   'task.supplement_planned',
   'task.supplement_blocked',

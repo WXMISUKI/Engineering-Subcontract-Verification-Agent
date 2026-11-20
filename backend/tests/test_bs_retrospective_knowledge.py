@@ -15,8 +15,8 @@ def test_native_reference_retrieval_receives_contract_scope_and_excludes_admissi
                 'item_id': 'NL-B-08', 'negative_parts': True}
     before = deepcopy(template)
     monkeypatch.setattr(knowledge.knowledge_runs, 'load_reference_package', lambda **kw: {'sources': [template]})
-    def native(db, task, run, *, as_of):
-        assert as_of == date(2026, 11, 19)
+    def native(db, task, run, **kwargs):
+        assert kwargs['as_of'] == date(2023, 12, 22)
         planned = run['basis_sources']
         assert all(row['doc_id'] == 'MOT-NL-2024' for row in planned)
         leaf = next(row for row in planned if row['clause_id'].endswith('（三）6'))
@@ -26,7 +26,8 @@ def test_native_reference_retrieval_receives_contract_scope_and_excludes_admissi
                 'queries': [{'status': 'hit'}], 'authorized_scope': [{'kb_id': 'authorized-kb'}]}
     monkeypatch.setattr(knowledge.knowledge_runs, 'retrieve_reference_run', native)
     result = knowledge.retrieve(None, SimpleNamespace(baseline_date=date(2026, 11, 19)),
-                                sources, freeze_basis(), contract_date='2023-12-22')
+                                sources, freeze_basis(), contract_date='2023-12-22',
+                                baseline_date='2023-12-22')
     assert result['status'] == 'ok' and result['references']
     assert template == before
 

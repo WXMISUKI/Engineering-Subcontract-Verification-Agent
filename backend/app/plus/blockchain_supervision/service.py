@@ -348,20 +348,18 @@ def create_task(db: Session, *, conversation_id: int, title: str,
     review_mode = task_review_mode.validate(review_mode)
     if review_mode == task_review_mode.ADMISSION and not scope_a1 and not scope_a3:
         raise ValueError("至少选择一个核查范围（A1 违法转包分包识别 / A3 报审资料合规核查）")
+    selected_baseline = _coerce_date(baseline_date)
     task = BsTask(
         conversation_id=conversation_id, title=title,
         scope_a1=scope_a1, scope_a3=scope_a3,
         scale="standard",  # 标准档唯一实装；写进快照即锁定
         options_snapshot_json={"review_mode": review_mode,
                                "scope": {"A1": scope_a1, "A3": scope_a3}, "scale": "standard",
-                               "baseline_date_source": "manual" if _coerce_date(baseline_date) else "automatic"},
+                               "baseline_date_source": "manual" if selected_baseline else "automatic"},
         project_name=_clean_str(project_name),
         contract_section=_clean_str(contract_section),
-        baseline_date=(
-            _coerce_date(baseline_date)
-            if review_mode == task_review_mode.RETROSPECTIVE
-            else _coerce_date(baseline_date) or _default_baseline_date()
-        ),
+        baseline_date=(selected_baseline if selected_baseline or review_mode == task_review_mode.RETROSPECTIVE
+                       else _default_baseline_date()),
         jurisdiction=_coerce_jurisdiction(jurisdiction),
         profile_code=_coerce_profile_code(profile_code),
         created_by=created_by, created_by_type=created_by_type,
@@ -1773,6 +1771,9 @@ def validate_task_materials(db: Session, task: BsTask) -> dict:
     材料集走 `_rule_materials`（剔除父容器、已替代旧版和待生效候选）：容器不是证据，
     旧版/候选也不能参与构成计数；解析中的候选仍从全量材料单独计算 pending 闸。
     """
+    if task_review_mode.is_retrospective(task):
+        from .retrospective_input import readiness
+        return readiness(db, task)
     all_materials = db.query(BsMaterial).filter(BsMaterial.task_id == task.id).all()
     materials = _rule_materials(db, task)
     validation_roles = []
@@ -2429,6 +2430,8 @@ def _material_write_allowed(task) -> bool:
     层改成一并拒绝非 setup，就会把「补 preparing 门」变成「顺手收紧既有语义」，
     造成与 T10-B 无关的回归。契约 §7.3.3 要求的正是 preparing 期必须拒绝。
     """
+    if task is not None and task_review_mode.is_retrospective(task):
+        return task.state == TASK_STATE_SETUP
     return task is not None and task.state != TASK_STATE_PREPARING
 
 
@@ -8070,6 +8073,12 @@ def enter_material_edit(db: Session, task: BsTask) -> dict:
 
 # 事件中文化白名单（唯一表源）：新增 event_type 必须在此登记（契约测试锁发射端）。
 EVENT_LABELS = {
+    "retrospective.accepted": "合同倒查已受理",
+    "retrospective.input_frozen": "合同及核查依据已冻结",
+    "retrospective.batch_started": "正在核查合同批次",
+    "retrospective.batch_completed": "合同批次已处理",
+    "retrospective.completed": "合同倒查报告已保存",
+    "retrospective.failed": "合同倒查执行中断",
     _PAGE_TEXT_REFRESH_EVENT: "材料页面补读",
     "task.supplement_planned": "补件局部核查计划已生成",
     "task.supplement_blocked": "补件局部核查计划被阻止",
@@ -8358,6 +8367,12 @@ def event_dto(ev: BsTaskEvent) -> dict:
             label = "AI 辅助核查部分结果待核实"
         elif raw.get("execution_status") in {"failed", "not_run"}:
             label = "AI 辅助核查未完成"
+    retrospective_event = ev.event_type.startswith("retrospective.")
+    if retrospective_event:
+        # 冻结正文、检索原文、模型结果和配置身份不通过SSE广播。
+        payload = {key: raw[key] for key in ("run_id", "phase", "label", "index", "total", "batch_id", "execution_status", "state") if key in raw}
+        if ev.event_type in {"retrospective.batch_started", "retrospective.batch_completed"}:
+            label = raw.get("label") or label
     diagnostics = _safe_event_diagnostics(raw)
     event_time = ev.created_at
     # 兼容历史/替身事件对象：没有偏移列时按“未知”输出，不阻断时间线投影。
@@ -8368,7 +8383,8 @@ def event_dto(ev: BsTaskEvent) -> dict:
         "sequence": ev.sequence,
         "event_type": ev.event_type,
         "label": label,
-        "message": _event_message(ev),
+        "message": (f'{raw["index"]}/{raw["total"]}批' if retrospective_event and raw.get("total", 0) > 1 and "index" in raw else None) if retrospective_event else _event_message(ev),
+        "run_id": raw.get("run_id") if retrospective_event else None,
         "stage": ev.stage,
         "payload": payload,
         "progress_key": progress_key,

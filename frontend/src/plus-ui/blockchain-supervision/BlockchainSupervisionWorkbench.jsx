@@ -1,3 +1,4 @@
+import { useBsEventStream } from './hooks/useBsEventStream'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { RotateCcw } from 'lucide-react'
 import PlusUIShell from '../PlusUIShell'
@@ -30,7 +31,7 @@ import { buildPrototypeTask, stageFromTaskState, stageIndexOf } from './prototyp
 import './components/CheckProgress.css'
 import './prototype/v3VisualTokens.css'
 import {
-  BS_EVENT_TYPES, bsEventsUrl, completeBsTask,
+  completeBsTask,
   createBsTask,
   deleteBsMaterial, downloadBsReport, downloadBsWorksheet, downloadBsOpinion, previewBsOpinion,
   activateBsSupplementPlan, confirmBsMaterial, confirmBsEmployer, createBsSupplementPlan, enterBsMaterialEdit, getBsReport, getBsOpinion, getBsTask, getBsTodo, getBsReviewVersion, getBsRuleset,
@@ -610,6 +611,7 @@ export default function BlockchainSupervisionWorkbench({ conversationId, onExitP
         )}
         {reviewMode === 'contract_retrospective' && !['loading', 'error'].includes(phase) && (
           <RetrospectiveWorkspace conversationId={conversationId} taskId={taskId}
+            onReset={handleRestart} resetting={restarting}
             onTaskCreated={(id) => { setTaskId(id); openSetup(id) }} onError={setError} />
         )}
         {reviewMode !== 'contract_retrospective' && phase === 'setup' && (
@@ -689,8 +691,9 @@ export default function BlockchainSupervisionWorkbench({ conversationId, onExitP
     reachedIndex = 0, onStageSelect, onRequestEdit, onExit, onReset, resetting = false, onTaskCreated, onStarted, onError }) {
   const [detail, setDetail] = useState(null)           // getBsTask 返回
   const [detailError, setDetailError] = useState('')
-  // 默认北京时间当天，用户可在启动前修改；历史记录以已保存日期为准。
-  const [section, setSection] = useState(() => ({ projectName: '', contractSection: '', baselineDate: reviewMode === 'contract_retrospective' ? '' : todayInChina() }))
+  // 准入默认北京时间当天；倒查留空以从分包合同提取签订日。
+  const [section, setSection] = useState(() => ({ projectName: '', contractSection: '',
+    baselineDate: reviewMode === 'contract_retrospective' ? '' : todayInChina() }))
   const baselineManualRef = useRef(false)
   useEffect(() => {
     if (taskId || baselineManualRef.current) return
@@ -1120,32 +1123,6 @@ export default function BlockchainSupervisionWorkbench({ conversationId, onExitP
    Last-Event-ID 续传（后端流内 id 行同源），前端不做重连退避；
    done 帧主动 close 防终态后无限重连；keepalive 帧无 sequence 不进时间线；
    StrictMode 双挂载（开发环境 effect 跑两遍）靠 maxSeq 去重防重复渲染。 */
-function useBsEventStream(taskId, runVersion) {
-  const [events, setEvents] = useState([])
-  const maxSeqRef = useRef(0)
-  useEffect(() => {
-    setEvents([])
-    maxSeqRef.current = 0
-    let es = null
-    const onFrame = (e) => {
-      let dto
-      try { dto = JSON.parse(e.data) } catch { return }
-      if (dto.sequence == null || dto.sequence <= maxSeqRef.current) return
-      maxSeqRef.current = dto.sequence
-      setEvents((prev) => [...prev, dto])
-    }
-    es = new EventSource(bsEventsUrl(taskId, maxSeqRef.current), { withCredentials: true })
-    for (const t of BS_EVENT_TYPES) es.addEventListener(t, onFrame)
-    es.addEventListener('stream.reset', () => { maxSeqRef.current = 0; setEvents([]) })
-    es.addEventListener('done', () => es.close())
-    // onerror 不处理：readyState=CONNECTING 时浏览器自动重试（带 Last-Event-ID）；
-    // 永久失败（任务不存在/未登录）readyState=CLOSED，保留已收事件静默停止。
-    return () => { if (es) es.close() }
-  }, [taskId, runVersion])
-  return events
-}
-
-
 // 报告技术前提 409 → 结构化面板数据（人工处置不属于此通道）。
 function normalizeReportGate(error) {
   const detail = error?.detail
