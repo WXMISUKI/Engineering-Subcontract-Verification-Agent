@@ -71,12 +71,9 @@ def load_extract_matchers() -> dict:
 
 
 def load_severity_matrix() -> dict:
-    """A-13 严重度/置信档位矩阵（BS 专属分包合规语境；词表外置为数据、零 LLM）。
-
-    与 load_extract_matchers 同构：只读数据文件、不缓存——改词表 → 重新核查 → 档位变化。
-    """
-    with open(_DATA_DIR / "severity_matrix.json", encoding="utf-8") as f:
-        return json.load(f)
+    """Backward-compatible loader; the data owner is ``severity_rules``."""
+    from .severity_rules import load_severity_matrix as load
+    return load()
 
 
 def load_missing_material_map() -> dict:
@@ -151,9 +148,8 @@ def load_transfer_rules() -> dict:
 def load_review_flow() -> dict:
     """审查流程与对应依据的唯一定义点（步骤 → 内核 → 条款坐标）。
 
-    由 `backend/scripts/render_review_flow.py` 渲染成《审查流程与依据对照表》与流程图；
-    `tests/test_bs_review_flow.py` 把它的声明钉在源码坐标上（内核函数、报告分区、条款库），
-    因此新增或改名内核后跑测试即知图是否需要同步。
+    `backend/tests/test_bs_review_flow.py` 锁定内核入口及其收口/报告分区映射；
+    `backend/tests/test_bs_basis_validation.py` 校验条款坐标与原文绑定。
 
     加载期先过依据闸门（`basis_validation.ruleset_gate`）：登记表/索引/流程/附件映射
     任一错配直接失败，不带着错依据进入核查。

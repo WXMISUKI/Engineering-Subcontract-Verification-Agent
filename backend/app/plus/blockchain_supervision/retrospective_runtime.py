@@ -325,7 +325,7 @@ async def run(engine, job_id, *, client=None):
                 with Session(engine) as query_db:
                     query_task = owned(query_db)
                     query_db.commit()  # 不在网络查询期间持有任务行锁。
-                    knowledge = retrieve(query_db, query_task, sub_sources, spec['basis'],
+                    knowledge = retrieve(query_db, query_task, sources, spec['basis'],
                                          contract_date=signed, baseline_date=baseline_date)
                     owned(query_db)
                     query_db.commit()

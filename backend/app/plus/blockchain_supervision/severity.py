@@ -18,7 +18,7 @@
 from __future__ import annotations
 
 from .models import STATUS_HIT, STATUS_UNDECIDABLE
-from .rules import load_severity_matrix
+from .severity_rules import load_severity_matrix
 
 # 档位 → 中文标签（报告/前端 DTO 共用表源；标签不得含实现侧词汇，见禁词表）
 SEVERITY_LABELS = {"high": "高", "medium": "中", "low": "低"}

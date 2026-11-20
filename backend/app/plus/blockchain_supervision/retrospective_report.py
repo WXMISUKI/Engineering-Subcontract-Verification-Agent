@@ -66,6 +66,8 @@ def build_report(result, *, project_name, sources):
     report['analysis_notes'] = deepcopy(report['limitations'])
     limits = reading_limitations(sources)
     limits.extend(report.get('knowledge', {}).get('limitations', []))
+    if not report.get('identity', {}).get('baseline_date'):
+        limits.append('未选择核查基准日且未能唯一确认合同签订日期；时效性规则不作确定性适用判断。')
     if report.get('final_review') and report['final_review']['state'] != 'completed':
         limits.append('报告收尾核验未完成，候选保留在审计记录中，未列为最终问题。')
     coverage = report['coverage']

@@ -163,7 +163,8 @@ class RunIdentity(ContractModel):
     visual_version: str | None = None
     coverage_fingerprint: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     baseline_date: str | None = None
-    baseline_date_source: Literal["manual", "subcontract_signing_date", "unknown", "legacy"] = "legacy"
+    baseline_date_source: Literal["manual", "subcontract_signing_date", "subcontract_contract",
+                                  "unknown", "unresolved", "legacy"] = "unresolved"
     current_notice_date: str | None = None
     contract_date: str | None = None
 
@@ -175,6 +176,11 @@ class RunIdentity(ContractModel):
             date.fromisoformat(self.current_notice_date)
         if self.contract_date is not None:
             date.fromisoformat(self.contract_date)
+        if self.baseline_date is None and self.baseline_date_source in {
+                "manual", "subcontract_signing_date", "subcontract_contract"}:
+            raise ValueError("缺少核查基准日时，来源不能标记为已确认")
+        if self.baseline_date is not None and self.baseline_date_source in {"unknown", "unresolved"}:
+            self.baseline_date_source = "manual"
         return self
 
 

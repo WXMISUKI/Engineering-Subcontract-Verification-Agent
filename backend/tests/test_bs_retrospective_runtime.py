@@ -2,6 +2,7 @@ import asyncio
 import json
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
+from datetime import date
 
 from sqlalchemy.orm import Session
 
@@ -97,6 +98,10 @@ def prepared(tmp_path, monkeypatch, *, text=None, baseline_date=None, baseline_s
     accepted = http.post(f'/api/plus/blockchain-supervision/tasks/{task_id}/retrospective/start', json={})
     assert accepted.status_code == 202, accepted.text
     with Session(engine) as db:
+        spec = db.query(BsTaskEvent).filter_by(task_id=task_id, event_type=runtime.SPEC).one()
+        assert spec.payload_json['baseline_date'] == (
+            baseline_date.isoformat() if baseline_date else None)
+    with Session(engine) as db:
         job_id = db.query(BsAiReviewJob).filter_by(task_id=task_id).one().id
         material_id = db.query(BsMaterial).filter_by(task_id=task_id, role='sub').one().id
     return http, engine, task_id, material_id, job_id, client, accepted.json()
@@ -114,6 +119,8 @@ def test_idempotent_accept_and_automatic_saved_report(tmp_path, monkeypatch):
     assert result['report']['identity']['prompt_version'] == 'bs.contract-retrospective-prompt.v16'
     assert result['report']['identity']['model_identity']['request_model'] == 'synthetic-model'
     assert client.calls == 7
+    assert result['report']['identity']['baseline_date'] == '2023-12-22'
+    assert result['report']['identity']['baseline_date_source'] == 'subcontract_signing_date'
     asyncio.run(runtime.run(engine, job_id))
     assert client.calls == 7
     with Session(engine) as db:
@@ -164,6 +171,8 @@ def test_manual_historical_baseline_overrides_extracted_signing_date(tmp_path, m
     assert report['identity']['contract_date'] == '2023-12-22'
     assert report['identity']['baseline_date'] == '2024-01-01'
     assert report['identity']['baseline_date_source'] == 'manual'
+
+
 def test_usage_key_preserves_run_and_subrequest_identity_within_column_limit():
     batch = 'basis:' + 'a' * 64 + ':' + 'b' * 64
     identities = [('retro-' + 'c' * 32, batch + suffix)

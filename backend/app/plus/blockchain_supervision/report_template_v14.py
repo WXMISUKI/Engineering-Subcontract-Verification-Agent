@@ -14,7 +14,7 @@ from . import report_template_v13 as v13
 TEMPLATE_ID = "v1.4"
 SCHEMA_VERSION = "bs.review-opinion-v14.v1"
 TEMPLATE_VERSION = "V1.4"
-MAPPING_VERSION = "2026-11-19.11"
+MAPPING_VERSION = "2026-11-19.12"
 UNKNOWN = "材料未载明"
 _PLAIN_LABELS = {
     "法定签字链": "报审表法定签署",
@@ -104,7 +104,7 @@ _SHEETS = (
             ("质量目标不降低", "质量目标是否不低于总承包合同及招标文件要求", "quality_safety_progress", ("质量目标",), False),
             ("质量连带责任", "是否写明分包人就分包工程与承包人向发包人承担连带责任", "contract_clauses", ("连带责任",), False),
             ("缺陷责任期对齐", "缺陷责任期是否不少于总承包合同约定", "contract_clauses", ("缺陷责任期", "保修"), False),
-            ("安全生产费单列", "是否有安全生产费单列及责任原文；金额、比例与基数仅为待核对提及，不据合同义务判断实际履约", "quality_safety_progress", ("安全生产费",), True, ("RC-A10-cost",)),
+            ("安全生产费单列", "分包合同是否单独约定安全生产费及金额/计算方式；公路工程1.5%为工程层建筑安装造价提取标准，分包不再重复提取，实际支付与专款专用另核", "quality_safety_progress", ("安全生产费",), True, ("RC-A10-cost",)),
             ("环保与水保条款", "是否含扬尘、弃土、表土保护等环保违约条款", "quality_safety_progress", ("环保", "水保", "扬尘"), False),
             ("监理指令执行", "是否明确分包人须执行监理整改/暂停指令，逾期可上报清退", "quality_safety_progress", ("监理指令", "整改", "暂停"), False),
         ),

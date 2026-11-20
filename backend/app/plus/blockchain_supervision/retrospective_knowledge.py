@@ -7,9 +7,18 @@ from .retrospective_analysis import _words
 from .retrospective_coverage import plan
 
 
-def retrieve(db, task, sources, basis, *, contract_date=None, baseline_date=None):
+_BASELINE_UNSET = object()
+
+
+def retrieve(db, task, sources, basis, *, contract_date=None, baseline_date=_BASELINE_UNSET):
     """一次运行冻结一次检索，不在导出或恢复时重新查询。"""
-    as_of = date.fromisoformat(baseline_date) if baseline_date else None
+    if baseline_date is _BASELINE_UNSET:
+        baseline_date = task.baseline_date
+    if baseline_date is None:
+        return {'status': 'local_only', 'references': [], 'queries': [],
+                'limitations': ['未取得核查基准日；本次不按当前日期筛选在线规则，仅使用已冻结的本地规范原文。']}
+    from datetime import date
+    as_of = baseline_date if isinstance(baseline_date, date) else date.fromisoformat(baseline_date)
     try:
         package = knowledge_runs.load_reference_package(as_of=as_of)
     except (OSError, ValueError, KeyError):

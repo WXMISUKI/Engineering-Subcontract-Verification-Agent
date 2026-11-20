@@ -37,5 +37,5 @@ def test_missing_mapping_is_explicit_local_mode_without_network(monkeypatch):
         raise ValueError('mapping unavailable')
     monkeypatch.setattr(knowledge.knowledge_runs, 'load_reference_package', unavailable)
     result = knowledge.retrieve(None, SimpleNamespace(baseline_date=None), [], [])
-    assert result['status'] == 'unavailable'
-    assert result['references'] == [] and '本地规范' in result['limitations'][0]
+    assert result['status'] == 'local_only'
+    assert result['references'] == [] and '不按当前日期筛选' in result['limitations'][0]

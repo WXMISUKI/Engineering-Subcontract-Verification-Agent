@@ -239,10 +239,49 @@ def _restore_basis_exception(candidate, bound):
     return corrections
 
 
+def _is_complementary_org_design_duties(candidate, sources):
+    if candidate.get("kind") != "internal_ambiguity":
+        return False
+    refs = [ref for ref in candidate.get("evidence", []) if isinstance(ref, dict)]
+    page_keys = {(ref.get("material_id"), ref.get("page")) for ref in refs}
+    page_text = "".join(page.get("text", "") for source in sources
+                        for page in source.get("pages", [])
+                        if (source.get("material_id"), page.get("page")) in page_keys)
+    evidence = re.sub(r"\s+", "", page_text + "".join(ref.get("quote", "") for ref in refs))
+    return (
+        "甲方编制施工组织设计" in evidence
+        and "乙方按甲方的要求自行编制施工组织设计" in evidence
+        and "乙方必须严格按施工组织设计的要求施工" in evidence
+    )
+
+
+def _is_same_party_fee_included(candidate, sources):
+    if candidate.get("kind") != "internal_ambiguity":
+        return False
+    refs = [ref for ref in candidate.get("evidence", []) if isinstance(ref, dict)]
+    if len(refs) < 2:
+        return False
+    page_keys = {(ref.get("material_id"), ref.get("page")) for ref in refs}
+    page_text = "".join(page.get("text", "") for source in sources
+                        for page in source.get("pages", [])
+                        if (source.get("material_id"), page.get("page")) in page_keys)
+    text = re.sub(r"\s+", "", page_text + "".join(ref.get("quote", "") for ref in refs))
+    same_party_inspection = any(phrase in text for phrase in (
+        "由分包人负责检验", "由乙方负责检验", "检验费用由分包人承担", "检验费用由乙方承担"))
+    fee_included_in_subcontract_price = any(phrase in text for phrase in (
+        "检验费用已包含在签约合同价内", "检验费已包含在签约合同价内",
+        "检验费用已包含在合同价内", "检验费已包含在合同价内"))
+    return same_party_inspection and fee_included_in_subcontract_price
+
+
 def validate_candidate(raw, sources, basis, identity):
     if isinstance(raw, dict) and raw.get('kind') == 'upstream_risk':
         from .retrospective_upstream_contracts import validate_upstream_candidate
         return validate_upstream_candidate(raw, sources)
+    if _is_complementary_org_design_duties(raw, sources):
+        raise ValueError("总包编制方案与分包按总包要求自行编制方案属于可并行职责，不构成内部冲突")
+    if _is_same_party_fee_included(raw, sources):
+        raise ValueError("分包人承担检验义务且检验费用计入分包合同价属于责任与计价并行约定，不构成主体冲突")
     # 模型有时把同条内的两项对立约定作为一个连续引文返回。仅按原文分号
     # 切成两个来源片段，字词不变；是否构成歧义仍须自动上下文复核。
     if (isinstance(raw, dict) and raw.get('kind') == 'internal_ambiguity'
@@ -357,6 +396,13 @@ async def review_candidates(rows, sources, identity, *, client, on_usage=None, f
                         '若某候选缺少总包明确排除费用的证据，应优先保留直接引用该排除约定的重复候选，而非用其他页补写。'
                         '费用范围未明应表述为尚待明确的边界，不能将条件性的解释风险直接写成已经冲突。'
                         '重点核对不同文件层级、不同工作对象和前提是否被混淆；具体施工方案与总体施工组织设计并非当然同一对象。'
+                        '内部矛盾判断前必须检查条款前后文、选项标题、勾选/“按第几种方式”及该选项下的展开内容；'
+                        '合同明确选择第一种计价方式时，第二种列示方案是未选替代项，不能据此说合同未选定执行口径。'
+                        '总体施工组织设计由总包编制，与分包人按总包要求另行编制本分包工程的专项施工组织设计可以并存；'
+                        '合同同时写明“甲方编制施工组织设计”“乙方按甲方要求自行编制施工组织设计”且乙方均须按方案要求施工时，视为总包方案与分包配套方案的可并行职责，不能因两条都写施工组织设计就列内部歧义。'
+                        '只有原文明确指向同一份方案、同一编制范围且义务无法同时履行，才可认定编制主体冲突。'
+                        '同一费用由分包人承担且检验费用已计入签约合同价，通常是承担主体与计价覆盖的并行约定，'
+                        '“已包含在合同价”本身不等于改由总包承担，也不得据此认定付款主体冲突。'
                         '两项原文均写同一原因时，不能改写其中一项为非该原因；纠正说明只能陈述真实原文。'
                         '条件性风险按“合同已载事实→规范适用条件/例外→尚待核实的条件→条件成立时风险”表达。'
                         '工法或重量未核实时不得先写“已触发/触发限制条件”再写“若”，应表述为需要核对适用条件。'

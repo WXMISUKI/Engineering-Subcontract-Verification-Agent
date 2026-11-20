@@ -215,6 +215,30 @@
       "online_knowledge_verified": false,
       "knowledge_id": null,
       "verification_note": "复用既有授权原件，哈希与来源README相符；原件表格行列机器视觉核对，原始文本层可能串列，结构化阈值须对照原页图。未恢复精确下载URL，未人工校对或穷尽2026现行效力。"
+    },
+    {
+      "doc_id": "MOF-2022-136-ARCHIVE",
+      "doc_no": "财资〔2022〕136号",
+      "title": "企业安全生产费用提取和使用管理办法（2022原件）",
+      "issuer": "财政部、应急管理部",
+      "effective_from": "2022-11-21",
+      "effective_to": null,
+      "status": "local_original_archived",
+      "authority_level": "department_norm",
+      "source_kind": "text_layer",
+      "human_verified": false,
+      "source_file": "docs/plus/blockchain-supervision/evidence/安全费原文-20261119/safety-cost-136-2022.pdf",
+      "source_url": null,
+      "source_sha256": "956da92075244bba1400ed65423192008022188545cbf47f261bc0f4c946e823",
+      "physical_pages": [
+        12,
+        13
+      ],
+      "clause_count": 2,
+      "verification": "local_original_visual_reviewed",
+      "online_knowledge_verified": false,
+      "knowledge_id": null,
+      "verification_note": "已授权38页原件与README哈希相符，第12/13物理页原文及跨页续文已视觉核对；未恢复精确下载URL，未人工校对或认证2026全地域现行效力，旧线上知识条目未修复。"
     }
   ],
   "clauses": [
@@ -2912,6 +2936,38 @@
       "page_printed": 8,
       "page_start": 15,
       "page_end": 15,
+      "human_verified": false,
+      "source_kind": "text_layer",
+      "children": []
+    },
+    {
+      "doc_id": "MOF-2022-136-ARCHIVE",
+      "seq": 1,
+      "clause_id": "MOF-2022-136-ARCHIVE#第十七条",
+      "marker": "第十七条",
+      "kind": "clause",
+      "title": "工程层提取标准与过渡",
+      "text": "第十七条建设工程施工企业以建筑安装工程造价为依\n据，于月末按工程进度计算提取企业安全生产费用。提取标\n准如下：\n（一）矿山工程3.5%；\n（二）铁路工程、房屋建筑工程、城市轨道交通工程3%；\n（三）水利水电工程、电力工程2.5%；\n（四）冶炼工程、机电安装工程、化工石油工程、通信\n工程2%；\n（五）市政公用工程、港口与航道工程、公路工程1.5%。\n建设工程施工企业编制投标报价应当包含并单列企业\n安全生产费用，竞标时不得删减。国家对基本建设投资概算\n另有规定的，从其规定。\n本办法实施前建设工程项目已经完成招投标并签订合\n同的，企业安全生产费用按照原规定提取标准执行。",
+      "page_physical": 12,
+      "page_printed": 11,
+      "page_start": 12,
+      "page_end": 12,
+      "human_verified": false,
+      "source_kind": "text_layer",
+      "children": []
+    },
+    {
+      "doc_id": "MOF-2022-136-ARCHIVE",
+      "seq": 2,
+      "clause_id": "MOF-2022-136-ARCHIVE#第十八条",
+      "marker": "第十八条",
+      "kind": "clause",
+      "title": "费用单独约定、支付与分包不重复提取",
+      "text": "第十八条建设单位应当在合同中单独约定并于工程开\n工日一个月内向承包单位支付至少50%企业安全生产费用。\n总包单位应当在合同中单独约定并于分包工程开工日\n一个月内将至少50%企业安全生产费用直接支付分包单位并\n\n- 12 -\n监督使用，分包单位不再重复提取。\n工程竣工决算后结余的企业安全生产费用，应当退回建\n设单位。",
+      "page_physical": 12,
+      "page_printed": 11,
+      "page_start": 12,
+      "page_end": 13,
       "human_verified": false,
       "source_kind": "text_layer",
       "children": []

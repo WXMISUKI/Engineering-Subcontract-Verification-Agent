@@ -5384,7 +5384,7 @@ def review_finding(db: Session, finding: BsFinding, *, reviewer: str,
 
 # 收口闸「必须有结论」的分组（范围 → 结论类型）。
 # 真源＝data/review_flow.json 五步主线登记的内核 kind（rules.in_scope_kinds()）：
-# 这里的清单只做范围切分，**必须**与流程图一致，由 tests/test_bs_review_flow.py 对锚。
+# 这里的清单只做范围切分，入口/报告映射由 backend/tests/test_bs_review_flow.py 锁定。
 # 教训（2026-10-14）：此前本表把已转「后续功能」的占比类算成必查，占比默认关闭后
 # 任务永远收不了口（409 一直挂「尚无结论：分包金额占比核算」）。
 _SCOPE_REQUIRED_KINDS = {scope: tuple(kind for group in reference_snapshots.CHECK_GROUPS.values()
