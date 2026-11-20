@@ -1,15 +1,17 @@
 """倒查复用准入参考检索；来源、授权、原件指纹与原文校验仍由公共链路执行。"""
 from copy import deepcopy
+from datetime import date
 
 from . import knowledge_runs
 from .retrospective_analysis import _words
 from .retrospective_coverage import plan
 
 
-def retrieve(db, task, sources, basis, *, contract_date=None):
+def retrieve(db, task, sources, basis, *, contract_date=None, baseline_date=None):
     """一次运行冻结一次检索，不在导出或恢复时重新查询。"""
+    as_of = date.fromisoformat(baseline_date) if baseline_date else None
     try:
-        package = knowledge_runs.load_reference_package(as_of=task.baseline_date)
+        package = knowledge_runs.load_reference_package(as_of=as_of)
     except (OSError, ValueError, KeyError):
         return {'status': 'unavailable', 'references': [], 'queries': [],
                 'limitations': ['在线知识库映射不可用；本次使用已冻结的本地规范原文进行对照。']}
@@ -35,7 +37,8 @@ def retrieve(db, task, sources, basis, *, contract_date=None):
         return {'status': 'local_only', 'references': [], 'queries': [], 'limitations': []}
     # 复用原有按文件归并查询、超时、授权范围、原件哈希、逐字原文及父项/例外验证。
     try:
-        result = knowledge_runs.retrieve_reference_run(db, task, {'basis_sources': planned})
+        result = knowledge_runs.retrieve_reference_run(
+            db, task, {'basis_sources': planned}, as_of=as_of)
     except Exception:
         return {'status': 'unavailable', 'references': [], 'queries': [],
                 'limitations': ['在线知识检索未完成；本次保留已冻结的本地规范原文对照结果。']}

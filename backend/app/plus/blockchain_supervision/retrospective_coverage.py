@@ -158,7 +158,9 @@ async def scan(sources, basis, identity, *, client, load_checkpoint=None, before
                      '"state":"not_observed","reason":"本批未见对应约定，仅记录本批观察，不判断全合同适用性。","evidence":[]}]}。'
                      'checks须覆盖全部本次basis；findings有发现时使用前述发现项字段，无发现时为空。'),
                     {'analysis_type': 'basis_coverage', 'contract_date': identity.get('contract_date'),
-                     'baseline_date': identity['baseline_date'], 'topic_ids': list(TOPICS),
+                     'baseline_date': identity.get('baseline_date'),
+                     'current_notice_date': identity.get('current_notice_date'),
+                     'topic_ids': list(TOPICS),
                      'topic_descriptions': TOPICS,
                      'batch': prompt_batch(batch), 'basis': group}, on_usage=on_usage,
                      response_schema=strict_response_schema(CoverageResponse))

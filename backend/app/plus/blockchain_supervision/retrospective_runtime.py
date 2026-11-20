@@ -3,11 +3,10 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 from pathlib import Path
 import uuid
-from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
@@ -160,13 +159,17 @@ def accept(db, task, actor, *, relations=None):
     run_id = "retro-" + uuid.uuid4().hex
     task.options_snapshot_json = {**(task.options_snapshot_json or {}), RUN_KEY: run_id}
     task.state, task.started_at = "running", datetime.now(timezone.utc).replace(tzinfo=None)
-    baseline = (task.baseline_date or datetime.now(ZoneInfo("Asia/Shanghai")).date()).isoformat()
+    baseline_source = service.baseline_date_source(task)
+    baseline = (task.baseline_date.isoformat()
+                if baseline_source == "manual" and task.baseline_date else None)
+    current_notice_date = datetime.now(timezone(timedelta(hours=8))).date().isoformat()
     job = ai_review_jobs.enqueue(db, task.id, run_id, [JOB_GROUP])
     from .retrospective_upstream_contracts import VERSION as upstream_version
     from .retrospective_visual import VERSION as visual_version
     service.add_event(db, task.id, SPEC, stage="check", payload={
         "run_id": run_id, "model_code": model, "model_identity": actual_identity,
-        "baseline_date": baseline, "materials": manifest,
+        "baseline_date": baseline, "baseline_date_source": baseline_source,
+        "current_notice_date": current_notice_date, "materials": manifest,
         "relations": relations, "input_version": retrospective_input.INPUT_VERSION,
         "upstream_version": upstream_version,
         "visual_version": visual_version,
@@ -310,6 +313,9 @@ async def run(engine, job_id, *, client=None):
                     sources.append(source)
             sub_sources = [row for row in sources if row["role"] in {"sub", "labor"}]
             signed, _ = infer_contract_date(sub_sources)
+            baseline_date = spec.get("baseline_date") or signed
+            baseline_date_source = ("manual" if spec.get("baseline_date") else
+                                    "subcontract_signing_date" if signed else "unknown")
             with Session(engine) as db:
                 owned(db)
                 _progress(db, task_id, run_id, phase='retrieval', label='检索负面清单及规范依据')
@@ -319,7 +325,8 @@ async def run(engine, job_id, *, client=None):
                 with Session(engine) as query_db:
                     query_task = owned(query_db)
                     query_db.commit()  # 不在网络查询期间持有任务行锁。
-                    knowledge = retrieve(query_db, query_task, sub_sources, spec['basis'], contract_date=signed)
+                    knowledge = retrieve(query_db, query_task, sub_sources, spec['basis'],
+                                         contract_date=signed, baseline_date=baseline_date)
                     owned(query_db)
                     query_db.commit()
                     return knowledge
@@ -333,7 +340,9 @@ async def run(engine, job_id, *, client=None):
                 coverage_version=coverage_plan['version'], coverage_fingerprint=digest(coverage_plan),
                 upstream_version=spec.get('upstream_version'),
                 visual_version=spec.get('visual_version'),
-                baseline_date=spec["baseline_date"], contract_date=signed).model_dump(mode="json")
+                baseline_date=baseline_date, baseline_date_source=baseline_date_source,
+                current_notice_date=spec.get("current_notice_date"),
+                contract_date=signed).model_dump(mode="json")
             frozen = {"run_id": run_id, "sources": sources, "identity": identity, 'knowledge': knowledge}
             with Session(engine) as db:
                 owned(db)

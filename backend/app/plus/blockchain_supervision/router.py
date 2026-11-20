@@ -41,6 +41,10 @@ async def _guard_retrospective_write(request: Request, db: Session = Depends(get
     match = re.search(r"/tasks/(\d+)(/.*)?$", request.url.path)
     if not match:
         return
+    # Preserve endpoint rate limiting for unknown task IDs; the endpoint still
+    # performs authentication and returns its ordinary not-found response.
+    if db.get(BsTask, int(match[1])) is None:
+        return
     user = get_current_any_user(request, db)
     from . import review_mode
     task = access.require_bs_task(db, int(match[1]), user.id, user.user_type)

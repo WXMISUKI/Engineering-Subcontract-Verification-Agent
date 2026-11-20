@@ -3,10 +3,10 @@ from typing import Literal
 
 from pydantic import Field
 
-from .retrospective_contracts import Citation, ContractModel, KINDS
+from .retrospective_contracts import (ALL_REPORT_DIMENSION_IDS, Citation, ContractModel, KINDS)
 from .retrospective_sources import digest, original_citation
 
-VERSION = 'bs.contract-upstream.v6'
+VERSION = 'bs.contract-upstream.v8'
 TOPICS = ('scope', 'price', 'payment', 'schedule', 'quality', 'safety',
           'environment', 'wages', 'insurance', 'equipment', 'priority')
 
@@ -51,7 +51,7 @@ class ExtractionResponse(ContractModel):
 
 class SkippedEvidence(ContractModel):
     evidence_id: str
-    reason: str = Field(min_length=4, max_length=600)
+    reason: str = Field(min_length=4, max_length=1800)
 
 
 class SelectedExtractionResponse(ContractModel):
@@ -59,6 +59,39 @@ class SelectedExtractionResponse(ContractModel):
     facts: list[SelectedProfileFact] = Field(max_length=24)
     terms: list[SelectedContractTerm] = Field(max_length=60)
     skipped_evidence: list[SkippedEvidence] = Field(max_length=300)
+
+
+class TransportSelectedProfileFact(ContractModel):
+    """Provider transport boundary; item-level business validation remains strict."""
+    field: Literal['project_name', 'contract_section', 'employer', 'contractor', 'scope']
+    value: str = Field(min_length=1, max_length=1200)
+    evidence_ids: list[str] = Field(min_length=1, max_length=4)
+
+
+class TransportSelectedContractTerm(ContractModel):
+    """Accept short provider candidates so bind_selected_extraction can reject them individually."""
+    topic: Literal['scope', 'price', 'payment', 'schedule', 'quality', 'safety',
+                   'environment', 'wages', 'insurance', 'equipment', 'priority']
+    statement: str = Field(min_length=1, max_length=1200)
+    obligation_holder: Literal['employer', 'general', 'sub', 'both', 'uncertain']
+    transmission: Literal['pass_through', 'reserved', 'self_perform', 'uncertain']
+    conditions: str = Field(max_length=1200)
+    exceptions: str = Field(max_length=1200)
+    priority: str = Field(max_length=1200)
+    evidence_ids: list[str] = Field(min_length=1, max_length=6)
+
+
+class TransportSkippedEvidence(ContractModel):
+    evidence_id: str
+    reason: str = Field(min_length=1, max_length=1800)
+
+
+class TransportSelectedExtractionResponse(ContractModel):
+    """Transport-only schema. Strict item models are applied after transport parsing."""
+    checked_topics: list[str] = Field(min_length=11, max_length=11)
+    facts: list[TransportSelectedProfileFact] = Field(max_length=24)
+    terms: list[TransportSelectedContractTerm] = Field(max_length=60)
+    skipped_evidence: list[TransportSkippedEvidence] = Field(max_length=300)
 
 
 class RelationshipCheck(ContractModel):
@@ -141,7 +174,7 @@ def bind_selected_extraction(raw, batch, sources, catalog):
     if not isinstance(raw, dict) or any(not isinstance(raw.get(key), list) or len(raw[key]) > limit
                                        for key, limit in [('facts', 24), ('terms', 60)]):
         raise ValueError('条款提取外层结构不完整')
-    parsed = SelectedExtractionResponse.model_validate({**raw, 'facts': [], 'terms': []})
+    parsed = TransportSelectedExtractionResponse.model_validate(raw)
     if set(parsed.checked_topics) != set(TOPICS):
         raise ValueError('条款提取主题执行字段缺失或重复')
     result = {'facts': [], 'terms': [], 'rejected': []}
@@ -167,14 +200,25 @@ def bind_selected_extraction(raw, batch, sources, catalog):
     claimed = {key for kind in ('facts', 'terms') for row in raw[kind]
                if isinstance(row, dict) and isinstance(row.get('evidence_ids'), list)
                for key in row['evidence_ids'] if isinstance(key, str)}
-    skipped = [row.evidence_id for row in parsed.skipped_evidence]
-    if len(skipped) != len(set(skipped)) or any(key not in catalog or key in claimed for key in skipped):
-        raise ValueError('提取与略过的原文编号冲突、重复或不属于当前批次')
-    result['skipped_evidence'] = [row.model_dump() for row in parsed.skipped_evidence]
+    skipped, skipped_rows, invalid_skipped = [], [], 0
+    for index, row in enumerate(raw.get('skipped_evidence', [])):
+        try:
+            strict_row = SkippedEvidence.model_validate(row)
+        except (ValueError, TypeError, KeyError):
+            invalid_skipped += 1
+            continue
+        if strict_row.evidence_id not in catalog or strict_row.evidence_id in claimed or strict_row.evidence_id in skipped:
+            invalid_skipped += 1
+            continue
+        skipped.append(strict_row.evidence_id)
+        skipped_rows.append(strict_row.model_dump())
+    result['skipped_evidence'] = skipped_rows
     result['unaccounted_evidence_ids'] = sorted(set(catalog) - referenced - set(skipped))
-    if result['unaccounted_evidence_ids']:
+    if result['unaccounted_evidence_ids'] or invalid_skipped:
         result['state'] = 'partial'
-        result.setdefault('limitations', []).append('部分原文片段没有提取或略过记录，不能确认已完整核对。')
+        result.setdefault('limitations', []).append('部分原文片段未能可靠归入提取或略过记录，不能确认已完整核对。')
+        if invalid_skipped:
+            result['rejected_skipped_count'] = invalid_skipped
     if len(raw['facts']) == 24 or len(raw['terms']) == 60:
         result['state'] = 'partial'
         result.setdefault('limitations', []).append('单批提取达到输出项数上限，尚不能确认所有约定已提取。')
@@ -237,6 +281,10 @@ class SelectedComparisonResponse(ContractModel):
 
 class UpstreamCandidate(ContractModel):
     kind: Literal['upstream_risk']
+    review_dimension: Literal['scope_and_qualification', 'procedure_and_subcontracting', 'key_staffing',
+        'equipment_and_lifting', 'hazardous_work_and_plans', 'contract_terms_and_upstream',
+        'quality_safety_schedule_environment', 'commercial_terms_and_insurance', 'labor_and_wage_protection',
+        *ALL_REPORT_DIMENSION_IDS]
     time_scope: Literal['contract_text']
     message: str = Field(min_length=8, max_length=2400)
     evidence: list[Citation] = Field(min_length=2, max_length=12)

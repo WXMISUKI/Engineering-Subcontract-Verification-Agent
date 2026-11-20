@@ -1,8 +1,11 @@
 import fitz
 from io import BytesIO
 from docx import Document
+from docx.table import Table
+from docx.text.paragraph import Paragraph
 
 from app.plus.blockchain_supervision import report_template_render
+from app.plus.blockchain_supervision.retrospective_contracts import REPORT_DIMENSIONS, report_dimension_id
 from app.plus.blockchain_supervision.retrospective_report import build_report
 
 
@@ -28,11 +31,76 @@ def test_retrospective_export_uses_landscape_for_pdf_and_word():
     assert not any('内容指纹' in p.text for p in document.paragraphs)
 
 
+def test_retrospective_exports_appendix_heading_before_detail_table():
+    report = _report()
+    pdf_data = report_template_render.pdf_bytes(report, "digest", "2026-11-19")
+    with fitz.open(stream=pdf_data, filetype="pdf") as pdf:
+        pdf_text = "\n".join(page.get_text() for page in pdf)
+    assert pdf_text.index("附件一：合同问题与风险明细表") < pdf_text.index("合同文件")
+
+    word_data = report_template_render.word_bytes(report, "digest", "2026-11-19")
+    document = Document(BytesIO(word_data))
+    body_text = []
+    for element in document.element.body.iterchildren():
+        if element.tag.endswith("}p"):
+            body_text.append(Paragraph(element, document).text)
+        elif element.tag.endswith("}tbl"):
+            body_text.append("\n".join(cell.text for row in Table(element, document).rows for cell in row.cells))
+    appendix_index = next(i for i, text in enumerate(body_text) if "附件一：合同问题与风险明细表" in text)
+    table_index = next(i for i, text in enumerate(body_text) if "合同文件" in text)
+    assert appendix_index < table_index
+
+
 def test_retrospective_report_has_eight_stable_columns_and_widths():
     report = _report()
     table = next(block for block in report["template_document"]["blocks"] if block["type"] == "table")
     assert len(table["headers"]) == 8
     assert abs(sum(table["widths"]) - 1) < 1e-9
+
+
+def test_report_groups_only_findings_and_keeps_detail_table_as_final_appendix():
+    raw = _report()
+    raw['findings'] = [{
+        'finding_id': 'f1', 'kind': 'internal_ambiguity', 'review_dimension': 'commercial_terms_and_insurance',
+        'kind_label': '内部歧义', 'time_scope': 'contract_text', 'message': '两处计价约定的适用边界未说明。',
+        'evidence': [{'material_id': 1, 'page': 1, 'file_name': '分包合同.pdf',
+                      'quote': '计价约定原文。', 'clause': '12.1'}],
+        'basis': [],
+    }]
+    source = {'material_id': 1, 'file_name': '分包合同.pdf', 'role': 'sub', 'total_pages': 1,
+              'pages': [{'page': 1, 'readable': True, 'text': '计价约定原文。'}],
+              'reading_coverage': {'reading_complete': True, 'blank_pages': []}}
+    report = build_report(raw, project_name='测试项目', sources=[source])
+    blocks = report['template_document']['blocks']
+    headings = [block['text'] for block in blocks if block['type'] == 'heading']
+    assert '计量计价、支付、担保与保险' in headings
+    assert all(label not in headings for key, label in REPORT_DIMENSIONS.items()
+               if key != 'commercial_terms_and_insurance')
+    assert headings[:2] == ['一、核查概况', '二、重点问题']
+    assert headings[-2:] == ['三、综合核查意见', '附件一：合同问题与风险明细表']
+    assert blocks[-1]['type'] == 'table' and len(blocks[-1]['headers']) == 8
+
+
+def test_legacy_finding_dimensions_project_into_nine_current_report_sections():
+    assert len(REPORT_DIMENSIONS) == 9
+    assert report_dimension_id('subcontract_scope') == 'scope_and_qualification'
+    assert report_dimension_id('price_and_settlement') == 'commercial_terms_and_insurance'
+    assert report_dimension_id('other_contract_terms') == 'contract_terms_and_upstream'
+
+    raw = _report()
+    raw['findings'] = [{
+        'finding_id': 'legacy-1', 'kind': 'text_nonconformity',
+        'review_dimension': 'subcontract_scope', 'kind_label': '文本不符合',
+        'time_scope': 'historical', 'message': '合同范围约定与适用依据存在差异。',
+        'evidence': [{'material_id': 1, 'page': 1, 'file_name': '分包合同.pdf',
+                     'quote': '合同范围约定原文。', 'clause': '2.1'}],
+        'basis': [],
+    }]
+    report = build_report(raw, project_name='测试项目', sources=[])
+    headings = [block['text'] for block in report['template_document']['blocks']
+                if block['type'] == 'heading']
+    assert '分包范围与主体资格' in headings
+    assert report['rows'][0]['review_dimension'] == 'scope_and_qualification'
 
 
 def test_checkpoint_noise_is_audited_without_becoming_a_report_finding():
@@ -43,7 +111,7 @@ def test_checkpoint_noise_is_audited_without_becoming_a_report_finding():
     report = build_report(raw, project_name='项目', sources=[])
     assert not report['findings'] and not report['rows']
     assert report['execution_status'] == 'partial'
-    assert '未发现可列示问题' in report['summary']
+    assert '未形成可列示的问题' in report['summary']
     assert report['excluded_findings'][0]['finding'] == raw['findings'][0]
     assert report['excluded_findings'][0]['reason_code'] == 'repetitive_heading_evidence'
     assert len(raw['findings']) == 1  # 原检查点与保存版本不回写。

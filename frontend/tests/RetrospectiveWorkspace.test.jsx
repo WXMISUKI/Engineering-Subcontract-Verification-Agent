@@ -169,7 +169,7 @@ describe('RetrospectiveWorkspace', () => {
     expect(input.disabled).toBe(false)
     expect(api.patchBsSection).not.toHaveBeenCalled()
     fireEvent.blur(input)
-    await waitFor(() => expect(api.patchBsSection).toHaveBeenCalledWith(4, { projectName: '嘉松工程' }))
+    await waitFor(() => expect(api.patchBsSection).toHaveBeenCalledWith(4, { projectName: '嘉松工程', baselineDate: '' }))
     await waitFor(() => expect(input.disabled).toBe(false))
     view.unmount()
     render(<RetrospectiveWorkspace taskId={4} conversationId={2}/>)

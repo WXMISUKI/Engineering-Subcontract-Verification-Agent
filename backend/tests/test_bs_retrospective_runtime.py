@@ -70,7 +70,7 @@ class Client:
             ]}]}, ensure_ascii=False)
 
 
-def prepared(tmp_path, monkeypatch, *, text=None):
+def prepared(tmp_path, monkeypatch, *, text=None, baseline_date=None, baseline_source=None):
     http, engine, task_id = _client(tmp_path)
     client = Client()
     monkeypatch.setattr(runtime, 'schedule', lambda *args: False)
@@ -84,6 +84,8 @@ def prepared(tmp_path, monkeypatch, *, text=None):
     with Session(engine) as db:
         task = db.get(BsTask, task_id)
         task.options_snapshot_json = {'review_mode': 'contract_retrospective'}
+        task.baseline_date = baseline_date
+        task.options_snapshot_json['baseline_date_source'] = baseline_source or 'automatic'
         task.project_name = '隔离合同项目'
         material = BsMaterial(task_id=task_id, file_name='分包合同.pdf', role='sub', pages=1,
             parse_state='done', degradations_json=[], pages_json=[{'page': 1, 'text': text or
@@ -109,6 +111,7 @@ def test_idempotent_accept_and_automatic_saved_report(tmp_path, monkeypatch):
     assert result['state'] == 'partial'  # 无规范库：内部歧义仍可报告。
     assert len(result['report']['rows']) == 1
     assert len(result['report']['rows'][0]['cells']) == 8
+    assert result['report']['identity']['prompt_version'] == 'bs.contract-retrospective-prompt.v16'
     assert result['report']['identity']['model_identity']['request_model'] == 'synthetic-model'
     assert client.calls == 7
     asyncio.run(runtime.run(engine, job_id))
@@ -126,6 +129,41 @@ def test_idempotent_accept_and_automatic_saved_report(tmp_path, monkeypatch):
         assert all(len(row.dedupe_key) <= 120 for row in usage)
 
 
+def test_default_historical_baseline_uses_unique_subcontract_signing_date(tmp_path, monkeypatch):
+    http, engine, task_id, _, job_id, _, _ = prepared(tmp_path, monkeypatch)
+    with Session(engine) as db:
+        event = db.query(BsTaskEvent).filter_by(task_id=task_id, event_type=runtime.SPEC).one()
+        assert event.payload_json['baseline_date'] is None
+        assert event.payload_json['baseline_date_source'] == 'automatic'
+        assert event.payload_json['current_notice_date']
+    asyncio.run(runtime.run(engine, job_id))
+    report = http.get(f'/api/plus/blockchain-supervision/tasks/{task_id}/retrospective').json()['report']
+    assert report['identity']['contract_date'] == '2023-12-22'
+    assert report['identity']['baseline_date'] == '2023-12-22'
+    assert report['identity']['baseline_date_source'] == 'subcontract_signing_date'
+    assert report['identity']['current_notice_date']
+
+
+def test_unknown_signing_date_does_not_fall_back_to_task_creation_date(tmp_path, monkeypatch):
+    text = '工程项目：隔离测试工程。12.1 工期延长的费用可另行协商。'
+    http, engine, task_id, _, job_id, _, _ = prepared(tmp_path, monkeypatch, text=text)
+    asyncio.run(runtime.run(engine, job_id))
+    report = http.get(f'/api/plus/blockchain-supervision/tasks/{task_id}/retrospective').json()['report']
+    assert report['identity']['contract_date'] is None
+    assert report['identity']['baseline_date'] is None
+    assert report['identity']['baseline_date_source'] == 'unknown'
+    assert any('历史适用性不作确定性判断' in row for row in report['analysis_notes'])
+
+
+def test_manual_historical_baseline_overrides_extracted_signing_date(tmp_path, monkeypatch):
+    from datetime import date
+    http, engine, task_id, _, job_id, _, _ = prepared(
+        tmp_path, monkeypatch, baseline_date=date(2024, 1, 1), baseline_source='manual')
+    asyncio.run(runtime.run(engine, job_id))
+    report = http.get(f'/api/plus/blockchain-supervision/tasks/{task_id}/retrospective').json()['report']
+    assert report['identity']['contract_date'] == '2023-12-22'
+    assert report['identity']['baseline_date'] == '2024-01-01'
+    assert report['identity']['baseline_date_source'] == 'manual'
 def test_usage_key_preserves_run_and_subrequest_identity_within_column_limit():
     batch = 'basis:' + 'a' * 64 + ':' + 'b' * 64
     identities = [('retro-' + 'c' * 32, batch + suffix)

@@ -8,9 +8,9 @@ from .retrospective_analysis import ExecutionBoundaryError, prompt_batch, review
 from .retrospective_contracts import strict_response_schema
 from .retrospective_sources import analysis_batches, digest, reading_limitations
 from .retrospective_upstream_contracts import (
-    VERSION, TOPICS, SelectedExtractionResponse, ComparisonResponse,
+    VERSION, TOPICS, SelectedExtractionResponse, TransportSelectedExtractionResponse, ComparisonResponse,
     bind_selected_extraction, bind_relationship, bind_refs, validate_upstream_candidate,
-    SelectedRelationshipResponse, SelectedComparisonResponse,
+    SelectedRelationshipResponse, SelectedComparisonResponse, TermCheck,
 )
 from .semantic_review import request_json
 
@@ -158,32 +158,82 @@ def comparison_candidates(terms, upstream, budget=18000):
 
 
 def bind_comparison(raw, upstream, sub_candidates, priority, sources):
-    response = ComparisonResponse.model_validate(raw)
+    if any(not isinstance(row, dict) or not isinstance(row.get('evidence'), list)
+           for row in upstream + sub_candidates + priority):
+        raise ValueError('上游待比较条款缺少有效证据结构')
     expected = {row['term_id']: row for row in upstream}
-    if len(response.checks) != len(expected) or {row.term_id for row in response.checks} != set(expected):
-        raise ValueError('上游条款比较记录重复或漏项')
     allowed = [ref for row in upstream + sub_candidates + priority for ref in row['evidence']]
-    checks, findings = [], []
-    for check in response.checks:
-        refs = bind_refs(check.evidence, sources)
-        _within_refs(refs, allowed)
-        term = expected[check.term_id]
+    if not isinstance(raw, dict) or not isinstance(raw.get('checks'), list):
+        raise ValueError('上游条款比较响应结构无效')
+    valid, invalid, seen = {}, set(), set()
+    unknown = 0
+    for value in raw['checks']:
+        term_id = value.get('term_id') if isinstance(value, dict) else None
+        if term_id not in expected:
+            unknown += 1
+            continue
+        if term_id in seen:
+            invalid.add(term_id)
+            valid.pop(term_id, None)
+            continue
+        seen.add(term_id)
+        try:
+            check = TermCheck.model_validate(value)
+            refs = bind_refs(check.evidence, sources)
+            _within_refs(refs, allowed)
+        except (ValidationError, ValueError, TypeError, KeyError):
+            invalid.add(term_id)
+            continue
+        term = expected[term_id]
         has_upstream = any(ref['material_id'] == source['material_id'] and ref['page'] == source['page']
                            and ''.join(ref['quote'].split()) in ''.join(source['quote'].split())
                            for ref in refs for source in term['evidence'])
         if check.state != 'pending' and not has_upstream:
-            raise ValueError('比较决定未引用对应上游约定')
+            invalid.add(term_id)
+            continue
         if check.state in {'risk', 'aligned'} and not any(r['role'] in {'sub', 'labor'} for r in refs):
-            raise ValueError('比较决定缺少分包原文')
+            invalid.add(term_id)
+            continue
         record = {**check.model_dump(), 'evidence': refs}
+        valid[term_id] = (record, None)
         if check.state == 'risk':
-            row = validate_upstream_candidate({'kind': 'upstream_risk', 'time_scope': 'contract_text',
+            dimensions = {
+                'scope': 'scope_and_qualification', 'priority': 'contract_terms_and_upstream',
+                'price': 'commercial_terms_and_insurance', 'payment': 'commercial_terms_and_insurance',
+                'wages': 'labor_and_wage_protection', 'schedule': 'quality_safety_schedule_environment',
+                'quality': 'quality_safety_schedule_environment', 'safety': 'quality_safety_schedule_environment',
+                'environment': 'quality_safety_schedule_environment', 'insurance': 'commercial_terms_and_insurance',
+                'equipment': 'equipment_and_lifting',
+            }
+            try:
+                row = validate_upstream_candidate({'kind': 'upstream_risk', 'time_scope': 'contract_text',
+                'review_dimension': dimensions.get(term['topic'], 'contract_terms_and_upstream'),
                 'message': check.reason, 'conditions': check.conditions, 'applicability': check.applicability,
                 'evidence': [_compact_ref(ref) for ref in refs], 'basis': []}, sources)
-            findings.append(row)
-            record['finding_id'] = row['finding_id']
+            except (ValidationError, ValueError, TypeError, KeyError):
+                invalid.add(term_id)
+                valid.pop(term_id, None)
+                continue
+            valid[term_id] = (record, row)
+    checks, findings = [], []
+    for term_id in expected:
+        if term_id in invalid or term_id not in valid:
+            checks.append({'term_id': term_id, 'state': 'pending',
+                           'reason': '该项条款比较响应未通过结构或证据核验，尚待核对。',
+                           'applicability': '', 'conditions': '', 'evidence': []})
+            continue
+        record, finding = valid[term_id]
+        if finding:
+            record['finding_id'] = finding['finding_id']
+            findings.append(finding)
         checks.append(record)
-    return {'checks': checks, 'findings': findings}
+    partial = bool(invalid or unknown or len(seen) < len(expected))
+    result = {'state': 'partial' if partial else 'completed', 'checks': checks, 'findings': findings}
+    if partial:
+        result['limitations'] = ['部分上游条款响应未能逐项核验，相关条款暂列待核。']
+        result['validation_counts'] = {'invalid': len(invalid), 'unknown': unknown,
+                                       'missing': len(set(expected) - seen)}
+    return result
 
 
 async def compare(sources, identity, *, client, load_checkpoint=None, before_batch=None,
@@ -238,7 +288,7 @@ async def compare(sources, identity, *, client, load_checkpoint=None, before_bat
         catalog = extraction_catalog(batch)
         result = await execute('extract', {'role': role, 'topic_ids': list(TOPICS),
             'batch_id': batch['batch_id'], 'context': prompt_batch(batch)['context'], 'evidence_catalog': catalog},
-            EXTRACT_SYSTEM, SelectedExtractionResponse,
+            EXTRACT_SYSTEM, TransportSelectedExtractionResponse,
             lambda raw: bind_selected_extraction(raw, batch, sources, catalog), index, len(batches))
         extraction.append({'batch_id': batch['batch_id'], 'material_id': batch['parts'][0]['material_id'], **result})
         facts.extend(result.get('facts', [])); terms.extend(result.get('terms', []))
@@ -290,7 +340,7 @@ async def compare(sources, identity, *, client, load_checkpoint=None, before_bat
         compared = await execute('compare', payload, COMPARE_SYSTEM, SelectedComparisonResponse,
             lambda raw: bind_comparison(resolve_selected(raw, SelectedComparisonResponse, catalog),
                                         group, selected, priority, sources), index, len(groups))
-        if compared['state'] == 'completed':
+        if compared['state'] in {'completed', 'partial'}:
             result['checks'].extend(compared['checks']); result['findings'].extend(compared['findings'])
         else:
             result['checks'].extend({'term_id': row['term_id'], 'state': 'pending',

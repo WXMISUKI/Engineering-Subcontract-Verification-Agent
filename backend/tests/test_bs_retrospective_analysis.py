@@ -3,8 +3,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.plus.blockchain_supervision.retrospective_analysis import TOPICS, ExecutionBoundaryError, analyze, validate_candidate, select_basis, review_candidates
-from app.plus.blockchain_supervision.retrospective_contracts import SCHEMA_VERSION
+from app.plus.blockchain_supervision.retrospective_analysis import (TOPICS, REVIEW_CHECKLIST,
+    ExecutionBoundaryError, analyze, validate_candidate, select_basis, review_candidates)
+from app.plus.blockchain_supervision.retrospective_contracts import PROMPT_VERSION, SCHEMA_VERSION
 from app.plus.blockchain_supervision.retrospective_sources import freeze_material
 
 
@@ -13,12 +14,31 @@ def inputs():
         parse_state="done", degradations_json=[], pages_json=[{"page": 1, "text":
         "签订日期：2023年12月22日\n12.1 工期延长的费用可另行协商。\n12.2 工期延长费用均不调整。"}]))
     identity = {"schema_version": SCHEMA_VERSION, "task_id": 1, "model_code": "synthetic",
-                "contract_date": "2023-12-22", "baseline_date": "2026-11-19"}
+                "contract_date": "2023-12-22", "baseline_date": "2023-12-22",
+                "current_notice_date": "2026-11-20"}
     candidate = {"kind": "internal_ambiguity", "time_scope": "contract_text",
                  "message": "合同对延期费用能否调整存在不同约定，适用边界尚不明确。", "evidence": [
                      {"material_id": 1, "page": 1, "quote": "工期延长的费用可另行协商。"},
                      {"material_id": 1, "page": 1, "quote": "工期延长费用均不调整。"}]}
     return [source], identity, candidate
+
+
+def test_review_checklist_covers_nine_dimensions_with_contract_evidence_boundaries():
+    assert PROMPT_VERSION == 'bs.contract-retrospective-prompt.v16'
+    assert list(REVIEW_CHECKLIST) == [
+        'scope_and_qualification', 'procedure_and_subcontracting', 'key_staffing',
+        'equipment_and_lifting', 'hazardous_work_and_plans', 'contract_terms_and_upstream',
+        'quality_safety_schedule_environment', 'commercial_terms_and_insurance',
+        'labor_and_wage_protection',
+    ]
+    joined = '\n'.join(REVIEW_CHECKLIST.values())
+    for boundary in ('不据合同认证主体登记', '不能证明审批已经完成', '不推断人员实际到岗',
+                     '不得由合同清单推断设备已进场', '合同不能代替施工方案', '不推断实际支付',
+                     '不证明实际用工', '不得仅凭工程名称/关键词', '不自行设阈值'):
+        assert boundary in joined
+    for topic in ('负面清单', '专项施工方案', '文件优先顺序', '质量保证金', '工资专户', '实际支付',
+                  '信号指挥', '司索', '履约及质量保证金', '独立检测费', '配合费', '索赔程序', '欠薪处置'):
+        assert topic in joined
 
 
 def test_repeated_numbered_titles_do_not_prove_substantive_contract_ambiguity():

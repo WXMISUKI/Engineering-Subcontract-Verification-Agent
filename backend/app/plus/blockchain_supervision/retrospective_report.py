@@ -1,10 +1,50 @@
 """倒查八列表投影；前端和导出共同消费保存结果，不重新分析或润色。"""
 from copy import deepcopy
 
-from .retrospective_contracts import COLUMNS, summary
+from .retrospective_contracts import COLUMNS, REPORT_DIMENSIONS, report_dimension_id, summary
 from .retrospective_sources import reading_limitations, repetitive_heading_evidence
 
-TEMPLATE_ID = "contract-retrospective.v4"
+TEMPLATE_ID = "contract-retrospective.v6"
+
+
+def _narrative_summary(report):
+    findings = report.get('findings') or []
+    status = report.get('execution_status')
+    if status == 'failed':
+        return '本次合同文本核查未完成，尚未形成可供使用的核查意见。'
+    if not findings:
+        if status == 'partial':
+            return '本次已完成核查范围内未形成可列示的问题；尚未完成的范围不据此判断不存在风险。'
+        return '本次核查范围内未发现可列示的合同问题或风险提示；本意见不判断合同效力或实际履约情况。'
+    categories = list(dict.fromkeys(REPORT_DIMENSIONS[report_dimension_id(
+        row.get('review_dimension'))] for row in findings))
+    category_text = '、'.join(categories)
+    if status == 'partial':
+        return (f'本次已完成核查范围内列示{len(findings)}项合同问题或风险提示，涉及{category_text}。'
+                '尚未完成的核查范围不据此判断不存在风险；本意见不判断合同效力或实际履约情况。')
+    return (f'本次核查范围内列示{len(findings)}项合同问题或风险提示，涉及{category_text}。'
+            '具体约定、条款位置及依据见附件一；本意见不判断合同效力或实际履约情况。')
+
+
+def _overview(report, project_name, sources):
+    roles = {'general': '总包合同', 'sub': '分包合同', 'labor': '分包合同'}
+    materials = []
+    for source in sources:
+        label = roles.get(source.get('role'))
+        if label:
+            value = f'{label}《{source.get("file_name") or "未命名文件"}》'
+            if value not in materials:
+                materials.append(value)
+    parts = []
+    if project_name:
+        parts.append(f'项目：{project_name}。')
+    identity = report.get('identity') or {}
+    if identity.get('contract_date'):
+        parts.append(f'合同签订日期：{identity["contract_date"]}。')
+    if materials:
+        parts.append('核查材料：' + '；'.join(materials) + '。')
+    parts.append('本次围绕合同条款、纳入核查的依据及总分包约定衔接开展文本核查，不对实际履约情况作判断。')
+    return ''.join(parts)
 
 
 def build_report(result, *, project_name, sources):
@@ -44,7 +84,7 @@ def build_report(result, *, project_name, sources):
     report['limitations'] = list(dict.fromkeys(limits))
     # 运行限制留在审计快照；试用正文仅展示已确认可列示的发现。
     report['analysis_summary'] = report.get('analysis_summary', report['summary'])
-    report['summary'] = report['summary'].replace('部分范围受限，详见核查限制。', '')
+    report['summary'] = _narrative_summary(report)
     rows = []
     roles = {source['material_id']: '总包' if source['role'] == 'general' else '分包' for source in sources}
     for finding in report["findings"]:
@@ -73,19 +113,35 @@ def build_report(result, *, project_name, sources):
                  f"【{finding['kind_label']}／{label}】\n{finding['message']}",
                  "\n".join(dict.fromkeys(basis_files)), "\n".join(basis_text)]
         rows.append({"finding_id": finding["finding_id"], "kind": finding["kind"],
+                     "review_dimension": report_dimension_id(finding.get('review_dimension')),
                      "time_scope": finding["time_scope"], "cells": cells, "evidence": refs})
-    report.update(review_mode="contract_retrospective", title="分包合同文本倒查报告（系统辅助分析）",
+    report.update(review_mode="contract_retrospective", title="工程分包合同倒查意见（系统辅助分析）",
                   project_name=project_name, columns=list(COLUMNS), rows=rows,
                   materials=[{key: source.get(key) for key in
                               ("material_id", "file_name", "role", "relation", "file_sha256", "total_pages")}
                              for source in sources])
-    coverage = report["coverage"]
+    blocks = [
+        {"type": "heading", "text": "一、核查概况"},
+        {"type": "paragraph", "text": _overview(report, project_name, sources)},
+        {"type": "heading", "text": "二、重点问题"},
+    ]
+    for dimension, label in REPORT_DIMENSIONS.items():
+        matching = [finding for finding in report['findings']
+                    if report_dimension_id(finding.get('review_dimension')) == dimension]
+        if matching:
+            blocks.append({"type": "heading", "text": label})
+            blocks.extend({"type": "paragraph", "text": finding['message']} for finding in matching)
+    if not report['findings']:
+        blocks.append({"type": "paragraph", "text": "本次未形成可列示的合同问题或风险提示。"})
+    blocks.extend([
+        {"type": "heading", "text": "三、综合核查意见"},
+        {"type": "paragraph", "text": report['summary']},
+        {"type": "heading", "text": "附件一：合同问题与风险明细表"},
+    ])
+    blocks.append({"type": "table", "headers": list(COLUMNS), "rows": [row["cells"] for row in rows],
+                   "widths": [.07, .05, .10, .10, .20, .22, .10, .16]})
     report["template_document"] = {
         "template_id": TEMPLATE_ID, "title": report["title"], "page_layout": "landscape",
-        "blocks": [{"type": "heading", "text": "一、发现摘要"},
-                   {"type": "paragraph", "text": report["summary"]},
-                   {"type": "heading", "text": "二、合同问题与风险明细"},
-                   {"type": "table", "headers": list(COLUMNS), "rows": [row["cells"] for row in rows],
-                    "widths": [.07, .05, .10, .10, .20, .22, .10, .16]}],
+        "blocks": blocks,
     }
     return report

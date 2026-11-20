@@ -348,16 +348,18 @@ def create_task(db: Session, *, conversation_id: int, title: str,
     review_mode = task_review_mode.validate(review_mode)
     if review_mode == task_review_mode.ADMISSION and not scope_a1 and not scope_a3:
         raise ValueError("至少选择一个核查范围（A1 违法转包分包识别 / A3 报审资料合规核查）")
+    selected_baseline = _coerce_date(baseline_date)
     task = BsTask(
         conversation_id=conversation_id, title=title,
         scope_a1=scope_a1, scope_a3=scope_a3,
         scale="standard",  # 标准档唯一实装；写进快照即锁定
         options_snapshot_json={"review_mode": review_mode,
                                "scope": {"A1": scope_a1, "A3": scope_a3}, "scale": "standard",
-                               "baseline_date_source": "manual" if _coerce_date(baseline_date) else "automatic"},
+                               "baseline_date_source": "manual" if selected_baseline else "automatic"},
         project_name=_clean_str(project_name),
         contract_section=_clean_str(contract_section),
-        baseline_date=_coerce_date(baseline_date) or _default_baseline_date(),
+        baseline_date=(selected_baseline if selected_baseline or review_mode == task_review_mode.RETROSPECTIVE
+                       else _default_baseline_date()),
         jurisdiction=_coerce_jurisdiction(jurisdiction),
         profile_code=_coerce_profile_code(profile_code),
         created_by=created_by, created_by_type=created_by_type,

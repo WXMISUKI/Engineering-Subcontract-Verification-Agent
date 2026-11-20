@@ -59,7 +59,7 @@ export default function PrototypeUploadPage({
   const retrospective = reviewMode === 'contract_retrospective'
   const roleOptions = retrospective ? ROLE_OPTIONS.filter(([key]) => key !== 'packet') : ROLE_OPTIONS
   const rowRoleOptions = retrospective ? roleOptions : ROW_ROLE_OPTIONS
-  const baselineHelp = retrospective ? '历史判断采用合同适用日期；此日期用于现行风险提示' : '以该日期有效的规则版本核查'
+  const baselineHelp = retrospective ? '未选择时读取分包合同签订日；选择后按此日期判断规则适用' : '以该日期有效的规则版本核查'
   const materials = task?.materials || []
   const generalSourceCandidates = materials.filter((material) => (
     material.role === 'general'

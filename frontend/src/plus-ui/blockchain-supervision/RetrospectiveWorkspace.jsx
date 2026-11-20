@@ -14,7 +14,7 @@ export default function RetrospectiveWorkspace({ conversationId, taskId, onTaskC
   const [task, setTask] = useState(null)
   const [status, setStatus] = useState(null)
   const [uploadRole, setUploadRole] = useState('general')
-  const [section, setSection] = useState({})
+  const [section, setSection] = useState({ baselineDate: '' })
   const sectionDirty = useRef(false)
   const inputRef = useRef(null)
   const [busy, setBusy] = useState(false)
@@ -54,7 +54,7 @@ export default function RetrospectiveWorkspace({ conversationId, taskId, onTaskC
 
   useEffect(() => {
     setView(null)
-    setSection({}); sectionDirty.current = false; setUploadRole('general')
+    setSection({ baselineDate: '' }); sectionDirty.current = false; setUploadRole('general')
   }, [conversationId, taskId])
 
   const setup = taskId == null || (status?.state === 'not_started' && task?.state === 'setup')
@@ -139,7 +139,8 @@ export default function RetrospectiveWorkspace({ conversationId, taskId, onTaskC
   }
   const uploadTask = buildPrototypeTask(task || { state: 'setup', materials: [] })
   if (!validation) uploadTask.validation = { hard_ok: false, hard_gaps: ['请上传总包合同与分包合同'] }
-  uploadTask.section = { ...uploadTask.section, ...section }
+  uploadTask.section = { ...uploadTask.section, ...section,
+    baselineDate: section.baselineDate ?? (task?.baseline_date_source === 'manual' ? task?.baseline_date : '') }
 
   const download = async (fmt) => {
     if (busy) return
