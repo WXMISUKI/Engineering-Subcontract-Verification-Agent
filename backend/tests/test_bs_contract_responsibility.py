@@ -142,15 +142,18 @@ def test_service_fact_history_report_prompts_and_subject_gate(db_session):
         assert len(rows) == 4 and {row.subject_id for row in rows} == {subject.id for subject in subjects}
         for row in rows:
             assert row.status == 'undecidable'
-            assert row.finding_semantics == "manual_prompt" and not reporting.report_gate_blocking(row)
+            if row.item_id == responsibility.ITEMS['wages']:
+                assert row.finding_semantics == 'manual_prompt' and not reporting.report_gate_blocking(row)
+            else:
+                assert row.finding_semantics == 'machine_conclusion' and reporting.report_gate_blocking(row)
             assert all(ref["subject_id"] == row.subject_id for ref in row.evidence_json)
         assert db_session.query(BsFinding).filter(BsFinding.task_id == task.id,
             BsFinding.item_id.in_(responsibility.ITEMS.values())).count() == 4
     report = reporting.build_report(db_session, task)
     prompts = [row for row in v14._manual_prompt_rows(report) if row["item_id"] in responsibility.ITEMS.values()]
-    assert len(prompts) == 4 and all(row["locations"] for row in prompts)
+    assert len(prompts) == 2 and all(row["locations"] for row in prompts)
     assert all("辅助提示" in row["label"] for row in prompts)
-    assert {row['item_id'] for row in v14._raw_items(report) if row['item_id'] in responsibility.ITEMS.values()} == set()
+    assert {row['item_id'] for row in v14._raw_items(report) if row['item_id'] in responsibility.ITEMS.values()} == {'RC-A10-cost'}
     subjects[0].type_confirmed = False
     db_session.commit()
     from app.plus.blockchain_supervision.knowledge_runs import ReferenceRunSuperseded

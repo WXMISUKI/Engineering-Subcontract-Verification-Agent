@@ -137,6 +137,30 @@ def test_item_clause_mismatch_is_rejected():
     assert exc.value.code == "basis_item_clause_mismatch"
 
 
+def test_safety_cost_original_contract_boundary_and_transition_are_frozen():
+    from datetime import date
+    from types import SimpleNamespace
+    from app.plus.blockchain_supervision.reference_snapshots import build_review_seed
+    task = SimpleNamespace(baseline_date=date(2026, 11, 19), scope_a1=True,
+                           scope_a3=True, profile_code='road', jurisdiction='shanghai')
+    seed = build_review_seed(task, review_run_id='safety-cost-regression',
+        material_fingerprint='materials', rule_fingerprint='rules', package={'version':'test','sources':[]})
+    rows = next(row for row in seed['steps'] if row['step_id']=='s1')['fixed_basis']
+    originals = [row for row in rows if row.get('doc_id')=='MOF-2022-136-ARCHIVE']
+    assert len(originals) == 2
+    extraction = next(row for row in originals if row['marker']=='第十七条')
+    payment = next(row for row in originals if row['marker']=='第十八条')
+    assert (payment['page_start'],payment['page_end']) == (12,13)
+    assert '分包单位不再重复提取' in ''.join(payment['text'].split())
+    assert '建筑安装工程造价' in ''.join(extraction['text'].split())
+    assert '按照原规定提取标准执行' in ''.join(extraction['text'].split())
+    assert payment['human_verified'] is False and payment['document']['online_knowledge_verified'] is False
+    assert payment['document']['effective_from'] == '2022-11-21'
+    assert bv.assert_binding('RC-A10-cost',subject='subcontractor')['clause_id'].endswith('#第十八条')
+    old = next(row for row in bv.load_review_basis()['external_documents'] if row['basis_id']=='MOF-2022-136')
+    assert old['quote'] is None and old['quote_status']=='pending_verification'
+
+
 def test_subject_mismatch_is_rejected():
     # T15-04 是承包人现场机构义务，不能套到分包人主体。
     with pytest.raises(bv.BasisBindingError) as exc:

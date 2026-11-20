@@ -242,6 +242,37 @@
       "content_format": "pdf",
       "citation_mode": "clause",
       "ocr_companion": null
+    },
+    "MOF-2022-136-ARCHIVE": {
+      "doc_id": "MOF-2022-136-ARCHIVE",
+      "doc_no": "财资〔2022〕136号",
+      "title": "企业安全生产费用提取和使用管理办法（2022原件）",
+      "issuer": "财政部、应急管理部",
+      "effective_from": "2022-11-21",
+      "effective_to": null,
+      "status": "local_original_archived",
+      "authority_level": "department_norm",
+      "source_kind": "text_layer",
+      "human_verified": false,
+      "source_file": "docs/plus/blockchain-supervision/evidence/安全费原文-20261119/safety-cost-136-2022.pdf",
+      "source_url": null,
+      "source_sha256": "956da92075244bba1400ed65423192008022188545cbf47f261bc0f4c946e823",
+      "physical_pages": [
+        12,
+        13
+      ],
+      "clause_count": 2,
+      "verification": "local_original_visual_reviewed",
+      "online_knowledge_verified": false,
+      "knowledge_id": null,
+      "verification_note": "已授权38页原件与README哈希相符，第12/13物理页原文及跨页续文已视觉核对；未恢复精确下载URL，未人工校对或认证2026全地域现行效力，旧线上知识条目未修复。",
+      "doc_title": "企业安全生产费用提取和使用管理办法（2022原件）",
+      "document_role": "full_text",
+      "parent_doc_id": null,
+      "strength": "A",
+      "content_format": "pdf",
+      "citation_mode": "clause",
+      "ocr_companion": null
     }
   },
   "clauses": {
@@ -2115,6 +2146,32 @@
       "quote": "4.2.2 技术负责人应符合下列条件：\n技术负责人应取得工程技术类职称。其中，初级职称取得者可在本标准中最小规模的工程中任职；中级职称取得者可在本标准中除最大规模外的工程中任职；高级职称取得者可在所有规模的工程中任职。",
       "quote_source": "basis_clauses",
       "human_verified": false
+    },
+    "MOF-2022-136-ARCHIVE#第十七条": {
+      "clause_id": "MOF-2022-136-ARCHIVE#第十七条",
+      "doc_id": "MOF-2022-136-ARCHIVE",
+      "strength": "A",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "legal_requirement",
+      "quote": "第十七条建设工程施工企业以建筑安装工程造价为依\n据，于月末按工程进度计算提取企业安全生产费用。提取标\n准如下：\n（一）矿山工程3.5%；\n（二）铁路工程、房屋建筑工程、城市轨道交通工程3%；\n（三）水利水电工程、电力工程2.5%；\n（四）冶炼工程、机电安装工程、化工石油工程、通信\n工程2%；\n（五）市政公用工程、港口与航道工程、公路工程1.5%。\n建设工程施工企业编制投标报价应当包含并单列企业\n安全生产费用，竞标时不得删减。国家对基本建设投资概算\n另有规定的，从其规定。\n本办法实施前建设工程项目已经完成招投标并签订合\n同的，企业安全生产费用按照原规定提取标准执行。",
+      "quote_source": "basis_clauses",
+      "human_verified": false
+    },
+    "MOF-2022-136-ARCHIVE#第十八条": {
+      "clause_id": "MOF-2022-136-ARCHIVE#第十八条",
+      "doc_id": "MOF-2022-136-ARCHIVE",
+      "strength": "A",
+      "subject_scope": [
+        "contractor",
+        "subcontractor"
+      ],
+      "requirement_kind": "legal_requirement",
+      "quote": "第十八条建设单位应当在合同中单独约定并于工程开\n工日一个月内向承包单位支付至少50%企业安全生产费用。\n总包单位应当在合同中单独约定并于分包工程开工日\n一个月内将至少50%企业安全生产费用直接支付分包单位并\n\n- 12 -\n监督使用，分包单位不再重复提取。\n工程竣工决算后结余的企业安全生产费用，应当退回建\n设单位。",
+      "quote_source": "basis_clauses",
+      "human_verified": false
     }
   },
   "external_documents": [
@@ -2283,7 +2340,8 @@
       "citation_mode": "clause",
       "knowledge_id": "56ae09e0-3c78-4ed1-854a-13d9df6cdbde",
       "quote": null,
-      "quote_status": "pending_verification"
+      "quote_status": "pending_verification",
+      "verification_note": "2022原件本地条款另登记MOF-2022-136-ARCHIVE；旧线上知识条目仍未校对，quote保持pending。"
     },
     {
       "basis_id": "JS-2019-18",

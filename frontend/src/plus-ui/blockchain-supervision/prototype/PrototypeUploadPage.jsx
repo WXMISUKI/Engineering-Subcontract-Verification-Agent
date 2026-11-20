@@ -24,6 +24,7 @@ function formatFileSize(sizeKb) {
 
 export default function PrototypeUploadPage({
   task,
+  reviewMode = 'admission',
   uploadRole = 'general',
   uploadSubject = '',
   subjectOptions = [],
@@ -267,7 +268,7 @@ export default function PrototypeUploadPage({
           <div className="flex flex-col gap-1 text-[13px] font-semibold text-[#8291A1]" data-testid="prototype-baseline-date-field-correct">
             <span>核查基准日</span>
             <PrototypeDatePicker value={task?.section?.baselineDate || ''} disabled={busy} readOnly={readOnly} onChange={(value) => onSectionChange?.('baselineDate', value)} />
-            <small className="text-[13px] font-normal text-[#9CA3AF]">以该日期有效的规则版本核查</small>
+            <small className="text-[13px] font-normal text-[#9CA3AF]">{reviewMode === 'contract_retrospective' ? '留空时自动采用分包合同可确认的签订日；无法唯一确认时不以当天替代' : '以该日期有效的规则版本核查'}</small>
           </div>
           <label className="flex flex-col gap-1 text-[14px]"><span>核查基准日</span><input aria-label="核查基准日" type="date" value={task?.section?.baselineDate || ''} disabled={busy || readOnly} onChange={(event) => onSectionChange?.('baselineDate', event.target.value)} className="min-h-[38px] rounded-lg border border-[#E9E3D9] px-2.5 text-[16px] outline-none focus:border-[#8B7355]" /><small className="text-[13px] text-[#9CA3AF]">以该日期有效的规则版本核查</small></label>
         </div>

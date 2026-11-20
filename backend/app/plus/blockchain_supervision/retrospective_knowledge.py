@@ -6,10 +6,20 @@ from .retrospective_analysis import _words
 from .retrospective_coverage import plan
 
 
-def retrieve(db, task, sources, basis, *, contract_date=None):
+_BASELINE_UNSET = object()
+
+
+def retrieve(db, task, sources, basis, *, contract_date=None, baseline_date=_BASELINE_UNSET):
     """一次运行冻结一次检索，不在导出或恢复时重新查询。"""
+    if baseline_date is _BASELINE_UNSET:
+        baseline_date = task.baseline_date
+    if baseline_date is None:
+        return {'status': 'local_only', 'references': [], 'queries': [],
+                'limitations': ['未取得核查基准日；本次不按当前日期筛选在线规则，仅使用已冻结的本地规范原文。']}
+    from datetime import date
+    as_of = baseline_date if isinstance(baseline_date, date) else date.fromisoformat(baseline_date)
     try:
-        package = knowledge_runs.load_reference_package(as_of=task.baseline_date)
+        package = knowledge_runs.load_reference_package(as_of=as_of)
     except (OSError, ValueError, KeyError):
         return {'status': 'unavailable', 'references': [], 'queries': [],
                 'limitations': ['在线知识库映射不可用；本次使用已冻结的本地规范原文进行对照。']}
@@ -35,7 +45,8 @@ def retrieve(db, task, sources, basis, *, contract_date=None):
         return {'status': 'local_only', 'references': [], 'queries': [], 'limitations': []}
     # 复用原有按文件归并查询、超时、授权范围、原件哈希、逐字原文及父项/例外验证。
     try:
-        result = knowledge_runs.retrieve_reference_run(db, task, {'basis_sources': planned})
+        result = knowledge_runs.retrieve_reference_run(db, task, {'basis_sources': planned},
+                                                      as_of=as_of)
     except Exception:
         return {'status': 'unavailable', 'references': [], 'queries': [],
                 'limitations': ['在线知识检索未完成；本次保留已冻结的本地规范原文对照结果。']}

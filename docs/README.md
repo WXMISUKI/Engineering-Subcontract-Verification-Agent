@@ -10,4 +10,6 @@
 - 任务拆分、阶段进度与验收记录**只在** `openspec/changes/` 维护，本目录不重复保存，避免两处状态漂移。
 - 设计文档的日期前缀表示生效日期，不表示完成日期。
 - 临时脚本、一次性验证文件、验收截图不入库也不留存；需要长期保留的结论写入设计或 OpenSpec 验收记录。
+- 根目录 `artifacts/`、`backups/`、`tmp/` 是本地工作目录，统一由 `.gitignore` 排除且不得批量暂存。`artifacts/` 可存放报告、只读回放和源码清单，`backups/` 存放恢复材料；这些目录中的原件应在相关 OpenSpec 不再引用且确认可恢复/可再生成后，才单独清理。`tmp/` 只用于当前阶段中间文件，验收后应清空；需要长期追溯的结果转记 OpenSpec，不保留临时脚本和日志。
+- `.audit/` 保存追加式审核决策/证据台账。若 OpenSpec 验收记录仍引用其中条目，须保留原件并保持 Git 状态可见；归档或退役前先把必要事实复制到权威验收记录。
 - 已删除的 `docs/baseline/`、`docs/handover/`、`docs/plans/` 内容已并入 `openspec/changes/bs-supplement-evidence-linkage/`，需要追溯时从 Git 历史读取。

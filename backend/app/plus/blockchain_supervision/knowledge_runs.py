@@ -659,8 +659,13 @@ def _reference_group_budget(source_count: int) -> float:
     return min(30.0, max(10.0, source_count * 0.5))
 
 
-def retrieve_reference_run(db: Session, task: BsTask, run: dict) -> dict:
+_AS_OF_UNSET = object()
+
+
+def retrieve_reference_run(db: Session, task: BsTask, run: dict, *, as_of=_AS_OF_UNSET) -> dict:
     """每组按来源归并查询，总预算有界；没有在线来源时如实保存本地依据模式。"""
+    if as_of is _AS_OF_UNSET:
+        as_of = task.baseline_date
     terminal = deepcopy(run)
     terminal.update(state="completed", status="local_only", references=[],
                     authorized_scope=[], queries=[], finding_links=[], limitations=[])
@@ -679,7 +684,7 @@ def retrieve_reference_run(db: Session, task: BsTask, run: dict) -> dict:
     query_cache, original_cache = {}, {}
     results = []
     for source in sources:
-        result = _retrieve_source(db, task, run, source, max(0.0, deadline - time.monotonic()),
+        result = _retrieve_source(db, task, run, source, max(0.0, deadline - time.monotonic()), as_of=as_of,
                                   query_cache=query_cache, original_cache=original_cache)
         results.append(result)
     for index, source in enumerate(sources):
@@ -694,7 +699,7 @@ def retrieve_reference_run(db: Session, task: BsTask, run: dict) -> dict:
         if (previous["status"] == "undetermined" and timed_out and cached
                 and (cached[0].status in {"hit", "partial"} or cached[1] < 2)
                 and deadline > time.monotonic()):
-            recovered = _retrieve_source(db, task, run, source, deadline - time.monotonic(),
+            recovered = _retrieve_source(db, task, run, source, deadline - time.monotonic(), as_of=as_of,
                                          query_cache=query_cache, original_cache=original_cache)
             if recovered.get("references"):
                 recovered["limitations"].append({"code": "reference_query_recovered",
@@ -715,8 +720,8 @@ def retrieve_reference_run(db: Session, task: BsTask, run: dict) -> dict:
     return terminal
 
 
-def _retrieve_source(db: Session, task: BsTask, run: dict, source: dict, budget: float,
-                     *, query_cache: dict | None = None, original_cache: dict | None = None) -> dict:
+def _retrieve_source(db: Session, task: BsTask, run: dict, source: dict, budget: float, *, as_of=None,
+                     query_cache: dict | None = None, original_cache: dict | None = None) -> dict:
     deadline = time.monotonic() + max(0.0, budget)
     terminal = deepcopy(run)
     terminal.update(state="completed", status="undetermined", references=[],
@@ -728,7 +733,7 @@ def _retrieve_source(db: Session, task: BsTask, run: dict, source: dict, budget:
                                 "reason": "deadline_exceeded", "used_for_decision": False}]
         return terminal
     try:
-        doc, clause = _clause(source, as_of=task.baseline_date)
+        doc, clause = _clause(source, as_of=as_of)
     except ReferenceBasisUnavailable:
         terminal["limitations"].append({"code": "reference_basis_unavailable",
             "clause_id": source.get("clause_id"),
@@ -825,7 +830,7 @@ def _retrieve_source(db: Session, task: BsTask, run: dict, source: dict, budget:
             preamble = load_negative_list()["meta"]["preamble"]
         else:
             rule = {"kind": "prohibited", "text": clause["text"], "exceptions": []}
-            parent = next(c for c in load_basis_clauses(as_of=task.baseline_date)["clauses"]
+            parent = next(c for c in load_basis_clauses(as_of=as_of)["clauses"]
                           if c.get("clause_id") == "MOT-2024-2#第十五条")
             preamble = parent["text"].split("（一）", 1)[0]
         matches = []

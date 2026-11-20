@@ -357,7 +357,11 @@ def create_task(db: Session, *, conversation_id: int, title: str,
                                "baseline_date_source": "manual" if _coerce_date(baseline_date) else "automatic"},
         project_name=_clean_str(project_name),
         contract_section=_clean_str(contract_section),
-        baseline_date=_coerce_date(baseline_date) or _default_baseline_date(),
+        baseline_date=(
+            _coerce_date(baseline_date)
+            if review_mode == task_review_mode.RETROSPECTIVE
+            else _coerce_date(baseline_date) or _default_baseline_date()
+        ),
         jurisdiction=_coerce_jurisdiction(jurisdiction),
         profile_code=_coerce_profile_code(profile_code),
         created_by=created_by, created_by_type=created_by_type,
@@ -5377,7 +5381,7 @@ def review_finding(db: Session, finding: BsFinding, *, reviewer: str,
 
 # 收口闸「必须有结论」的分组（范围 → 结论类型）。
 # 真源＝data/review_flow.json 五步主线登记的内核 kind（rules.in_scope_kinds()）：
-# 这里的清单只做范围切分，**必须**与流程图一致，由 tests/test_bs_review_flow.py 对锚。
+# 这里的清单只做范围切分，入口/报告映射由 backend/tests/test_bs_review_flow.py 锁定。
 # 教训（2026-10-14）：此前本表把已转「后续功能」的占比类算成必查，占比默认关闭后
 # 任务永远收不了口（409 一直挂「尚无结论：分包金额占比核算」）。
 _SCOPE_REQUIRED_KINDS = {scope: tuple(kind for group in reference_snapshots.CHECK_GROUPS.values()

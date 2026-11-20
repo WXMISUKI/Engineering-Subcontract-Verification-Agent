@@ -15,7 +15,8 @@ def test_native_reference_retrieval_receives_contract_scope_and_excludes_admissi
                 'item_id': 'NL-B-08', 'negative_parts': True}
     before = deepcopy(template)
     monkeypatch.setattr(knowledge.knowledge_runs, 'load_reference_package', lambda **kw: {'sources': [template]})
-    def native(db, task, run):
+    def native(db, task, run, *, as_of):
+        assert as_of == date(2026, 11, 19)
         planned = run['basis_sources']
         assert all(row['doc_id'] == 'MOT-NL-2024' for row in planned)
         leaf = next(row for row in planned if row['clause_id'].endswith('（三）6'))
@@ -35,5 +36,5 @@ def test_missing_mapping_is_explicit_local_mode_without_network(monkeypatch):
         raise ValueError('mapping unavailable')
     monkeypatch.setattr(knowledge.knowledge_runs, 'load_reference_package', unavailable)
     result = knowledge.retrieve(None, SimpleNamespace(baseline_date=None), [], [])
-    assert result['status'] == 'unavailable'
-    assert result['references'] == [] and '本地规范' in result['limitations'][0]
+    assert result['status'] == 'local_only'
+    assert result['references'] == [] and '不按当前日期筛选' in result['limitations'][0]

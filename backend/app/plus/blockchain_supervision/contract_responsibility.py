@@ -1,4 +1,4 @@
-"""合同费用/工资责任原文辅助核对；不认证实际履约或法定比例。"""
+"""合同费用/工资责任原文；安全费合同约定可核查，不认证实际履约或法定比例。"""
 import re
 
 from .contract_clause_facts import _CLAUSE_PATTERNS, iter_contract_sections
@@ -24,6 +24,10 @@ def extract_responsibility_records(materials):
                 "amount_mentions": list(dict.fromkeys(re.findall(r"(?:人民币\s*)?\d[\d,，]*(?:\.\d+)?\s*(?:万元|元)", text))),
                 "tax_basis_mentions": list(dict.fromkeys(re.findall(r"不含税|含税|税前|税后", text))),
                 "mentions_are_unassigned": True})
+    from .safety_cost_contract import extract_cost_terms
+    for record in records:
+        if record['topic'] == 'safety_cost':
+            record['safety_cost_terms'] = extract_cost_terms(record['quote'])
     return records
 
 
@@ -31,6 +35,9 @@ def run_responsibility_check(task, materials, *, topic):
     rows = [row for row in extract_responsibility_records(materials) if row["topic"] == topic]
     if not rows:
         return []
+    if topic == 'safety_cost':
+        from .safety_cost_contract import run_cost_contract_check
+        return run_cost_contract_check(task, materials, rows)
     label = "安全生产费" if topic == "safety_cost" else "工资支付与实名制"
     notice = ("请核单列约定、金额、比例和计提基数；提及的百分比可能属于税率或其他条款，不自动套用1.5%"
               if topic == "safety_cost" else

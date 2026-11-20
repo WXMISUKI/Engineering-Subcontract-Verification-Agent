@@ -2,6 +2,7 @@ import asyncio
 import json
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
+from datetime import date
 
 from sqlalchemy.orm import Session
 
@@ -57,7 +58,7 @@ class Client:
             ]}]}, ensure_ascii=False)
 
 
-def prepared(tmp_path, monkeypatch, *, text=None):
+def prepared(tmp_path, monkeypatch, *, text=None, baseline_date=None):
     http, engine, task_id = _client(tmp_path)
     client = Client()
     monkeypatch.setattr(runtime, 'schedule', lambda *args: False)
@@ -68,7 +69,11 @@ def prepared(tmp_path, monkeypatch, *, text=None):
     monkeypatch.setattr(llm, 'client_from_env', lambda **kwargs: client)
     with Session(engine) as db:
         task = db.get(BsTask, task_id)
-        task.options_snapshot_json = {'review_mode': 'contract_retrospective'}
+        task.options_snapshot_json = {
+            'review_mode': 'contract_retrospective',
+            'baseline_date_source': 'manual' if baseline_date else 'automatic',
+        }
+        task.baseline_date = baseline_date
         task.project_name = '隔离合同项目'
         material = BsMaterial(task_id=task_id, file_name='分包合同.pdf', role='sub', pages=1,
             parse_state='done', degradations_json=[], pages_json=[{'page': 1, 'text': text or
@@ -77,6 +82,10 @@ def prepared(tmp_path, monkeypatch, *, text=None):
         db.commit()
     accepted = http.post(f'/api/plus/blockchain-supervision/tasks/{task_id}/retrospective/start', json={})
     assert accepted.status_code == 202, accepted.text
+    with Session(engine) as db:
+        spec = db.query(BsTaskEvent).filter_by(task_id=task_id, event_type=runtime.SPEC).one()
+        assert spec.payload_json['baseline_date'] == (
+            baseline_date.isoformat() if baseline_date else None)
     with Session(engine) as db:
         job_id = db.query(BsAiReviewJob).filter_by(task_id=task_id).one().id
         material_id = db.query(BsMaterial).filter_by(task_id=task_id).one().id
@@ -93,6 +102,8 @@ def test_idempotent_accept_and_automatic_saved_report(tmp_path, monkeypatch):
     assert len(result['report']['rows']) == 1
     assert len(result['report']['rows'][0]['cells']) == 8
     assert result['report']['identity']['model_identity']['request_model'] == 'synthetic-model'
+    assert result['report']['identity']['baseline_date'] == '2023-12-22'
+    assert result['report']['identity']['baseline_date_source'] == 'subcontract_contract'
     assert client.calls == 4
     asyncio.run(runtime.run(engine, job_id))
     assert client.calls == 4
@@ -104,6 +115,30 @@ def test_idempotent_accept_and_automatic_saved_report(tmp_path, monkeypatch):
         assert len(usage) == client.calls
         assert len({row.dedupe_key for row in usage}) == client.calls
         assert all(len(row.dedupe_key) <= 120 for row in usage)
+
+
+def test_explicit_baseline_overrides_extracted_contract_date(tmp_path, monkeypatch):
+    http, engine, task_id, _, job_id, _, accepted = prepared(
+        tmp_path, monkeypatch, baseline_date=date(2024, 2, 1))
+    with Session(engine) as db:
+        spec = db.query(BsTaskEvent).filter_by(task_id=task_id, event_type=runtime.SPEC).one()
+        assert spec.payload_json['baseline_date'] == '2024-02-01'
+        assert spec.payload_json['baseline_date_source'] == 'manual'
+    asyncio.run(runtime.run(engine, job_id))
+    report = http.get(f'/api/plus/blockchain-supervision/tasks/{task_id}/retrospective').json()['report']
+    assert report['identity']['baseline_date'] == '2024-02-01'
+    assert report['identity']['baseline_date_source'] == 'manual'
+    assert report['identity']['contract_date'] == '2023-12-22'
+
+
+def test_missing_baseline_and_contract_date_never_falls_back_to_today(tmp_path, monkeypatch):
+    http, engine, task_id, _, job_id, _, _ = prepared(
+        tmp_path, monkeypatch, text='工程分包合同正文，未识别签订日期。')
+    asyncio.run(runtime.run(engine, job_id))
+    report = http.get(f'/api/plus/blockchain-supervision/tasks/{task_id}/retrospective').json()['report']
+    assert report['identity']['baseline_date'] is None
+    assert report['identity']['baseline_date_source'] == 'unresolved'
+    assert any('未能唯一确认合同签订日期' in row for row in report['limitations'])
 
 
 def test_usage_key_preserves_run_and_subrequest_identity_within_column_limit():

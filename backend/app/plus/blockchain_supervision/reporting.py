@@ -234,7 +234,7 @@ def _label_maps() -> tuple:
     neg = {r["id"]: ("%s %s" % (r.get("article", ""), r.get("text", ""))).strip()
            for r in negative_list_rules()}
     rc = {i["id"]: i["label"] for i in load_report_checklist()}
-    rc.update({"RC-A10-cost": "安全生产费合同责任辅助提示", "RC-A11-wages": "工资与实名制合同责任辅助提示"})
+    rc.update({"RC-A10-cost": "安全生产费合同单独约定", "RC-A11-wages": "工资与实名制合同责任辅助提示"})
     sc = {"A3-02-%s" % c["id"]: c["name"] for c in load_signature_chains()}
     sc["A3-02-timing"] = "先报批后实施时序"
     sc["A3-03-plan"] = "施工方案身份与审批原文提示"

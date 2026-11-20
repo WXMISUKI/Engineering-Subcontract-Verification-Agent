@@ -49,3 +49,11 @@ def test_run_identity_serializes_with_frozen_model_and_dates():
     saved = identity.model_dump(mode="json")
     assert RunIdentity.model_validate(saved) == identity
     assert saved["model_code"] == "model-a" and saved["contract_date"] != saved["baseline_date"]
+
+
+def test_run_identity_allows_unresolved_baseline_without_fabricating_date():
+    identity = RunIdentity(run_id="retro-2", task_id=1, model_code="model-a",
+                           material_fingerprint="c" * 64, basis_fingerprint="d" * 64)
+    saved = identity.model_dump(mode="json")
+    assert saved["baseline_date"] is None
+    assert saved["baseline_date_source"] == "unresolved"

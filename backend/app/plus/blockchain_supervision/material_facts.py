@@ -16,7 +16,7 @@ from sqlalchemy.exc import IntegrityError
 
 from .models import FACT_SCHEMA_VERSION, BsMaterialFact
 
-EXTRACTOR_VERSION = "material-facts.v14"
+EXTRACTOR_VERSION = "material-facts.v15"
 
 # 合同字段事实路径：与报告基础事实同源，落库后供跨合同比对和范围画像读取。
 # 金额统一万元、税率统一百分数，单位写进路径，避免裸值。

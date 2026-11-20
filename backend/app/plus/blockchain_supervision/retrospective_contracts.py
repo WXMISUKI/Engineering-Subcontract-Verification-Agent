@@ -7,7 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 SCHEMA_VERSION = "bs.contract-retrospective.v1"
-PROMPT_VERSION = "bs.contract-retrospective-prompt.v11"
+PROMPT_VERSION = "bs.contract-retrospective-prompt.v13"
 RUN_KEY = "retrospective_run_id"
 JOB_GROUP = "contract_retrospective"
 COLUMNS = ["项目名称", "总包/分包", "合同文件", "合同条款位置", "合同相关摘录",
@@ -123,14 +123,20 @@ class RunIdentity(ContractModel):
     knowledge_fingerprint: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     coverage_version: str | None = None
     coverage_fingerprint: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
-    baseline_date: str
+    baseline_date: str | None = None
     contract_date: str | None = None
+    baseline_date_source: Literal["manual", "subcontract_contract", "unresolved"] = "unresolved"
 
     @model_validator(mode="after")
     def valid_dates(self):
-        date.fromisoformat(self.baseline_date)
+        if self.baseline_date is not None:
+            date.fromisoformat(self.baseline_date)
         if self.contract_date is not None:
             date.fromisoformat(self.contract_date)
+        if self.baseline_date is None and self.baseline_date_source != "unresolved":
+            raise ValueError("缺少核查基准日时，来源必须为 unresolved")
+        if self.baseline_date is not None and self.baseline_date_source == "unresolved":
+            self.baseline_date_source = "manual"
         return self
 
 

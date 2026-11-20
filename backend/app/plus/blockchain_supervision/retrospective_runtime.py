@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 import hashlib
 from pathlib import Path
 import uuid
-from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
@@ -148,11 +147,15 @@ def accept(db, task, actor, *, relations=None):
                  "revision_no": row.revision_no} for row in materials]
     task.options_snapshot_json = {**(task.options_snapshot_json or {}), RUN_KEY: run_id}
     task.state, task.started_at = "running", datetime.now(timezone.utc).replace(tzinfo=None)
-    baseline = (task.baseline_date or datetime.now(ZoneInfo("Asia/Shanghai")).date()).isoformat()
+    date_source = service.baseline_date_source(task)
+    explicit_baseline = task.baseline_date if date_source == "manual" else None
+    baseline = explicit_baseline.isoformat() if explicit_baseline else None
     job = ai_review_jobs.enqueue(db, task.id, run_id, [JOB_GROUP])
     service.add_event(db, task.id, SPEC, stage="check", payload={
         "run_id": run_id, "model_code": model, "model_identity": actual_identity,
-        "baseline_date": baseline, "materials": manifest,
+        "baseline_date": baseline,
+        "baseline_date_source": "manual" if baseline else "contract_date_pending",
+        "materials": manifest,
         "relations": relations, "basis": freeze_basis(), "project_name": task.project_name}, commit=False)
     db.commit()
     schedule(db.get_bind(), job["id"])
@@ -281,7 +284,10 @@ async def run(engine, job_id, *, client=None):
                     source = freeze_material(material, file_sha256=manifest["file_sha256"])
                     source["relation"] = selected[material.id]
                     sources.append(source)
-            signed, _ = infer_contract_date(sources)
+            signed, _date_limitations = infer_contract_date(sources)
+            effective_baseline = spec.get("baseline_date") or signed
+            baseline_source = ("manual" if spec.get("baseline_date") else
+                               "subcontract_contract" if signed else "unresolved")
             with Session(engine) as db:
                 owned(db)
                 _progress(db, task_id, run_id, phase='retrieval', label='检索负面清单及规范依据')
@@ -291,7 +297,8 @@ async def run(engine, job_id, *, client=None):
                 with Session(engine) as query_db:
                     query_task = owned(query_db)
                     query_db.commit()  # 不在网络查询期间持有任务行锁。
-                    knowledge = retrieve(query_db, query_task, sources, spec['basis'], contract_date=signed)
+                    knowledge = retrieve(query_db, query_task, sources, spec['basis'],
+                                         contract_date=signed, baseline_date=effective_baseline)
                     owned(query_db)
                     query_db.commit()
                     return knowledge
@@ -303,7 +310,8 @@ async def run(engine, job_id, *, client=None):
                 material_fingerprint=digest(sources), basis_fingerprint=digest(spec["basis"]),
                 knowledge_fingerprint=digest(knowledge),
                 coverage_version=coverage_plan['version'], coverage_fingerprint=digest(coverage_plan),
-                baseline_date=spec["baseline_date"], contract_date=signed).model_dump(mode="json")
+                baseline_date=effective_baseline, contract_date=signed,
+                baseline_date_source=baseline_source).model_dump(mode="json")
             frozen = {"run_id": run_id, "sources": sources, "identity": identity, 'knowledge': knowledge}
             with Session(engine) as db:
                 owned(db)

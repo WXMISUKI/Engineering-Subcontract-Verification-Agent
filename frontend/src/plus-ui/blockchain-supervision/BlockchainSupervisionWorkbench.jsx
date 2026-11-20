@@ -690,8 +690,15 @@ export default function BlockchainSupervisionWorkbench({ conversationId, onExitP
   const [detail, setDetail] = useState(null)           // getBsTask 返回
   const [detailError, setDetailError] = useState('')
   // 默认北京时间当天，用户可在启动前修改；历史记录以已保存日期为准。
-  const [section, setSection] = useState(() => ({ projectName: '', contractSection: '', baselineDate: todayInChina() }))
+  const [section, setSection] = useState(() => ({ projectName: '', contractSection: '', baselineDate: reviewMode === 'contract_retrospective' ? '' : todayInChina() }))
   const baselineManualRef = useRef(false)
+  useEffect(() => {
+    if (taskId || baselineManualRef.current) return
+    setSection((current) => ({
+      ...current,
+      baselineDate: reviewMode === 'contract_retrospective' ? '' : todayInChina(),
+    }))
+  }, [reviewMode, taskId])
   const [uploadsInFlight, setUploadsInFlight] = useState(0)
   const [confirmModal, setConfirmModal] = useState(null) // validation payload
   const [submitting, setSubmitting] = useState(false)
@@ -788,7 +795,9 @@ export default function BlockchainSupervisionWorkbench({ conversationId, onExitP
           d.section.project_name && d.section_suggestions?.contract_section?.derived_from_project &&
           d.section.project_name.replace(/\s+/g, '') !== d.section_suggestions.contract_section.derived_from_project.replace(/\s+/g, '')
             ? '' : d.section_suggestions?.contract_section?.value || ''),
-        baselineDate: d.state === 'setup' && !readOnly && !baselineManualRef.current ? todayInChina() : (d.section.baseline_date || ''),
+        baselineDate: d.state === 'setup' && !readOnly && !baselineManualRef.current
+          ? (reviewMode === 'contract_retrospective' ? '' : todayInChina())
+          : (d.section.baseline_date || ''),
       })
       // T10-C C3：只有**真正的核查态**才进工作台。`preparing`（资料包准备中）必须留在
       // 第一阶段——此时结论尚未产生，跳进工作台只会让用户看到一页空结论（§三 冻结口径）。
@@ -862,11 +871,11 @@ export default function BlockchainSupervisionWorkbench({ conversationId, onExitP
   const changeSection = useCallback((key, value) => {
     if (key === 'baselineDate') {
       baselineManualRef.current = !!value
-      if (!value) value = todayInChina()
+      if (!value && reviewMode !== 'contract_retrospective') value = todayInChina()
     }
     setSection((prev) => ({ ...prev, [key]: value }))
     if (taskId) patchBsSection(taskId, { [key]: key === 'baselineDate' && !baselineManualRef.current ? null : value }).catch((e) => onError(e.message))
-  }, [taskId, onError])
+  }, [taskId, onError, reviewMode])
 
   // 上传（含替换）后等解析收口的共用节奏：前 5 轮 600ms，之后 2s 退避，
   // 总预算 180s（对齐 OCR 实测上限）；预算耗尽静默退出，不带病进核查。
@@ -1056,6 +1065,7 @@ export default function BlockchainSupervisionWorkbench({ conversationId, onExitP
             </p>
           ) : <PrototypeUploadPage
           task={prototypeTask}
+          reviewMode={reviewMode}
           readOnly={readOnly}
             preparing={isPreparing}
             parseEtaLabel={bsEtaLabel(etaRef.current, etaNow)}

@@ -226,6 +226,41 @@ def test_actual_roster_and_contract_scale_survive_service_rerun_and_report(db_se
     assert len(raw) == 1 and "大型" in raw[0]["message"]
 
 
+def test_legal_safety_shortfall_survives_service_and_report(db_session):
+    from app.plus.blockchain_supervision import service, reporting, report_template_v14
+
+    task = service.create_task(db_session, conversation_id=102, title="合成安全员法定下限",
+                               scope_a1=False, scope_a3=True, created_by=1)
+    subject = service.create_subject(db_session, task, name="甲建设有限公司", subject_type="professional")
+    contract = service.add_material(db_session, task, file_name="分包合同.pdf", role="sub", subject_id=subject.id)
+    contract.pages_json = [{"page": 1, "text": "专业分包合同\n工程内容：一级公路路基工程，路基长度6km\n签约合同价（含税）：6000万元"}]
+    contract.parse_state = "done"
+    roster = service.add_material(db_session, task, file_name="主要管理人员名单.pdf", role="packet", subject_id=subject.id)
+    roster.pages_json = [{"page": 1, "text": "主要管理人员名单\n| 姓名 | 职务 | 联系电话 |\n"
+        "| 张三 | 项目经理 | 13800000001 |\n| 李四 | 项目总工 | 13800000002 |\n"
+        "| 王五 | 施工员 | 13800000003 |\n| 赵六 | 质量负责人 | 13800000004 |\n"
+        "| 孙七 | 安全员 | 13800000005 |\n| 周八 | 标准员 | 13800000006 |\n"
+        "| 吴九 | 材料员 | 13800000007 |\n| 郑十 | 机械员 | 13800000008 |\n"
+        "| 钱一 | 劳务员 | 13800000009 |\n| 孙二 | 资料员 | 13800000010 |"}]
+    roster.parse_state = "done"
+    db_session.commit()
+
+    findings = [row for row in service.run_personnel_staffing(db_session, task) if row.item_id == "A2-07"]
+    assert len(findings) == 1
+    assert findings[0].status == "hit"
+    assert "现报 1 人" in findings[0].message
+    assert "法定下限 2 人" in findings[0].message
+    assert any(ref.get("evidence_kind") == "staffing_contract_amount" and ref.get("page") == 1
+               for ref in findings[0].evidence_json)
+
+    report = reporting.build_report(db_session, task)
+    raw = [row for row in report_template_v14._raw_items(report) if row["item_id"] == "A2-07"]
+    issues = report_template_v14._issue_rows(raw)
+    assert len(raw) == 1 and raw[0]["status"] == "hit"
+    assert len(issues) == 1 and issues[0]["category"] == "不符合"
+    assert "法定下限 2 人" in issues[0]["fact"]
+
+
 def test_legal_safety_minimum():
     assert pa.legal_safety_minimum(None) is None
     assert pa.legal_safety_minimum(455.76) == 1

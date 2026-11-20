@@ -246,6 +246,95 @@ async def test_final_conditional_explanation_uses_returned_conditional_reason():
     assert decisions[0]['message_source'] == 'returned_reason'
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(('text', 'first_quote', 'second_quote', 'guidance'), [
+    ('第42页：水电费按以下第 1 种方式计取：\n1、按施工现场安装水电表每月实际发生数为准；\n'
+     '分包人使用承包人水电的，在中期支付时扣除。\n\n'
+     '2、由施工当月各现场施工单位按工程量进行分摊。',
+     '水电费按以下第 1 种方式计取', '2、由施工当月各现场施工单位按工程量进行分摊',
+     '第二种列示方案是未选替代项'),
+    ('第62页：3.4.1 工程项目应由甲方编制施工组织设计，乙方必须严格按施工组织设计的要求施工；\n'
+     '3.4.2 工程项目由乙方按甲方的要求自行编制施工组织设计，乙方必须严格按施工组织设计的要求施工。',
+     '3.4.1 工程项目应由甲方编制施工组织设计',
+     '3.4.2 工程项目由乙方按甲方的要求自行编制施工组织设计',
+     '可以并存'),
+    ('第22页：因检验或试验发生的全部费用由分包人承担。\n'
+     '第24页：由分包人负责检验或试验，检验费用已包含在签约合同价内。',
+     '因检验或试验发生的全部费用由分包人承担',
+     '检验费用已包含在签约合同价内',
+     '已计入签约合同价'),
+])
+async def test_final_review_rejects_known_false_internal_conflict_patterns(
+        text, first_quote, second_quote, guidance):
+    source = freeze_material(SimpleNamespace(id=1, file_name='分包合同.pdf', role='sub', pages=1,
+        parse_state='done', degradations_json=[], pages_json=[{'page': 1, 'text': text}]))
+    identity = {'schema_version': SCHEMA_VERSION, 'task_id': 1, 'model_code': 'synthetic',
+                'contract_date': None, 'baseline_date': None}
+    finding = {'kind': 'internal_ambiguity', 'time_scope': 'contract_text',
+        'message': '两项合同约定相互冲突，执行口径不明确。', 'evidence': [
+            {'material_id': 1, 'page': 1, 'quote': first_quote},
+            {'material_id': 1, 'page': 1, 'quote': second_quote}], 'basis': []}
+    if guidance in {'可以并存', '已计入签约合同价'}:
+        expected = '可并行职责' if guidance == '可以并存' else '责任与计价并行约定'
+        with pytest.raises(ValueError, match=expected):
+            validate_candidate(finding, [source], [], identity)
+        return
+    row = validate_candidate(finding, [source], [], identity)
+
+    class Reviewer:
+        async def complete(self, messages, **kwargs):
+            assert guidance in messages[0]['content']
+            payload = json.loads(messages[1]['content'])
+            assert payload['full_evidence_pages'] == [
+                {'material_id': 1, 'page': 1, 'text': text}]
+            return json.dumps({'decisions': [{'finding_id': row['finding_id'], 'keep': False,
+                'reason': '完整合同上下文表明两项约定可以同时成立。', 'message': ''}]})
+
+    kept, decisions = await review_candidates([row], [source], identity,
+                                               client=Reviewer(), final=True)
+    assert kept == []
+    assert len(decisions) == 1 and decisions[0]['keep'] is False
+
+
+def test_complementary_project_and_subcontract_method_statements_are_rejected_pre_review():
+    text = ('3.4.1 工程项目应由甲方编制施工组织设计，乙方必须严格按施工组织设计的要求施工；'
+            '3.4.2 工程项目由乙方按甲方的要求自行编制施工组织设计，乙方必须严格按施工组织设计的要求施工。')
+    sources, identity, finding = inputs()
+    sources[0]['pages'][0]['text'] = text
+    finding.update(kind='internal_ambiguity', time_scope='contract_text',
+        message='编制责任主体直接冲突。', evidence=[
+            {'material_id': 1, 'page': 1, 'quote': '3.4.1 工程项目应由甲方编制施工组织设计'},
+            {'material_id': 1, 'page': 1, 'quote': '3.4.2 工程项目由乙方按甲方的要求自行编制施工组织设计'}])
+    with pytest.raises(ValueError, match='可并行职责'):
+        validate_candidate(finding, sources, [], identity)
+
+
+def test_same_subcontractor_inspection_cost_included_in_contract_price_is_rejected():
+    sources, identity, finding = inputs()
+    sources[0]['pages'][0]['text'] = (
+        '8.2.4 因检验或试验发生的全部费用由分包人承担。\n'
+        '9.1 由分包人负责检验或试验，检验费用已包含在签约合同价内。')
+    finding.update(kind='internal_ambiguity', time_scope='contract_text',
+        message='检验费用承担主体约定不一致。', evidence=[
+            {'material_id': 1, 'page': 1, 'quote': '因检验或试验发生的全部费用由分包人承担'},
+            {'material_id': 1, 'page': 1, 'quote': '由分包人负责检验或试验，检验费用已包含在签约合同价内'}])
+    with pytest.raises(ValueError, match='责任与计价并行约定'):
+        validate_candidate(finding, sources, [], identity)
+
+
+def test_different_inspection_cost_payers_are_not_hidden_by_fee_inclusion_rule():
+    sources, identity, finding = inputs()
+    sources[0]['pages'][0]['text'] = (
+        '8.2.4 检验费用由分包人承担。\n'
+        '9.1 检验费用已包含在承包人的签约合同价内。')
+    finding.update(kind='internal_ambiguity', time_scope='contract_text',
+        message='检验费用承担主体约定不一致。', evidence=[
+            {'material_id': 1, 'page': 1, 'quote': '检验费用由分包人承担'},
+            {'material_id': 1, 'page': 1, 'quote': '检验费用已包含在承包人的签约合同价内'}])
+    checked = validate_candidate(finding, sources, [], identity)
+    assert checked['kind'] == 'internal_ambiguity'
+
+
 def test_2024_rule_cannot_define_nonconformity_for_2023_signing():
     sources, identity, finding = inputs()
     rule = {"clause_id": "LAW#1", "text": "合同应当约定工期延长的费用责任。", "human_verified": True,
