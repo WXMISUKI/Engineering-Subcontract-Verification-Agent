@@ -23,7 +23,7 @@ from .classify import ROLE_LABELS, ROLE_PACKET, ROLE_UNKNOWN, classify_material
 from . import report_contract_type, report_template_v13, report_template_v14
 from .models import (STATUS_CODES, STATUS_LABELS, STATUS_UNDECIDABLE,
                      BsFinding, BsMaterial, BsSubject, BsTask, BsTaskEvent,
-                     BsReviewVersion)
+                     BsReviewVersion, counted_status)
 from .basis_subject_projection import SHARED_ATTACHMENT_IDS, subject_basis_view
 from .rules import (basis_lookup, configured_basis_lookup, load_config, load_report_checklist, load_signature_chains,
                     load_transfer_rules, negative_list_rules)
@@ -44,6 +44,7 @@ _SECTIONS = (
     # a1_check.supersede_dependency_findings）；本分区保留，历史任务的旧结论仍能归类展示。
     ("a1_dependency", "② 资质与内容合规性审查 · 监理审查与方案编制责任"),
     ("person_consistency", "③ 关键岗位人员核查 · 人员一致性与社保"),
+    ("personnel_adequacy", "③ 关键岗位人员核查 · 岗位配置与人员配备"),
     ("cert_validity", "④ 证件证照有效性核查 · 证照有效期"),
     ("internal_records", "⑤ 内部信用与事故材料核查"),
     # 后续功能（业主部署文件 二、（二）（六））：本期默认不产出条目；
@@ -143,14 +144,21 @@ def scope_statements(db: Session, task: BsTask, *, scope_coverage: dict | None =
     if not_checked:
         statements.append(
             "本次未核查%s（当前未启用）。" % "、".join(not_checked))
+    task_materials = db.query(BsMaterial).filter(BsMaterial.task_id == task.id).all()
+    active_materials = material_versions.active_input_materials(task_materials)
+    chain = contract_party_evidence_module.contract_chain_consistency(active_materials)
+    if chain.get("status") == "conflict":
+        statements.append(
+            "总包合同承包人与分包合同发包人不一致（总包合同：%s；分包合同：%s），"
+            "合同链条需人工核对。" % (
+                "、".join(chain.get("general_contractors") or ["未识别"]),
+                "、".join(chain.get("subcontract_employers") or ["未识别"])))
     if isinstance(scope_coverage, dict) and scope_coverage.get("policy") == optional_source_scope.POLICY_VERSION:
         statements.extend(optional_scope_limitation_statements(scope_coverage))
     else:
         flagged = [rule["title"] for rule in load_transfer_rules()["rules"]
                    if rule.get("requires_general_contract")]
-        task_materials = db.query(BsMaterial).filter(BsMaterial.task_id == task.id).all()
-        has_general = any(material.role == "general" for material in
-                          material_versions.active_input_materials(task_materials))
+        has_general = any(material.role == "general" for material in active_materials)
         if flagged and not has_general:
             statements.append(
                 "未上传总包合同，未核查需该合同原文的情形：「%s」。" % "」「".join(flagged))
@@ -212,7 +220,7 @@ def contract_facts_for_materials(materials, *, baseline_date=None) -> list[dict]
 # （U5 裁定）。未分级排最后，避免历史无 severity 的结论抢占表头。
 # 公共符号：报告条目排序与历史回执明细共用这一份档位序（AGENTS 纪律 9）。
 SEVERITY_RANK = {"high": 0, "medium": 1, "low": 2}
-_STATUS_RANK = {"hit": 0, "undecidable": 1, "miss": 2}
+_STATUS_RANK = {"hit": 0, "undecidable": 1, "not_included": 1, "miss": 2, "not_applicable": 2}
 
 
 def _item_sort_key(f: BsFinding) -> tuple:
@@ -226,9 +234,20 @@ def _label_maps() -> tuple:
     neg = {r["id"]: ("%s %s" % (r.get("article", ""), r.get("text", ""))).strip()
            for r in negative_list_rules()}
     rc = {i["id"]: i["label"] for i in load_report_checklist()}
+    rc.update({"RC-A10-cost": "安全生产费合同单独约定", "RC-A11-wages": "工资与实名制合同责任辅助提示"})
     sc = {"A3-02-%s" % c["id"]: c["name"] for c in load_signature_chains()}
     sc["A3-02-timing"] = "先报批后实施时序"
+    sc["A3-03-plan"] = "施工方案身份与审批原文提示"
+    sc["A3-04-security"] = "履约担保与保险辅助提示"
+    sc["A3-05-change"] = "合同变更与重新报审辅助提示"
     val = {"A2-02": "证件有效期", "A2-01": "社保资料覆盖管理人员",
+           "A2-07": "岗位配置与人员配备",
+           "A2-08": "特种作业工种与证书类型候选",
+           "A2-09": "安全生产许可行业与施工作业",
+           "A2-10": "人员证件字段与身份归属候选",
+           "A2-11": "在岗与项目归属辅助提示",
+           "A2-12": "设备检验与权属辅助提示",
+           "A2-13": "劳务培训记录辅助提示",
            "A2-03": "证件注册单位一致性",
            certificate_number_check.ITEM_ID: "项目经理交安 B 证编号一致性",
            identity_observation.ITEM_ID: "同名身份证资料原文对照",
@@ -271,6 +290,7 @@ def status_counts(items_or_statuses) -> dict:
             status = entry.get("status")
         else:
             status = getattr(entry, "status", None)
+        status = counted_status(status)
         if status in counts:
             counts[status] += 1
     return counts
@@ -392,7 +412,7 @@ def decision_trace(f: BsFinding, basis: dict | None = None) -> dict:
     elif f.material_id:
         evidence_status = "material_without_location"
         evidence_summary = "已关联材料，但没有可验证的页码或引文。"
-    elif f.status == STATUS_UNDECIDABLE:
+    elif counted_status(f.status) == STATUS_UNDECIDABLE:
         evidence_status = "missing"
         evidence_summary = "当前没有绑定可核实的材料证据，因此不能形成确定结论。"
     else:
@@ -1371,6 +1391,23 @@ def build_report(db: Session, task: BsTask, *, scope_coverage: dict | None = Non
         else:
             headline = "该任务尚未开始核查。"
     basic_project = packet_facts.get("project_name") or {}
+    if (basic_project.get("status") != "matched"
+            and (packet_facts.get("total_project_name") or {}).get("status") == "matched"):
+        # 分包合同常只写「总包工程名称」，没有报审表式「工程名称」标签；
+        # 该字段是同一工程的显式文本，可作为抬头工程名称来源。
+        basic_project = packet_facts["total_project_name"]
+    employer_fact = packet_facts.get("employer") or {}
+    if employer_fact.get("status") == "conflict":
+        values = list(dict.fromkeys(
+            str(row.get("value")) for row in employer_fact.get("evidence") or []
+            if row.get("value")))
+        scope_limitations.append(
+            "建设单位名称在不同页存在文字差异（%s），需人工核对原件。"
+            % "、".join(values[:3]))
+    elif employer_fact.get("source") == "majority_evidence":
+        scope_limitations.append(
+            "建设单位名称按多页一致证据与签署页印章确认为「%s」；个别页 OCR 缺字已按完整名称采用。"
+            % (employer_fact.get("company_display") or employer_fact.get("company")))
     basic_section = packet_facts.get("contract_section") or {}
     basic_scope = packet_facts.get("subcontract_scope") or {}
     sub_contract_fact = next((fact for fact in contract_facts
@@ -1380,18 +1417,30 @@ def build_report(db: Session, task: BsTask, *, scope_coverage: dict | None = Non
     subject_rows = checklist_summary.get("subjects") or []
     subject_ready = len(subject_rows) == 1 and subject_rows[0].get("status") == "ready"
     packet_amount = packet_facts.get("subcontract_amount") or {}
+    basic_tax = basic_amount.get("tax")
     contract_amount = {"value": basic_amount.get("value") if basic_amount.get("status") == "hit" else None,
                        "unit": basic_amount.get("unit"), "status": basic_amount.get("status", "unresolved"),
+                       "tax_basis": "含税" if basic_tax == "incl" else ("不含税" if basic_tax == "excl" else None),
                        "source": sub_contract_fact.get("file_name") if sub_contract_fact else None}
     amount_result = report_basic_facts.merge_amount_facts(packet_amount, contract_amount)
+    # 合同角色证据优先于「任务只有一个主体」的兜底：单一主体名称可能在上传阶段
+    # 被误填成总包或建设单位，不能用它覆盖合同正文的明确分包人；只有合同角色
+    # 未决时才回退到唯一主体。
+    contract_subcontractor = contract_party_evidence.get("subcontractor") or {}
+    if contract_subcontractor.get("status") in {"matched", "conflict"}:
+        subcontractor_fact = contract_subcontractor
+    elif len(subjects) == 1 and subject_ready:
+        subcontractor_fact = {"company": subjects[0].name, "status": "matched",
+                              "source": "subject", "evidence": []}
+    else:
+        subcontractor_fact = contract_subcontractor or {
+            "status": "unresolved", "company": None, "evidence": []}
     report_basic_information = {
         "project_name": report_basic_facts.project_task_fact(task.project_name, basic_project, project_name=True),
         "contract_section": report_basic_facts.project_task_fact(task.contract_section, basic_section),
         "general_contractor": contract_party_evidence.get("general_contractor") or {},
         "employer": contract_party_evidence.get("employer") or {},
-        "subcontractor": (contract_party_evidence.get("subcontractor") or {}) if len(subjects) != 1 else {
-            "company": subjects[0].name if subject_ready else None,
-            "status": "matched" if subject_ready else "unresolved"},
+        "subcontractor": subcontractor_fact,
         "subcontract_type": _opinion_subject_type(checklist_summary.get("subjects") or [], contract_facts),
         # 旧合同范围是关键词窗口，可能混入表格邻列；未能定位可靠标题时保持待核实。
         "subcontract_scope": basic_scope,
@@ -1720,9 +1769,16 @@ def build_opinion(db: Session, task: BsTask, *, scope_coverage: dict | None = No
                  if role in {"乙方", "分包人", "分包单位"} and isinstance(name, str) and name.strip()}
         if len(names) == 1:
             contract_subjects.append({"name": names.pop(), "file_name": fact.get("file_name")})
-    subcontractor = (confirmed_subjects[0] if len(confirmed_subjects) == 1 else confirmed_subjects) if confirmed_subjects else None
-    if not subcontractor and len(contract_subjects) == 1:
-        subcontractor = contract_subjects[0]["name"]
+    subcontractor = None
+    basic = report.get("basic_information") or {}
+    basic_subcontractor = basic.get("subcontractor") or {}
+    if basic_subcontractor.get("status") == "matched":
+        subcontractor = (basic_subcontractor.get("company_display")
+                         or basic_subcontractor.get("company"))
+    elif basic_subcontractor.get("status") != "conflict":
+        subcontractor = (confirmed_subjects[0] if len(confirmed_subjects) == 1 else confirmed_subjects) if confirmed_subjects else None
+        if not subcontractor and len(contract_subjects) == 1:
+            subcontractor = contract_subjects[0]["name"]
     subject_identity_conflicts = []
     if len(confirmed_subjects) == len(contract_subjects) == 1:
         contract_subject = contract_subjects[0]
@@ -1734,7 +1790,8 @@ def build_opinion(db: Session, task: BsTask, *, scope_coverage: dict | None = No
     contractor_summary = (report.get("qualification_summary") or {}).get("general_contractor")
     if isinstance(contractor_summary, dict):
         contractor_status = contractor_summary.get("status") or "missing"
-        contractor_name = (contractor_summary.get("company")
+        contractor_name = ((contractor_summary.get("company_display")
+                            or contractor_summary.get("company"))
                            if contractor_status == "matched" else None)
         contractor_label = contractor_summary.get("label") or "承包单位未识别，待核实"
     else:
@@ -1742,9 +1799,21 @@ def build_opinion(db: Session, task: BsTask, *, scope_coverage: dict | None = No
         contractor_status = "legacy"
         contractor_name = _fact_value(facts.get("general") or {}, "parties")
         contractor_label = "施工总承包单位"
+    basic_amount = basic.get("subcontract_amount") or {}
+    if basic_amount.get("status") == "matched" and basic_amount.get("value") is not None:
+        tax_label = "（含税）" if basic_amount.get("tax_basis") == "含税" else ""
+        amount_value = "%s%s%s" % (basic_amount["value"], basic_amount.get("unit") or "", tax_label)
+    else:
+        amount_value = _fact_value(sub_fact, "amount")
+    basic_scope = basic.get("subcontract_scope") or {}
+    scope_value = ((basic_scope.get("value") if basic_scope.get("status") == "matched" else None)
+                   or _fact_value(sub_fact, "scope"))
     subject = {
         "工程名称": report["meta"].get("project_name"),
         "标段": report["meta"].get("contract_section"),
+        "建设单位": ((basic.get("employer") or {}).get("company_display")
+                     or (basic.get("employer") or {}).get("company")),
+        "总包单位": contractor_name,
         "施工总承包单位": contractor_name,
         "施工总承包单位状态": contractor_status,
         "施工总承包单位说明": contractor_label,
@@ -1753,8 +1822,8 @@ def build_opinion(db: Session, task: BsTask, *, scope_coverage: dict | None = No
         "分包单位名称": subcontractor,
         "分包类型": _opinion_subject_type((report.get("checklist_summary") or {}).get("subjects") or [],
                                            report.get("contract_facts") or []),
-        "拟分包金额": _fact_value(sub_fact, "amount"),
-        "拟分包范围": _fact_value(sub_fact, "scope"),
+        "拟分包金额": amount_value,
+        "拟分包范围": scope_value,
     }
 
     # 补件清单只收「缺证据」的条目；开放条款缺的不是材料，是法规明文与认定标准，

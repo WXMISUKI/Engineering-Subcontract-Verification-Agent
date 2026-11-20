@@ -7,12 +7,14 @@
 
 from __future__ import annotations
 
+from .models import counted_status
+
 
 BUSINESS_MODULES = (
     ("basic_info", "项目与分包基本信息", (), "已有任务锚点、合同要素和主体证据"),
     ("compliance", "分包合规性审查", ("negative_list", "transfer_scope", "illegal_subcontract", "signature_chain", "a1_dependency"), "负面清单、转包/违法分包和审批链"),
     ("qualification_credit", "分包人资格与信用审查", ("qualification_match", "cert_validity", "internal_records"), "资质匹配、证照有效性和已提供的内部信用材料"),
-    ("personnel", "人员履约能力审查", ("person_consistency",), "关键岗位人员、劳动关系和社保一致性"),
+    ("personnel", "人员履约能力审查", ("person_consistency", "personnel_adequacy"), "关键岗位人员、岗位配备、劳动关系和社保一致性"),
     ("equipment", "设备与资源审查", (), "设备型号、数量、性能、自有/租赁和进场资料"),
     ("contract_clauses", "分包合同条款审查", ("contract_semantic", "amount_ratio", "workload_ratio"), "合同条款语义、金额/工程量关系和支付约定"),
     ("quality_safety_progress", "质量安全与进度审查", ("a1_dependency",), "施工方案、质量安全、环保和进度措施"),
@@ -60,7 +62,7 @@ def _module_conclusion(items: list[dict], status: str) -> str:
         return "本版本未覆盖该业务模块，不能据此判断符合或无风险。"
     counts = {"hit": 0, "miss": 0, "undecidable": 0}
     for item in items:
-        key = item.get("status")
+        key = counted_status(item.get("status"))
         if key in counts:
             counts[key] += 1
     if not items:
@@ -124,7 +126,8 @@ def build_business_report(report: dict) -> dict:
             fields = {
                 "项目名称": meta.get("project_name"),
                 "合同段": meta.get("contract_section"),
-                "承包单位": (party.get("general_contractor") or {}).get("company"),
+                "承包单位": ((party.get("general_contractor") or {}).get("company_display")
+                             or (party.get("general_contractor") or {}).get("company")),
                 "核查基准日": meta.get("baseline_date"),
             }
         elif code == "conclusion":

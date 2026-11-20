@@ -35,6 +35,8 @@ def read_bootstrap_environment(values: Mapping[str, str]) -> tuple[str, str, str
     result = []
     for name in names:
         value = values.get(name, '')
+        if name == 'EMBEDDING_API_KEY' and not value.strip():
+            value = values.get('LLM_API_KEY', '')
         if not value.strip():
             raise ValueError(f'缺少环境变量 {name}')
         result.append(value if name in ('WEKNORA_ADMIN_PASSWORD', 'EMBEDDING_API_KEY') else value.strip())
@@ -61,6 +63,8 @@ def read_vision_environment(values: Mapping[str, str]) -> tuple[str, str, str]:
     result = []
     for name in ('KNOWLEDGE_VLM_MODEL', 'KNOWLEDGE_VLM_API_BASE', 'KNOWLEDGE_VLM_API_KEY'):
         value = values.get(name, '')
+        if name == 'KNOWLEDGE_VLM_API_KEY' and not value.strip():
+            value = values.get('LLM_API_KEY', '')
         if not value.strip():
             raise ValueError(f'缺少环境变量 {name}')
         result.append(value if name == 'KNOWLEDGE_VLM_API_KEY' else value.strip())

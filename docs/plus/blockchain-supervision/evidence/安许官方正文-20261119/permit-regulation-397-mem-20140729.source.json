@@ -1,0 +1,11 @@
+{
+  "source_url": "https://www.mem.gov.cn/fw/flfgbz/fg/201407/t20140729_233082.shtml",
+  "final_url": "https://www.mem.gov.cn/fw/flfgbz/fg/201407/t20140729_233082.shtml",
+  "retrieved_at": "2026-11-18T20:05:02.869829+00:00",
+  "http_status": 200,
+  "content_type": "text/html",
+  "source_bytes": 44357,
+  "source_sha256": "b2f2c2c6ebc49e8aa2e718624a2026367689e1791075e91acfc2575f7d807a4a",
+  "transport_sha256": "e16e37322397dd6f5b8333ac49d2b783026ef82be79a088870b22ad6d2c12b70",
+  "content_encoding": "gzip"
+}

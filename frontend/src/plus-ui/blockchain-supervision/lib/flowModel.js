@@ -1,5 +1,6 @@
 // 原型优先阶段流纯派生层：只消费后端任务状态/五步快照，不执行核查、不伪造进度。
 import { isMaterialOnly } from './reviewDecision'
+import { countedStatusOf } from './statusDisplay'
 
 export const FLOW_STAGES = [
   { key: 'upload', label: '上传材料' },
@@ -24,7 +25,7 @@ export function buildFlowState({ taskState, snapshot, findings = [] } = {}) {
   const completedSteps = steps.filter((step) => step?.state === 'completed').length
   const selectedSteps = steps.filter((step) => step?.state !== 'out_of_scope').length
   const issueCount = Array.isArray(findings)
-    ? findings.filter((finding) => finding?.open_term !== true && !isMaterialOnly(finding) && (finding?.status === 'hit' || finding?.status === 'undecidable')).length
+    ? findings.filter((finding) => finding?.open_term !== true && !isMaterialOnly(finding) && ['hit', 'undecidable'].includes(countedStatusOf(finding?.status))).length
     : 0
 
   return {

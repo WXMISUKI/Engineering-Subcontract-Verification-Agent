@@ -11,6 +11,7 @@
 // 伪装成可上传材料；无法归类的缺件如实进入「需人工核实」，不给补件按钮。
 import { buildFiveSteps } from './fiveStepModel'
 import { isMaterialOnly } from './reviewDecision'
+import { countedStatusOf } from './statusDisplay'
 import { cleanText } from './plainText'
 
 const SEVERITY_RANK = { high: 0, critical: 0, medium: 1, low: 2 }
@@ -131,7 +132,7 @@ export function buildStepOverview({ snapshot, findings, missingPlan } = {}) {
 
     for (const finding of stepFindings) {
       if (isMaterialOnly(finding)) continue
-      if (finding.status !== 'undecidable') continue
+      if (countedStatusOf(finding.status) !== 'undecidable') continue
       // 第 1 步已经统一承载材料完整性与缺件；后续步骤的无法核实项
       // 只作为异常/人工核实显示，不能再次派生缺件清单。
       if (step.index !== 1) continue
@@ -170,7 +171,7 @@ export function buildStepOverview({ snapshot, findings, missingPlan } = {}) {
 
     // 主要问题：不符合优先，其次无法核实；组内按严重度与原顺序。
     const issueFindings = stepFindings
-      .filter((finding) => !isMaterialOnly(finding) && (finding.status === 'hit' || finding.status === 'undecidable'))
+      .filter((finding) => !isMaterialOnly(finding) && ['hit', 'undecidable'].includes(countedStatusOf(finding.status)))
     const issues = issueFindings
       .slice()
       .sort((a, b) => {

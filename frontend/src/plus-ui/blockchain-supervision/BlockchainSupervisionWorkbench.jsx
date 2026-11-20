@@ -1,3 +1,4 @@
+import { useBsEventStream } from './hooks/useBsEventStream'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { RotateCcw } from 'lucide-react'
 import PlusUIShell from '../PlusUIShell'
@@ -24,11 +25,13 @@ import PrototypeSupplementOverlay from './prototype/PrototypeSupplementOverlay'
 import BlockchainSupervisionModuleContainer from './prototype/BlockchainSupervisionModuleContainer'
 import BlockchainSupervisionWorkspaceFrame from './prototype/BlockchainSupervisionWorkspaceFrame'
 import ModelSelect from '../../components/ModelSelect'
+import ReviewModeSelect from './components/ReviewModeSelect'
+import RetrospectiveWorkspace from './RetrospectiveWorkspace'
 import { buildPrototypeTask, stageFromTaskState, stageIndexOf } from './prototype/prototypeViewModel'
 import './components/CheckProgress.css'
 import './prototype/v3VisualTokens.css'
 import {
-  BS_EVENT_TYPES, bsEventsUrl, completeBsTask,
+  completeBsTask,
   createBsTask,
   deleteBsMaterial, downloadBsReport, downloadBsWorksheet, downloadBsOpinion, previewBsOpinion,
   activateBsSupplementPlan, confirmBsMaterial, confirmBsEmployer, createBsSupplementPlan, enterBsMaterialEdit, getBsReport, getBsOpinion, getBsTask, getBsTodo, getBsReviewVersion, getBsRuleset,
@@ -49,6 +52,7 @@ import { taskMutationBusy } from './lib/taskMutationGate'
 import { buildStepOverview } from './lib/stepOverviewModel'
 import { buildTaskHeader } from './lib/taskHeaderModel'
 import { buildMissingPlan, supplementUploadCategoryOf, matchingSupplementGeneration, supplementItemsForSubject } from './lib/todoPlan'
+import { countedStatusOf } from './lib/statusDisplay'
 import { bsEtaLabel, updateBsEta } from './lib/bsEtaPlan'
 import { supplementPublicationPending } from './lib/supplementPublication'
 import { formatEventTime } from './lib/eventTime'
@@ -86,7 +90,7 @@ const AUTO_CHECK_ORDER = ['completeness', 'signature', 'a2', 'a1', 'internal_rec
 const AUTO_CHECK_KINDS = {
   completeness: ['completeness'],
   signature: ['signature_chain'],
-  a2: ['cert_validity', 'person_consistency', 'qualification_match'],
+  a2: ['cert_validity', 'person_consistency', 'personnel_adequacy', 'qualification_match'],
   a1: ['negative_list', 'transfer_scope', 'illegal_subcontract'],
   internal_records: ['internal_records'],
 }
@@ -167,7 +171,7 @@ function currentActivity(events, state, autoPhase, index = 0, total = 0, stage =
 function userFacingActivity(activity, findings) {
   const text = typeof activity === 'string' ? activity : ''
   if (!/不符合|无法核实|待处置/.test(text)) return text
-  const pendingFindings = (findings || []).filter((finding) => ['hit', 'undecidable'].includes(finding?.status))
+  const pendingFindings = (findings || []).filter((finding) => ['hit', 'undecidable'].includes(countedStatusOf(finding?.status)))
   const pending = pendingFindings.filter((finding) => finding?.open_term !== true).length
   const openTerms = pendingFindings.filter((finding) => finding?.open_term === true).length
   const denominatorNote = openTerms > 0
@@ -238,6 +242,7 @@ export default function BlockchainSupervisionWorkbench({ conversationId, onExitP
   const deepLinkTaskId = Number(initialTaskId) || null
   const [phase, setPhase] = useState('loading') // setup | materials | workbench | error
   const [modelCode, setModelCode] = useState('')
+  const [reviewMode, setReviewMode] = useState('admission')
   const [taskId, setTaskId] = useState(null)
   const [activeTaskTitle, setActiveTaskTitle] = useState('')
   const [error, setError] = useState('')
@@ -502,7 +507,9 @@ export default function BlockchainSupervisionWorkbench({ conversationId, onExitP
       if (deepLinkTaskId != null) {
         const desired = tasks.find((t) => Number(t.task_id) === deepLinkTaskId)
         if (desired) {
-            if (['preparing', 'running', 'review', 'done'].includes(desired.state)) {
+          setReviewMode(desired.review_mode || 'admission')
+            if (['preparing', 'running', 'review', 'done'].includes(desired.state)
+                || (desired.state === 'failed' && desired.review_mode === 'contract_retrospective')) {
               openWorkbench(desired.task_id, { title: desired.title, autoRun: true, view: desired.state === 'preparing' ? 'run' : undefined })
           } else {
             openSetup(desired.task_id)
@@ -515,13 +522,15 @@ export default function BlockchainSupervisionWorkbench({ conversationId, onExitP
         setPhase('error')
         return
       }
-        const started = tasks.find((t) => t.state === 'preparing' || t.state === 'running' || t.state === 'review' || t.state === 'done')
-        if (started) { openWorkbench(started.task_id, { title: started.title, autoRun: started.state === 'preparing', view: started.state === 'preparing' ? 'run' : undefined }); return }
+        const started = tasks.find((t) => t.state === 'preparing' || t.state === 'running' || t.state === 'review' || t.state === 'done'
+          || (t.state === 'failed' && t.review_mode === 'contract_retrospective'))
+        if (started) { setReviewMode(started.review_mode || 'admission'); openWorkbench(started.task_id, { title: started.title, autoRun: started.state === 'preparing', view: started.state === 'preparing' ? 'run' : undefined }); return }
       // T10-C C3：`setup` 与 `preparing` 都进第一阶段。`preparing` 是 ZIP 资料包准备中的
       // 持久任务态（契约 §7.3），此时**结论尚未产生** —— 若按「任务已开始」跳进工作台，
       // 用户看到的是一页空结论；故交给 SetupStage 呈现「资料准备中」并轮询到收口，
       // 由收口结果决定进 workbench 还是回 setup 显示原因。
       const inSetupStage = tasks.find((t) => t.state === 'setup' || t.state === 'preparing')
+      setReviewMode(inSetupStage?.review_mode || 'admission')
       openSetup(inSetupStage ? inSetupStage.task_id : null)
     }).catch((e) => {
       if (dead) return
@@ -549,7 +558,10 @@ export default function BlockchainSupervisionWorkbench({ conversationId, onExitP
       subtitle="工程分包合规"
       billing={{ scopeType: 'bs_task', scopeId: taskId }}
       showModelSelect={false}
-      headerModelSelector={<ModelSelect value={modelCode} onChange={setModelCode} placement="bottom" />}
+      headerModelSelector={<div className="flex flex-wrap items-center gap-3">
+        <ReviewModeSelect value={reviewMode} onChange={setReviewMode} locked={taskId != null || phase === 'loading' || phase === 'error'} />
+        <ModelSelect value={modelCode} onChange={setModelCode} placement="bottom" />
+      </div>}
       dataTestId="plus-ui-shell"
       moduleCode="blockchain-supervision"
       ariaLabel="通用 Plus 工作台容器：工程分包审查智能体"
@@ -597,20 +609,26 @@ export default function BlockchainSupervisionWorkbench({ conversationId, onExitP
             </button>
           </div>
         )}
-        {phase === 'setup' && (
+        {reviewMode === 'contract_retrospective' && !['loading', 'error'].includes(phase) && (
+          <RetrospectiveWorkspace conversationId={conversationId} taskId={taskId}
+            onReset={handleRestart} resetting={restarting}
+            onTaskCreated={(id) => { setTaskId(id); openSetup(id) }} onError={setError} />
+        )}
+        {reviewMode !== 'contract_retrospective' && phase === 'setup' && (
           <SetupStage key={`setup-${setupNonce}`} conversationId={conversationId} taskId={taskId} editing={editingMaterials}
+          reviewMode={reviewMode}
           supplement={pendingSupplement} reachedIndex={reachedIndex}
             onReset={handleRestart} resetting={restarting}
             onTaskCreated={setTaskId} onStarted={(id) => { setError(''); openWorkbench(id, { autoRun: true, view: 'run' }) }} onError={setError} />
         )}
-        {phase === 'materials' && (
+        {reviewMode !== 'contract_retrospective' && phase === 'materials' && (
           <SetupStage key={`materials-${taskId}`} conversationId={conversationId} taskId={taskId} readOnly
           reachedIndex={reachedIndex} onStageSelect={goToStage} onRequestEdit={requestMaterialEdit}
           onExit={() => openWorkbench(taskId, { view: workbenchView || 'review' })}
             onReset={handleRestart} resetting={restarting}
           onTaskCreated={setTaskId} onStarted={(id) => { setError(''); openWorkbench(id, { autoRun: true, view: 'run' }) }} onError={setError} />
         )}
-        {phase === 'workbench' && (
+        {reviewMode !== 'contract_retrospective' && phase === 'workbench' && (
           <WorkbenchStage key={`${conversationId}:${taskId}`} taskId={taskId} autoRunOnMount={autoRunOnMount} onError={setError}
           onPreparationNeedsAction={handlePreparationNeedsAction}
           initialView={workbenchView} reachedIndex={reachedIndex} onReachStage={reachStage}
@@ -669,12 +687,21 @@ export default function BlockchainSupervisionWorkbench({ conversationId, onExitP
 /* ==================== 两段式 · 第一段：上传材料并开始核查（07 §4.1） ==================== */
 
   function SetupStage({ conversationId, taskId, editing = false, readOnly = false, supplement = null,
+    reviewMode = 'admission',
     reachedIndex = 0, onStageSelect, onRequestEdit, onExit, onReset, resetting = false, onTaskCreated, onStarted, onError }) {
   const [detail, setDetail] = useState(null)           // getBsTask 返回
   const [detailError, setDetailError] = useState('')
-  // 默认北京时间当天，用户可在启动前修改；历史记录以已保存日期为准。
-  const [section, setSection] = useState(() => ({ projectName: '', contractSection: '', baselineDate: todayInChina() }))
+  // 准入默认北京时间当天；倒查留空以从分包合同提取签订日。
+  const [section, setSection] = useState(() => ({ projectName: '', contractSection: '',
+    baselineDate: reviewMode === 'contract_retrospective' ? '' : todayInChina() }))
   const baselineManualRef = useRef(false)
+  useEffect(() => {
+    if (taskId || baselineManualRef.current) return
+    setSection((current) => ({
+      ...current,
+      baselineDate: reviewMode === 'contract_retrospective' ? '' : todayInChina(),
+    }))
+  }, [reviewMode, taskId])
   const [uploadsInFlight, setUploadsInFlight] = useState(0)
   const [confirmModal, setConfirmModal] = useState(null) // validation payload
   const [submitting, setSubmitting] = useState(false)
@@ -771,7 +798,9 @@ export default function BlockchainSupervisionWorkbench({ conversationId, onExitP
           d.section.project_name && d.section_suggestions?.contract_section?.derived_from_project &&
           d.section.project_name.replace(/\s+/g, '') !== d.section_suggestions.contract_section.derived_from_project.replace(/\s+/g, '')
             ? '' : d.section_suggestions?.contract_section?.value || ''),
-        baselineDate: d.state === 'setup' && !readOnly && !baselineManualRef.current ? todayInChina() : (d.section.baseline_date || ''),
+        baselineDate: d.state === 'setup' && !readOnly && !baselineManualRef.current
+          ? (reviewMode === 'contract_retrospective' ? '' : todayInChina())
+          : (d.section.baseline_date || ''),
       })
       // T10-C C3：只有**真正的核查态**才进工作台。`preparing`（资料包准备中）必须留在
       // 第一阶段——此时结论尚未产生，跳进工作台只会让用户看到一页空结论（§三 冻结口径）。
@@ -831,6 +860,7 @@ export default function BlockchainSupervisionWorkbench({ conversationId, onExitP
     const title = `分包合规核查 ${new Date().toISOString().slice(0, 10)}`
     const created = await createBsTask({
       conversationId, title, scopeA1: true, scopeA3: true,
+      reviewMode,
       // A-03（B1）：三字段随创建一并提交（空则后端存 NULL）
       projectName: section.projectName,
       contractSection: section.contractSection,
@@ -838,17 +868,17 @@ export default function BlockchainSupervisionWorkbench({ conversationId, onExitP
     })
     onTaskCreated(created.task_id) // 任务与本会话 1:1 绑定；先同步父态再继续上传
     return created.task_id
-  }, [conversationId, taskId, section, onTaskCreated])
+  }, [conversationId, taskId, section, onTaskCreated, reviewMode])
 
   // A-03（B1）：标段字段已建任务则 PATCH /section（setup 段可改），未建任务先存本地态，创建时随体提交
   const changeSection = useCallback((key, value) => {
     if (key === 'baselineDate') {
       baselineManualRef.current = !!value
-      if (!value) value = todayInChina()
+      if (!value && reviewMode !== 'contract_retrospective') value = todayInChina()
     }
     setSection((prev) => ({ ...prev, [key]: value }))
     if (taskId) patchBsSection(taskId, { [key]: key === 'baselineDate' && !baselineManualRef.current ? null : value }).catch((e) => onError(e.message))
-  }, [taskId, onError])
+  }, [taskId, onError, reviewMode])
 
   // 上传（含替换）后等解析收口的共用节奏：前 5 轮 600ms，之后 2s 退避，
   // 总预算 180s（对齐 OCR 实测上限）；预算耗尽静默退出，不带病进核查。
@@ -1038,6 +1068,7 @@ export default function BlockchainSupervisionWorkbench({ conversationId, onExitP
             </p>
           ) : <PrototypeUploadPage
           task={prototypeTask}
+          reviewMode={reviewMode}
           readOnly={readOnly}
             preparing={isPreparing}
             parseEtaLabel={bsEtaLabel(etaRef.current, etaNow)}
@@ -1092,32 +1123,6 @@ export default function BlockchainSupervisionWorkbench({ conversationId, onExitP
    Last-Event-ID 续传（后端流内 id 行同源），前端不做重连退避；
    done 帧主动 close 防终态后无限重连；keepalive 帧无 sequence 不进时间线；
    StrictMode 双挂载（开发环境 effect 跑两遍）靠 maxSeq 去重防重复渲染。 */
-function useBsEventStream(taskId, runVersion) {
-  const [events, setEvents] = useState([])
-  const maxSeqRef = useRef(0)
-  useEffect(() => {
-    setEvents([])
-    maxSeqRef.current = 0
-    let es = null
-    const onFrame = (e) => {
-      let dto
-      try { dto = JSON.parse(e.data) } catch { return }
-      if (dto.sequence == null || dto.sequence <= maxSeqRef.current) return
-      maxSeqRef.current = dto.sequence
-      setEvents((prev) => [...prev, dto])
-    }
-    es = new EventSource(bsEventsUrl(taskId, maxSeqRef.current), { withCredentials: true })
-    for (const t of BS_EVENT_TYPES) es.addEventListener(t, onFrame)
-    es.addEventListener('stream.reset', () => { maxSeqRef.current = 0; setEvents([]) })
-    es.addEventListener('done', () => es.close())
-    // onerror 不处理：readyState=CONNECTING 时浏览器自动重试（带 Last-Event-ID）；
-    // 永久失败（任务不存在/未登录）readyState=CLOSED，保留已收事件静默停止。
-    return () => { if (es) es.close() }
-  }, [taskId, runVersion])
-  return events
-}
-
-
 // 报告技术前提 409 → 结构化面板数据（人工处置不属于此通道）。
 function normalizeReportGate(error) {
   const detail = error?.detail

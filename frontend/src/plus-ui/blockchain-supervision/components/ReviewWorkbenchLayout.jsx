@@ -4,6 +4,7 @@ import ScopeCoverageNotice from './ScopeCoverageNotice'
 import ReviewActions from './ReviewActions'
 import MaterialPreviewPane from './MaterialPreviewPane'
 import ReviewCompareMode from './ReviewCompareMode'
+import PersonnelEvidenceClues from './PersonnelEvidenceClues'
 import { collectContainerIds } from '../lib/materialState'
 import { cleanText } from '../lib/plainText'
 import { useMediaQuery } from '../lib/useMediaQuery'
@@ -290,6 +291,12 @@ function FindingDetailPane({
             </div>
           </details>
         )}
+        <PersonnelEvidenceClues
+          evidence={finding.evidence}
+          materialsById={materialsById}
+          onOpenSource={onOpenSource}
+          findingId={findingId}
+        />
         {invalidated && (
           <section data-testid="invalidated-review-trace" className="rounded-[4px] border border-[#F0DCB8] bg-[#FFFDF8] px-3 py-2 text-[12px] leading-relaxed text-[#92400E]">
             <h3 className="font-medium">原复核意见失效</h3>

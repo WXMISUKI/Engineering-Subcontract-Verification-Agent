@@ -1,0 +1,46 @@
+{
+  "scope": "archived 2014 original selected scope text; not complete current legal-effect audit or knowledge-library repair",
+  "source_url": "https://www.mohurd.gov.cn/file/old/2014/20141106/W020191022031714.pdf",
+  "source_file": "docs/plus/blockchain-supervision/evidence/资质官方原文-20261119/qualification-159-2014.pdf",
+  "sha256": "2d3dcf4484c604eb9e81a8308f32b81d19dea39318301380590b22d7a32ffc16",
+  "pages": 230,
+  "selected_pages": [
+    {
+      "page_physical": 9,
+      "page_printed": 3
+    },
+    {
+      "page_physical": 10,
+      "page_printed": 4
+    },
+    {
+      "page_physical": 87,
+      "page_printed": 81
+    },
+    {
+      "page_physical": 88,
+      "page_printed": 82
+    },
+    {
+      "page_physical": 107,
+      "page_printed": 101
+    },
+    {
+      "page_physical": 111,
+      "page_printed": 105
+    },
+    {
+      "page_physical": 142,
+      "page_printed": 136
+    },
+    {
+      "page_physical": 147,
+      "page_printed": 141
+    }
+  ],
+  "text_file": "docs/plus/blockchain-supervision/evidence/资质官方原文-20261119/selected-scope-pages.txt",
+  "text_sha256": "f4541521782181835e6a9577f19a26bf01f8212c0cf11bdbda8de54b523fe5ea",
+  "provenance": "Existing authorized source directory README and external archive CSV; original PDF hash matches archived receipt",
+  "human_verified": false,
+  "online_knowledge_verified": false
+}

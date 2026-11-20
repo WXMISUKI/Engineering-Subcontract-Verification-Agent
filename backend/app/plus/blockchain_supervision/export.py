@@ -145,11 +145,12 @@ def _contractor_summary_lines(report: dict) -> list[str]:
         return []
     status = contractor.get("status")
     if status == "matched" and contractor.get("company"):
-        line = "施工总承包单位：%s" % contractor["company"]
+        line = "施工总承包单位：%s" % (contractor.get("company_display") or contractor["company"])
     else:
         line = "施工总承包单位：%s" % (contractor.get("label") or "承包单位待核实")
         if contractor.get("candidate_company"):
-            line += "（候选：%s）" % contractor["candidate_company"]
+            line += "（候选：%s）" % (contractor.get("candidate_company_display")
+                                      or contractor["candidate_company"])
         if contractor.get("reason_code"):
             line += "（原因：%s）" % contractor["reason_code"]
     evidence = contractor.get("evidence") or []
@@ -1021,14 +1022,18 @@ def evidence_bundle_bytes(db: Session, task: BsTask, stage: str = "draft", *,
     events = (db.query(BsTaskEvent)
               .filter(BsTaskEvent.task_id == task.id)
               .order_by(BsTaskEvent.sequence, BsTaskEvent.id).all())
-    event_payload = [{
-        "id": row.id,
-        "sequence": row.sequence,
-        "event_type": row.event_type,
-        "stage": row.stage,
-        "payload": event_dto(row)["payload"],
-        "created_at": row.created_at.isoformat() if row.created_at else None,
-    } for row in events]
+    event_payload = []
+    for row in events:
+        dto = event_dto(row)
+        event_payload.append({
+            "id": row.id,
+            "sequence": row.sequence,
+            "event_type": row.event_type,
+            "stage": row.stage,
+            "payload": dto["payload"],
+            "created_at": dto["created_at"],
+            "created_at_utc_offset_minutes": dto["created_at_utc_offset_minutes"],
+        })
     manifest = {
         "schema_version": "bs.evidence-bundle.v2",
         "task_id": task.id,

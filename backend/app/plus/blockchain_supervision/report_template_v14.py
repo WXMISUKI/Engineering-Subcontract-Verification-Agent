@@ -14,10 +14,10 @@ from . import report_template_v13 as v13
 TEMPLATE_ID = "v1.4"
 SCHEMA_VERSION = "bs.review-opinion-v14.v1"
 TEMPLATE_VERSION = "V1.4"
-MAPPING_VERSION = "2026-11-17.1"
+MAPPING_VERSION = "2026-11-19.12"
 UNKNOWN = "材料未载明"
 _PLAIN_LABELS = {
-    "法定签字链": "监理及发包人签署",
+    "法定签字链": "报审表法定签署",
     "集团报审签字链": "集团报审流程签署",
 }
 _PLAIN_SOURCES = {
@@ -31,7 +31,27 @@ def _plain_label(label):
 
 
 def _plain_source(item_id, source):
+    if item_id == "A3-02-legal":
+        for attachment in ("附件3", "附件4"):
+            other = "附件4" if attachment == "附件3" else "附件3"
+            if attachment in str(source) and other not in str(source) and "附件3/4" not in str(source):
+                return _PLAIN_SOURCES[item_id].replace("附件3/附件4", attachment)
     return _PLAIN_SOURCES.get(str(item_id or "").strip(), source)
+
+
+# 内部状态词不得进入正式文本（设计 2026-11-18 §7.4）：机器前缀直接去掉，
+# “不可判定/无法判定”统一表述为“待核实”，“未命中”改“未见”。
+_MACHINE_PREFIX_RE = re.compile(r"^\s*(?:命中|未命中|不可判定|无法判定)\s*[：:]\s*")
+_PLAIN_MESSAGE_WORDS = (("无法判定", "待核实"), ("不可判定", "待核实"), ("未命中", "未见"))
+_BANNED_WORDING = ("1/21", "未命中", "无法判定", "不可判定", "待补正")
+
+
+def _plain_message(value):
+    text = _text(value, "未载明事实")
+    text = _MACHINE_PREFIX_RE.sub("", text)
+    for old, new in _PLAIN_MESSAGE_WORDS:
+        text = text.replace(old, new)
+    return text
 
 # 8 表附件：审查项 / 审查要点 / 归属维度 / 命中关键词 / 是否有自动内核
 _SHEETS = (
@@ -40,11 +60,13 @@ _SHEETS = (
         "title": "一、分包合法性审查",
         "note": "判定：分包工程不得突破《公路工程施工分包负面清单（2024年版）》；桥梁、隧道主体及关键性工程不得分包；分包须发包人书面同意。",
         "rows": (
-            ("分包范围合规性", "分包内容是否落在负面清单以外；是否涉及桥梁/隧道主体及关键性工程", "compliance", ("负面清单", "分包范围"), True),
+            ("分包范围合规性", "分包内容是否落在负面清单以外；是否涉及桥梁/隧道主体及关键性工程", "compliance", ("负面清单", "分包范围"), True, ("W16-02", "NL-*")),
             ("发包人书面同意", "总承包合同是否允许分包；是否已取得发包人书面同意文件", "compliance", ("书面同意", "审批", "信息表"), True),
             ("资质等级匹配", "分包人资质是否覆盖本工程专业要求（单位工程有资质要求的须专业承包资质）", "qualification_credit", ("资质",), True),
+            ("安全生产许可行业", "证照行业与合同明示施工作业是否对应；资质专业、等级、承包规模及证照有效性分别核查", "qualification_credit", ("安许", "许可行业"), True, ("A2-09",)),
             ("非整体转包/肢解", "是否存在整体转包、肢解分包迹象", "compliance", ("转包", "肢解", "整体"), True),
-            ("禁止再分包", "合同是否明确禁止二次分包、以劳务合作变相施工分包", "compliance", ("再分包", "二次分包", "劳务合作"), True),
+            ("禁止再分包", "合同是否明确禁止二次分包，是否出现分包人再次分包线索", "compliance", ("再分包", "二次分包"), True, ("W16-06",)),
+            ("以劳务合作名义分包", "是否以劳务合作名义进行施工分包（计取主材/周转材、未实施有效管理）", "compliance", ("劳务合作",), True, ("W16-05",)),
         ),
     },
     {
@@ -52,9 +74,12 @@ _SHEETS = (
         "title": "二、现场管理机构与人员锁定审查",
         "note": "判定：承包人、分包人均须设现场管理机构；主要人员须为本单位人员（劳动合同+社保+工资流水），人证一致。",
         "rows": (
-            ("承包人现场机构", "承包人是否设现场管理机构，是否实质管理（非只收管理费）", "compliance", ("现场管理机构", "派驻"), True),
-            ("分包人现场机构", "分包人是否设立现场管理机构（项目负责人、技术、质量、安全、计量、财务）", "personnel", ("现场管理机构", "项目负责人"), True),
-            ("劳动合同与社保", "主要人员是否提供劳动合同+社保关系证明", "personnel", ("劳动合同", "社保"), True),
+            ("承包人现场机构", "承包人是否设现场管理机构，是否实质管理（非只收管理费）", "compliance", ("现场管理机构", "派驻"), True, ("T15-04",)),
+            ("分包人现场机构", "分包人是否设立现场管理机构（项目负责人、技术、质量、安全、计量、财务）", "personnel", ("现场管理机构", "项目负责人"), True, ("A2-07",)),
+            ("劳动合同与社保", "主要人员是否提供劳动合同+社保关系证明", "personnel", ("劳动合同", "社保"), True, ("A2-01",)),
+            ("特种作业工种覆盖", "明确分包工法所需工种与名单、明示证书类型候选是否对应（数量仅提示）", "personnel", ("特种作业", "工种"), True, ("A2-08",)),
+            ("人员证件字段与归属", "名单声明与所附证照字段逐人对照；身份字段对应仍须核对原件与岗位适用性", "personnel", ("人员证件",), True, ("A2-10",)),
+            ("技术负责人职称与规模", "已提交工程技术类职称等级与本次分包规模是否对应；原件真实性、执业专业及其他岗位资格另行核对", "personnel", ("职称",), True, ("A2-14",)),
             ("执业资格与到位", "人员执业证是否齐全；是否约定到位率与更换审批", "personnel", ("执业", "证书", "到岗", "更换"), True),
             ("信用平台状态", "分包人上海市交通建设市场信用平台状态是否正常", "qualification_credit", ("信用平台", "信用档案"), False),
         ),
@@ -79,7 +104,7 @@ _SHEETS = (
             ("质量目标不降低", "质量目标是否不低于总承包合同及招标文件要求", "quality_safety_progress", ("质量目标",), False),
             ("质量连带责任", "是否写明分包人就分包工程与承包人向发包人承担连带责任", "contract_clauses", ("连带责任",), False),
             ("缺陷责任期对齐", "缺陷责任期是否不少于总承包合同约定", "contract_clauses", ("缺陷责任期", "保修"), False),
-            ("安全生产费单列", "是否按不低于分包建筑安装工程费 1.5% 单列、专款专用", "quality_safety_progress", ("安全生产费",), False),
+            ("安全生产费单列", "分包合同是否单独约定安全生产费及金额/计算方式；公路工程1.5%为工程层建筑安装造价提取标准，分包不再重复提取，实际支付与专款专用另核", "quality_safety_progress", ("安全生产费",), True, ("RC-A10-cost",)),
             ("环保与水保条款", "是否含扬尘、弃土、表土保护等环保违约条款", "quality_safety_progress", ("环保", "水保", "扬尘"), False),
             ("监理指令执行", "是否明确分包人须执行监理整改/暂停指令，逾期可上报清退", "quality_safety_progress", ("监理指令", "整改", "暂停"), False),
         ),
@@ -173,7 +198,8 @@ def _raw_items(report):
                 continue
             if item.get("open_term") or item.get("finding_semantics") == "manual_prompt":
                 continue
-            if item.get("status") not in {"hit", "miss", "undecidable"}:
+            # 缺项（not_included）必须进入报告附件；不适用（not_applicable）不构成本次问题。
+            if item.get("status") not in {"hit", "miss", "undecidable", "not_included"}:
                 continue
             rows.append({
                 "kind": kind,
@@ -182,15 +208,38 @@ def _raw_items(report):
                 "material_missing": item.get("material_missing") is True,
                 "material_only": item.get("material_only") is True,
                 "label": _plain_label(_text(item.get("label") or item.get("item_id"), "核查事项")),
-                "message": _text(item.get("message"), "未载明事实"),
+                "message": _plain_message(item.get("message")),
                 "source": _plain_source(item.get("item_id"), _text(item.get("source"), "")),
                 "recommendation": _text(item.get("recommendation"), ""),
+                "evidence": item.get("evidence") or {},
             })
+    return rows
+
+
+def _manual_prompt_rows(report):
+    """普通人工提示可见，但不进入机器结论/签署条件。"""
+    rows = []
+    for section in report.get("sections") or []:
+        for item in section.get("items") or []:
+            if (item.get("finding_semantics") != "manual_prompt"
+                    or (item.get("review") or {}).get("decision") == "ignored"
+                    or (item.get("human_disposition") or {}).get("code") == "ignored"):
+                continue
+            evidence = item.get("evidence_list") or ([item["evidence"]] if item.get("evidence") else [])
+            rows.append({"item_id": item.get("item_id"), "finding_id": item.get("finding_id"),
+                "label": _plain_label(item.get("label") or item.get("item_id")),
+                "message": _plain_message(item.get("message")), "source": _plain_message(item.get("source")),
+                "locations": [_plain_message("%s 第%s页：%s" % (ref.get("file_name") or "材料%s" % ref.get("material_id"),
+                    ref.get("page") or "待核实", ref.get("quote") or "未提供摘录"))
+                    for ref in evidence if isinstance(ref, dict)]})
     return rows
 
 
 def _verdict(item):
     if item["status"] == "hit" and item["material_missing"]:
+        return "缺项"
+    # 新内核用显式 not_included 表达缺项（材料/字段未取得），与 hit+material_missing 同档。
+    if item["status"] == "not_included":
         return "缺项"
     if item["status"] == "hit":
         return "不符合"
@@ -211,13 +260,12 @@ def _risks(base, raw):
 
 
 def _suggested_conclusion(base, raw):
+    """三档结论（设计 2026-11-18 §7.2）：不同意 / 原则同意，附条件通过 / 同意。"""
     dims = _dims(base)
     if (dims.get("compliance") or {}).get("verdict") == "不符合":
         return "不同意"
-    if any(_verdict(item) in {"不符合", "缺项"} for item in raw):
-        return "附条件同意"
-    if any(_verdict(item) == "待核实" for item in raw):
-        return "待补正"
+    if any(_verdict(item) != "符合" for item in raw):
+        return "原则同意，附条件通过"
     return "同意"
 
 
@@ -235,7 +283,7 @@ def _conclusion(base, raw):
         "risk_counts": {
             "不符合": verdicts.count("不符合"),
             "缺项": verdicts.count("缺项"),
-            "待补正": verdicts.count("待核实"),
+            "待核实": verdicts.count("待核实"),
         },
         "key_risks": key_risks,
         "approval_opinion": "",
@@ -275,7 +323,47 @@ def _section_text(name, items, dimension):
 def _fact_text(item):
     label = item.get("label") or ""
     message = item.get("message") or ""
-    return message if label and label in message else "%s：%s" % (label, message)
+    fact = message if label and label in message else "%s：%s" % (label, message)
+    evidence = item.get("evidence") or {}
+    file_name = str(evidence.get("file_name") or "").strip()
+    page = evidence.get("page")
+    quote = str(evidence.get("quote") or "").strip()
+    if not file_name and not page:
+        return fact
+    location = "见《%s》" % file_name if file_name else "原件"
+    if type(page) is int and page > 0:
+        location += "第%d页" % page
+    if quote:
+        excerpt = quote if len(quote) <= 80 else quote[:80] + "…"
+        location += "：“%s”" % excerpt
+    return "%s（%s）" % (fact, location)
+
+
+# 影响段（设计 2026-11-18 §7.3 四段式）：按核查内核类别给出固定表述，不新增事实。
+_IMPACT_BY_KIND = {
+    "negative_list": "存在被认定为违法分包、合同无效并计入信用档案的风险。",
+    "transfer_scope": "存在被认定为转包或违法分包的风险，质量安全责任难以落实。",
+    "illegal_subcontract": "存在被认定为违法分包的风险，相关合同条款可能被认定无效。",
+    "person_consistency": "人员与投标承诺或报审名单不一致，可能被认定为挂靠，质量安全责任难以落实。",
+    "personnel_adequacy": "关键岗位人员不足，现场管理能力不达标，质量安全措施难以落实。",
+    "cert_validity": "证照失效期间不得从事相应作业，履约与合规均存在风险。",
+    "qualification_match": "资质覆盖不足，存在超资质承接与合同效力瑕疵风险。",
+    "internal_records": "内部管理记录不完整，难以证明分包人实际履约及人员归属。",
+}
+
+
+def _impact(item):
+    if item.get('item_id') == 'RC-A10-cost':
+        return '影响安全生产费合同单独约定与总分包费用责任核对，不能据此认定实际支付或专款专用'
+    if item.get("item_id") == "A2-14":
+        return "技术负责人已提交职称等级与分包规模的对应条件未落实，需核对相应等级证明及任职安排。"
+    if item.get("item_id") == "A2-10":
+        return "人员证件字段与归属仍需核实，尚不能确认相应岗位的持证要求。"
+    if item.get("item_id") == "A2-09":
+        return "安全生产许可行业与明示施工作业的对应关系尚未确认，需核对实际证照及作业性质；资质承包范围另行核查。"
+    if item.get("item_id") == "A2-08":
+        return "特种作业工种或证书类型候选尚未确认，相关作业资格与安全责任条件尚不能确认。"
+    return _IMPACT_BY_KIND.get(item.get("kind"), "该项不符合将影响分包合规性判断与后续结算依据。")
 
 
 def _section_paragraphs(name, items, dimension):
@@ -316,7 +404,7 @@ _SECTIONS = (
     ("safety_permit", "2. 安全生产许可", ("cert_validity",), None,
      "本次未取得安全生产许可证，无法核对证号、许可范围和有效期。",
      ("安全生产许可证", "安许"), None),
-    ("personnel", "3. 人员配置与持证", ("person_consistency", "cert_validity"),
+    ("personnel", "3. 人员配置与持证", ("person_consistency", "personnel_adequacy", "cert_validity"),
      "personnel",
      "本次未取得人员证书、劳动合同或社保记录，无法核对人员配置。",
      None, ("安全生产许可证", "安许")),
@@ -421,17 +509,16 @@ def _section_summary_lines(code, items):
         illegal = [item for item in items if item["kind"] == "illegal_subcontract"]
         coverage = next((item for item in items if item["item_id"] == "W16-02"), None)
         lines = []
-        if negative:
-            match = re.search(r"已评估\s*(\d+)\s*/\s*(\d+)\s*条", coverage["message"]) if coverage else None
-            ratio_incomplete = bool(match) and int(match.group(1)) < int(match.group(2))
-            incomplete = ratio_incomplete or (bool(coverage) and any(
-                word in coverage["message"] for word in ("覆盖不足", "不足以确认", "未完成或仍需核实", "未召回")))
-            if match and ratio_incomplete:
-                lines.append("负面清单仅完成 %s/%s 项核对，未覆盖部分不能认定未命中。" % match.groups())
-            elif incomplete:
-                lines.append("负面清单核查覆盖不足，未覆盖部分不能认定未命中。")
+        if coverage:
+            verdict = _verdict(coverage)
+            if verdict == "不符合":
+                lines.append("负面清单：发现问题，见下列注意事项。")
+            elif verdict == "待核实":
+                lines.append("负面清单：有需补充确认的事项。")
             else:
-                lines.append("已对负面清单关键性工作进行核对，现有材料未形成明确命中结论。")
+                lines.append("负面清单：通过。")
+        elif negative:
+            lines.append("负面清单：通过。")
         if transfer or illegal:
             lines.append("转包、违法分包类事项需结合总包合同和现场资料核对。")
         return lines
@@ -599,16 +686,13 @@ def _section_summary_conclusion(code, items, fallback):
         return "人员配置与社保、证书对应关系已核对；未在册证件需核对原件。"
     if code == "legality":
         coverage = next((item for item in items if item["item_id"] == "W16-02"), None)
-        match = re.search(r"已评估\s*(\d+)\s*/\s*(\d+)\s*条", coverage["message"]) if coverage else None
-        ratio_incomplete = bool(match) and int(match.group(1)) < int(match.group(2))
-        incomplete = ratio_incomplete or (bool(coverage) and any(
-            word in coverage["message"] for word in ("覆盖不足", "不足以确认", "未完成或仍需核实", "未召回")))
-        if match and ratio_incomplete:
-            return ("负面清单仅完成 %s/%s 项核对，未覆盖部分不能认定未命中；"
-                    "转包、违法分包需结合材料核对。" % match.groups())
-        if incomplete:
-            return "负面清单核查覆盖不足，未覆盖部分不能认定未命中；转包、违法分包需结合材料核对。"
-        return "已核对部分分包范围，未发现负面清单明确命中；转包、违法分包需结合材料核对。"
+        if coverage:
+            verdict = _verdict(coverage)
+            if verdict == "不符合":
+                return "负面清单：发现问题；转包、违法分包需结合材料核对。"
+            if verdict == "待核实":
+                return "负面清单：有需补充确认的事项；转包、违法分包需结合材料核对。"
+        return "负面清单：通过；转包、违法分包需结合材料核对。"
     if code == "procedure":
         return "已核对 %d 项材料；未确认事项见上，需核对原件。" % counts["符合"]
     return fallback
@@ -678,6 +762,13 @@ def _sections(base, raw, contract_facts=None, personnel_facts=None, certificate_
             bullets = []
             if status == "未核查":
                 status = "待核实"
+        if code == "safety_permit" and any(item.get("item_id") == "A2-09" for item in items):
+            summary_lines += [item["message"] for item in items if item.get("item_id") == "A2-09"]
+            scope_verdicts = list(dict.fromkeys(_verdict(item) for item in items if item.get("item_id") == "A2-09"))
+            summary_conclusion = (_section_text(code, items, dimension)
+                                  + "许可行业核查结果：%s；资质专业、等级、承包规模及证照有效性分别核查。"
+                                  % "、".join(scope_verdicts))
+            conclusion_text = summary_conclusion
         if code == "contract" and contract_facts and contract_facts.get("pages"):
             status = "待核实"
             summary_lines = _contract_summary_lines(contract_facts)
@@ -703,7 +794,8 @@ def _sections(base, raw, contract_facts=None, personnel_facts=None, certificate_
 
 
 def _responsible(item):
-    if item.get("kind") in {"qualification_match", "person_consistency", "cert_validity", "internal_records"}:
+    if item.get("kind") in {"qualification_match", "person_consistency", "personnel_adequacy",
+                            "cert_validity", "internal_records"}:
         return "分包人"
     text = item.get("label", "") + item.get("message", "")
     if any(word in text for word in ("营业执照", "资质", "安全生产许可证", "安许", "人员",
@@ -728,6 +820,7 @@ def _issue_rows(raw):
             "category": verdict,
             "fact": _fact_text(item),
             "reason": item["source"] or "见核查记录",
+            "impact": _impact(item),
             "recommendation": item["recommendation"] or ("补交" + item["label"] if verdict == "缺项" else "人工核实"),
             "responsible_party": _responsible(item),
         })
@@ -755,19 +848,38 @@ def _pending_rows(raw, limit=10):
     return rows
 
 
-def _dimension_result(dimension, keywords, items, covered):
-    matched = [item for item in items
-               if any(word in (item["label"] + item["message"]) for word in keywords)]
+def _matches_item_scope(item, item_ids):
+    item_id = item.get("item_id") or ""
+    for scope in item_ids:
+        if scope.endswith("*"):
+            if item_id.startswith(scope[:-1]):
+                return True
+        elif item_id == scope:
+            return True
+    return False
+
+
+def _dimension_result(dimension, keywords, items, covered, item_ids=None):
+    # 条目白名单优先：避免“再分包”行抓到“以劳务合作名义”的 finding 后引用错条款。
+    if item_ids:
+        matched = [item for item in items if _matches_item_scope(item, item_ids)]
+    else:
+        matched = [item for item in items
+                   if any(word in (item["label"] + item["message"]) for word in keywords)]
     if matched:
         verdicts = [_verdict(item) for item in matched]
         for verdict in ("不符合", "缺项", "待核实"):
             if verdict in verdicts:
                 first = next(item for item in matched if _verdict(item) == verdict)
                 reason = first["source"] or first["message"]
+                if first['item_id'] in {'RC-A10-cost', 'A2-14'}:
+                    reason = '；'.join(value for value in (first['message'], first['source']) if value)
                 if verdict == "缺项":
                     reason = "未提供%s" % first["label"]
                 return verdict, reason, first["recommendation"] or (
                     "补交" + first["label"] if verdict == "缺项" else "人工核实")
+        if all(item['item_id'] in {'RC-A10-cost', 'A2-14'} for item in matched):
+            return '符合', '；'.join(item['message'] for item in matched), '—'
         return "符合", "已核查，未发现异常", "—"
     if not covered:
         return "—", "本版本未覆盖该审查项", "人工核查或补充材料后复核"
@@ -796,7 +908,8 @@ def _attachments(base, raw, contract_facts=None):
     for sheet in _SHEETS:
         auto_rows = []
         manual_rows = []
-        for item, point, dimension_code, keywords, covered in sheet["rows"]:
+        for item, point, dimension_code, keywords, covered, *rest in sheet["rows"]:
+            item_ids = rest[0] if rest else None
             responsibility = _responsibility(sheet["code"], item)
             if not covered:
                 hint = _contract_hint(item, contract_facts)
@@ -819,7 +932,7 @@ def _attachments(base, raw, contract_facts=None):
                 ])
                 continue
             verdict, reason, fix = _dimension_result(
-                dims.get(dimension_code), keywords, raw, covered)
+                dims.get(dimension_code), keywords, raw, covered, item_ids)
             if verdict == "—":
                 manual_rows.append([
                     item,
@@ -911,7 +1024,8 @@ def _appendix(base, raw, contract_facts=None):
                 uncovered_sheets.append(sheet["title"])
         elif uncovered_rows:
             uncovered_items.extend(row[0] for row in unhinted_rows)
-        for item, point, dimension_code, keywords, covered in sheet["rows"]:
+        for item, point, dimension_code, keywords, covered, *rest in sheet["rows"]:
+            item_ids = rest[0] if rest else None
             responsibility = _responsibility(sheet["code"], item)
             if not covered:
                 hint = _contract_hint(item, contract_facts)
@@ -933,7 +1047,7 @@ def _appendix(base, raw, contract_facts=None):
                     group["responsibilities"].append(responsibility)
                 continue
             verdict, reason, fix = _dimension_result(
-                dims.get(dimension_code), keywords, raw, covered)
+                dims.get(dimension_code), keywords, raw, covered, item_ids)
             if verdict in {"符合", "不符合", "缺项"}:
                 auto_rows.append([
                     item, verdict,
@@ -1052,11 +1166,23 @@ def _red_line_hit(raw):
                  if item["kind"] in _RED_LINE_KINDS and item["status"] == "hit"), None)
 
 
-def _condition_for_item(item, facts=None):
+def _condition_for_item(item, facts=None, contract_facts=None):
+    if item.get('item_id') == 'RC-A10-cost':
+        return '核对安全生产费单独约定及金额/计算方式，区分工程层计提与总包向分包支付责任；分包不再重复提取，实际付款和使用需另附凭证'
+    if item.get("item_id") == "A2-14":
+        return "逐人核对技术负责人的工程技术类职称证书、身份字段与分包规模；等级不足时补充对应等级证明或调整人员，名单声明不代替证书"
+    if item.get("item_id") == "A2-10":
+        return "逐人核对名单与所附证照的姓名、身份号、职称、类别、编号及有效期；未提取字段请对照原页确认，再按岗位核验适用要求"
     facts = facts or {}
     license_facts = facts.get("business_license") or {}
     qualification = facts.get("qualification") or {}
     safety = facts.get("safety_license") or {}
+    if item.get("item_id") == "A2-09":
+        if "未取得可核对的安全生产许可证原页" in item.get("message", ""):
+            return "补交本分包单位的安全生产许可证原页，包含企业名称、证号、许可范围及有效期"
+        if "许可范围字段未提取" in item.get("message", ""):
+            return "已见安全生产许可证，请补充可读的许可范围字段或核对证照原页"
+        return "核对安全生产许可证原页的企业名称、许可范围及实际作业性质的对应关系；许可行业不替代资质专业、等级和承包规模核查"
     # 历史结果仍写“资格证据不齐”时，以已提取到的三上证照事实为准，不重复要求补交。
     if (item.get("item_id") == "W16-01"
             and license_facts and qualification and safety):
@@ -1086,6 +1212,10 @@ def _condition_for_item(item, facts=None):
         who = role.group(1) if role else "相关人员"
         when = "（现证有效期至%s）" % expiry.group(1) if expiry else ""
         return "提交%s更新后的身份证，确保有效期覆盖核查基准日%s" % (who, when)
+    if item.get("item_id") == "A2-08":
+        return "确认分包工法及设备类型，补充缺失工种的实填名单和对应证书；人数仅提示，证件归属、有效期和真实性另行核对"
+    if item.get("kind") == "personnel_adequacy":
+        return "按分包合同及人员配置表补齐缺失的关键岗位人员，并附岗位证书、劳动合同及社保记录"
     if item.get("item_id") == "A2-01" or item.get("kind") == "person_consistency":
         if any(word in text for word in ("未能识别到社保", "未识别到社保", "社保信息里未提取到人员姓名")):
             return "补交主要人员社保缴费证明、劳动合同及证书"
@@ -1100,6 +1230,10 @@ def _condition_for_item(item, facts=None):
     if any(word in text for word in ("书面同意", "签字", "监理审查")):
         return "补齐监理审查意见、发包人书面同意及签字日期"
     if any(word in text for word in ("负面清单", "关键性工作", "关键工序")):
+        if "需补充确认" in text:
+            return "补充负面清单相关参数及工作内容说明后重新核对"
+        if "发现" in text and "问题" in text:
+            return "按负面清单问题清单调整分包范围或补充说明"
         match = re.search(r"已评估\s*(\d+)\s*/\s*(\d+)\s*条", text)
         ratio_incomplete = bool(match) and int(match.group(1)) < int(match.group(2))
         incomplete = ratio_incomplete or any(
@@ -1113,6 +1247,9 @@ def _condition_for_item(item, facts=None):
     if any(word in text for word in ("转包", "违法分包", "再分包")):
         return "补充总包合同、现场管理及资金流资料，说明不存在转包、违法分包"
     if "合同" in text:
+        # 合同正文已在本次材料中定位时，不再要求「补交完整分包合同」。
+        if (contract_facts or {}).get("pages"):
+            return ""
         return "补交完整分包合同（计价、支付、质量、安全、农民工工资条款）"
     if "设备" in text:
         return "补交设备清单及权属/租赁证明"
@@ -1182,12 +1319,12 @@ def _merge_negative_conditions(conditions):
     return merged
 
 
-def _signing_conditions(raw, facts=None):
+def _signing_conditions(raw, facts=None, contract_facts=None):
     rows = []
     for item in raw:
         if _verdict(item) == "符合" or item.get("material_only"):
             continue
-        text = _condition_for_item(item, facts)
+        text = _condition_for_item(item, facts, contract_facts)
         if not text:
             continue
         rows.append((0 if _verdict(item) in {"不符合", "缺项"} else 1,
@@ -1199,7 +1336,7 @@ def _signing_conditions(raw, facts=None):
     return _merge_negative_conditions(_merge_personnel_conditions(conditions))[:5]
 
 
-def _signing_conclusion(raw, facts=None):
+def _signing_conclusion(raw, facts=None, contract_facts=None):
     red = _red_line_hit(raw)
     if red:
         return {
@@ -1208,10 +1345,10 @@ def _signing_conclusion(raw, facts=None):
             "red_line": True,
             "blocking_count": 1,
         }
-    conditions = _signing_conditions(raw, facts)
+    conditions = _signing_conditions(raw, facts, contract_facts)
     if conditions:
         return {
-            "text": "暂缓签订该分包合同，待下列事项补正后重新报审：",
+            "text": "原则同意，附条件通过。下列事项补正并复核后方可签订该分包合同：",
             "conditions": conditions,
             "red_line": False,
             "blocking_count": len(conditions),
@@ -1220,7 +1357,7 @@ def _signing_conclusion(raw, facts=None):
                 if _verdict(item) != "符合" and not item.get("material_only")]
     if blocking:
         return {
-            "text": "暂缓签订该分包合同，待补充材料后重新报审：",
+            "text": "原则同意，附条件通过。请补充或核实下列材料后签订该分包合同：",
             "conditions": ["补充或核实相关材料后重新报审"],
             "red_line": False,
             "blocking_count": len(blocking),
@@ -1372,6 +1509,9 @@ def _safety_summary_lines(safety, baseline):
     cert_no = str(safety.get("cert_no") or "").strip()
     scope = str(safety.get("scope") or "").strip()
     valid = str(safety.get("valid_until") or "").strip()
+    if not (cert_no or scope or valid):
+        # 只在合同条款里出现的“安全生产许可证”不算提供了证照页，不能写成“持有”。
+        return ["报审材料提及安全生产许可证，但未识别证号与有效期，需核对原件。"]
     details = []
     if cert_no:
         details.append("证书号" + cert_no)
@@ -1463,11 +1603,14 @@ def _blocks(document):
     content_label = "分包内容"
     amount_label = "分包金额"
 
-    paragraph("以下依据《上海市公路工程施工分包管理实施细则》（2026）、"
-              "《公路工程施工分包管理办法》（交公路规〔2024〕2号）、"
-              "《上海市建筑市场管理条例》及报审材料，出具审查意见。")
+    paragraph("以下依据《公路工程施工分包管理办法》、《公路工程施工分包负面清单》、"
+              "《上海市公路工程施工分包管理实施细则》及报审材料，出具审查意见。")
+    if document.get("reading_statement"):
+        paragraph(document["reading_statement"])
     heading("一、建设单位审查意见（正式表述）")
     paragraph("工程名称：%s" % _text(info.get("工程名称")))
+    paragraph("建设单位：%s" % _text(info.get("建设单位") or info.get("建设单位（业主）")))
+    paragraph("总包单位：%s" % _text(info.get("总包单位") or info.get("施工总承包单位")))
     paragraph("%s：%s" % (unit_label, _text(info.get("分包单位"))))
     paragraph("%s：%s" % (content_label, _text(info.get("分包事项") or info.get("拟分包范围"))))
     paragraph("%s：%s" % (amount_label, _text(info.get("拟分包金额"))))
@@ -1496,10 +1639,20 @@ def _blocks(document):
         for bullet in bullets:
             paragraph("· " + bullet["text"], bold=bullet.get("bold"), indent=True)
 
+    if document.get("manual_prompts"):
+        heading("履约核对提示")
+        paragraph("以下事项供人工结合履约材料核对，不作为本次机器不符合或签署附加条件。")
+        for row in document["manual_prompts"]:
+            paragraph("· " + row["message"], indent=True)
+            if row["source"]:
+                paragraph("核对说明：" + row["source"], indent=True)
+            for location in row["locations"]:
+                paragraph(location, indent=True)
+
     heading("7. 结论")
     signing = document.get("signing_conclusion") or {}
     conditions = signing.get("conditions") or []
-    paragraph(signing.get("text") or "暂缓签订该分包合同。", bold=True)
+    paragraph(signing.get("text") or "原则同意，附条件通过。", bold=True)
     for index, text in enumerate(conditions, 1):
         paragraph("%d. %s。" % (index, text), indent=True)
     if signing.get("red_line"):
@@ -1508,6 +1661,14 @@ def _blocks(document):
               "合同中应约定于开工前提交，不作为本次签约缺件。")
     paragraph("指挥部/建设单位（章）：____________________")
     paragraph("日期：____年__月__日")
+
+    limitations = [str(text).strip() for text in document.get("limitations") or []
+                   if str(text).strip()]
+    if limitations:
+        heading("8. 本次核查范围与限制")
+        paragraph("下列情形本轮未纳入核查或受材料限制，不能解释为已核查通过：")
+        for text in dict.fromkeys(limitations):
+            paragraph("· " + text, indent=True)
 
     blocks.append({"type": "page_break"})
     appendix = document.get("appendix") or {}
@@ -1542,6 +1703,135 @@ def _blocks(document):
     return blocks
 
 
+def _reading_statement(report):
+    """阅读覆盖说明（设计 2026-11-18 §7.5）：未读页必须让签署人看见。
+
+    ``reading_coverage`` 行与报告 payload 同源：页字段是页码列表（不是计数）。
+    """
+    rows = [row for row in (report.get("reading_coverage") or []) if isinstance(row, dict)]
+    if not rows:
+        return "本次提交材料未发现未读页、空白页或低质扫描页；结论基于可读取文本与附件交叉核对。"
+
+    def _pages(row, key):
+        value = row.get(key) or []
+        return len(value) if isinstance(value, (list, tuple, set)) else 0
+
+    unread = sum(_pages(row, "unread_pages") for row in rows)
+    over = sum(_pages(row, "over_limit_pages") for row in rows)
+    blank = sum(_pages(row, "blank_pages") for row in rows)
+    suspect = sum(_pages(row, "suspect_pages") for row in rows)
+    names = "、".join(dict.fromkeys(str(row.get("file_name") or "材料") for row in rows))
+    return ("本次共 %d 份材料存在阅读受限（%s）：未读 %d 页、超限 %d 页、空白 %d 页、疑似低质 %d 页；"
+            "已读页结论不受影响，受限页涉及事项已在正文标注需人工核对原件。"
+            % (len(rows), names, unread, over, blank, suspect))
+
+
+# 结论态跨表归一：附件一/附件二/正文用词不同（通过/是/否/无法核实），
+# 但语义必须一致；「否」在附件二同时承载不符合与缺项，故映射为二值集合。
+_STATE_ALIASES = {
+    "符合": frozenset(("符合",)), "通过": frozenset(("符合",)), "是": frozenset(("符合",)),
+    "不符合": frozenset(("不符合",)), "否": frozenset(("不符合", "缺项")),
+    "缺项": frozenset(("缺项",)),
+    "待核实": frozenset(("待核实",)), "无法核实": frozenset(("待核实",)),
+}
+
+
+def _states(value):
+    return _STATE_ALIASES.get(str(value or "").strip(), frozenset())
+
+
+def consistency_violations(document, raw):
+    """报告一致性后校验（设计 2026-11-18 §2.6）：返回冲突描述列表。
+
+    比对四个消费面：结论计数、正文分节状态、问题/待核实清单、附件一/附件二。
+    任何一面与逐项判定（`raw`）冲突即拒绝导出——纸面自相矛盾比缺少结论更危险。
+    """
+    problems = []
+    verdicts = [_verdict(item) for item in raw]
+    counts = {verdict: verdicts.count(verdict)
+              for verdict in ("符合", "不符合", "缺项", "待核实")}
+    conclusion = document.get("conclusion") or {}
+
+    risk_counts = conclusion.get("risk_counts") or {}
+    for verdict in ("不符合", "缺项", "待核实"):
+        if risk_counts.get(verdict) != counts[verdict]:
+            problems.append("结论计数「%s」为 %s，逐项判定为 %d"
+                            % (verdict, risk_counts.get(verdict), counts[verdict]))
+    if document.get("pending_total") != counts["待核实"]:
+        problems.append("待核实合计为 %s，逐项判定为 %d"
+                        % (document.get("pending_total"), counts["待核实"]))
+
+    has_risk = any(counts[verdict] for verdict in ("不符合", "缺项", "待核实"))
+    if conclusion.get("suggested") == "同意" and has_risk:
+        problems.append("结论为「同意」但存在风险事项")
+    if conclusion.get("suggested") == "原则同意，附条件通过" and not has_risk:
+        problems.append("结论为「附条件通过」但没有任何风险事项")
+
+    issues = document.get("issues") or []
+    categories = {row.get("category") for row in issues}
+    for verdict in ("不符合", "缺项"):
+        if counts[verdict] and verdict not in categories:
+            problems.append("存在 %d 条「%s」但问题表未列出" % (counts[verdict], verdict))
+    if len(issues) > counts["不符合"] + counts["缺项"]:
+        problems.append("问题表 %d 行，多于不符合+缺项 %d 条"
+                        % (len(issues), counts["不符合"] + counts["缺项"]))
+    for row in issues:
+        if row.get("category") not in {"不符合", "缺项"}:
+            problems.append("问题表第 %s 行结论档位非法：%s"
+                            % (row.get("number"), row.get("category")))
+        if not all(str(row.get(key) or "").strip()
+                   for key in ("fact", "reason", "impact", "recommendation", "responsible_party")):
+            problems.append("问题表第 %s 行四段式字段不完整" % row.get("number"))
+
+    pending = document.get("pending") or []
+    if counts["待核实"] and not pending:
+        problems.append("存在 %d 条待核实但待核实清单为空" % counts["待核实"])
+    if len(pending) > counts["待核实"]:
+        problems.append("待核实清单 %d 行，多于待核实 %d 条" % (len(pending), counts["待核实"]))
+    for row in pending:
+        if not all(str(row.get(key) or "").strip()
+                   for key in ("fact", "reason", "recommendation")):
+            problems.append("待核实清单第 %s 行字段不完整" % row.get("number"))
+
+    for section in document.get("sections") or []:
+        if section.get("status") != "通过":
+            continue
+        section_counts = section.get("counts") or {}
+        bad = [verdict for verdict in ("不符合", "缺项", "待核实") if section_counts.get(verdict)]
+        if bad:
+            problems.append("分节「%s」标为通过但含%s"
+                            % (section.get("title"), "、".join(bad)))
+
+    attachment_states = {}
+    for sheet in document.get("attachments") or []:
+        for row in sheet.get("auto_rows") or []:
+            if len(row) >= 2:
+                attachment_states.setdefault(str(row[0]), set()).update(_states(row[1]))
+    for row in (document.get("appendix") or {}).get("auto_rows") or []:
+        states = _states(row[1]) if len(row) >= 2 else frozenset()
+        other = attachment_states.get(str(row[0]))
+        if states and other is not None and not (states & other):
+            problems.append("附件一「%s」为「%s」，附件二同项为「%s」"
+                            % (row[0], row[1], "、".join(sorted(other))))
+    return problems
+
+
+def wording_violations(node, path=""):
+    """报告文本后校验（设计 2026-11-18 §7.4）：返回 [(禁用词, 位置)]。"""
+    hits = []
+    if isinstance(node, str):
+        for word in _BANNED_WORDING:
+            if word in node:
+                hits.append((word, path or "text"))
+    elif isinstance(node, dict):
+        for key, value in node.items():
+            hits.extend(wording_violations(value, "%s.%s" % (path, key)))
+    elif isinstance(node, (list, tuple)):
+        for index, value in enumerate(node):
+            hits.extend(wording_violations(value, "%s[%d]" % (path, index)))
+    return hits
+
+
 def build_document(report: dict, base: dict | None = None) -> dict:
     """Build V1.4 from the same frozen facts as V1.3."""
     base = base or v13.build_document(report)
@@ -1565,12 +1855,13 @@ def build_document(report: dict, base: dict | None = None) -> dict:
         "recipient": base["recipient"],
         "basic_information": deepcopy(base["basic_information"]),
         "conclusion": conclusion,
-        "signing_conclusion": _signing_conclusion(raw, facts),
+        "signing_conclusion": _signing_conclusion(raw, facts, contract_facts),
         "sections": _sections(base, raw, contract_facts, personnel_facts, facts,
                               _baseline_date({"basic_information": base.get("basic_information") or {}}),
                               personnel_social),
         "issues": _issue_rows(raw),
         "pending": _pending_rows(raw),
+        "manual_prompts": _manual_prompt_rows(report),
         "pending_total": sum(1 for item in raw if _verdict(item) == "待核实"),
         "attachments": _attachments(base, raw, contract_facts),
         "appendix": _appendix(base, raw, contract_facts),
@@ -1581,11 +1872,28 @@ def build_document(report: dict, base: dict | None = None) -> dict:
         "equipment_facts": equipment_facts,
         "basis": deepcopy(base["basis"]),
         "limitations": deepcopy(base["limitations"]),
+        "reading_coverage": deepcopy(report.get("reading_coverage") or []),
+        "reading_statement": _reading_statement(report),
         "issued_date": base.get("issued_date") or "",
         "statistics": deepcopy(base.get("statistics") or {}),
         "trace": deepcopy(base.get("trace") or {}),
     }
     document["blocks"] = _blocks(document)
+    # 一致性校验（fail-closed，设计 2.6）：结论计数/分节/清单/附件必须同源。
+    conflicts = consistency_violations(document, raw)
+    if conflicts:
+        raise ValueError("报告内部不一致，已阻断导出：%s" % "；".join(conflicts[:3]))
+    # 后校验（fail-closed）：内部状态词与机器计数不得进入正式文本。
+    violations = wording_violations({
+        "blocks": document["blocks"],
+        "issues": document["issues"],
+        "pending": document["pending"],
+        "signing_conclusion": document["signing_conclusion"],
+        "reading_statement": document["reading_statement"],
+    })
+    if violations:
+        word, where = violations[0]
+        raise ValueError("报告文本含禁用词“%s”（%s），已阻断生成" % (word, where))
     return document
 
 

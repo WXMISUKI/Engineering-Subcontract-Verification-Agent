@@ -1,0 +1,257 @@
+{
+  "reviewed_at": "2026-11-18T23:16:59.225143+00:00",
+  "scope": "local public legal source archive; not a knowledge library write or all-industry current-status certification",
+  "documents": [
+    {
+      "html": "permit-regulation-397-mem-20140729.html",
+      "text": "permit-regulation-397-mem-20140729.txt",
+      "source_url": "https://www.mem.gov.cn/fw/flfgbz/fg/201407/t20140729_233082.shtml",
+      "retrieved_at": "2026-11-18T20:05:02.869829+00:00",
+      "html_sha256": "b2f2c2c6ebc49e8aa2e718624a2026367689e1791075e91acfc2575f7d807a4a",
+      "text_sha256": "a0445a372417d8df8f7a474dff1d8b7798319095c3fe94363a69d0f54f7d3c24",
+      "text_characters": 3028,
+      "article_count": 24,
+      "article_locations": [
+        {
+          "label": "第一条",
+          "line": 3
+        },
+        {
+          "label": "第二条",
+          "line": 4
+        },
+        {
+          "label": "第三条",
+          "line": 6
+        },
+        {
+          "label": "第四条",
+          "line": 10
+        },
+        {
+          "label": "第五条",
+          "line": 11
+        },
+        {
+          "label": "第六条",
+          "line": 12
+        },
+        {
+          "label": "第七条",
+          "line": 26
+        },
+        {
+          "label": "第八条",
+          "line": 28
+        },
+        {
+          "label": "第九条",
+          "line": 29
+        },
+        {
+          "label": "第十条",
+          "line": 31
+        },
+        {
+          "label": "第十一条",
+          "line": 32
+        },
+        {
+          "label": "第十二条",
+          "line": 33
+        },
+        {
+          "label": "第十三条",
+          "line": 34
+        },
+        {
+          "label": "第十四条",
+          "line": 35
+        },
+        {
+          "label": "第十五条",
+          "line": 37
+        },
+        {
+          "label": "第十六条",
+          "line": 38
+        },
+        {
+          "label": "第十七条",
+          "line": 39
+        },
+        {
+          "label": "第十八条",
+          "line": 40
+        },
+        {
+          "label": "第十九条",
+          "line": 46
+        },
+        {
+          "label": "第二十条",
+          "line": 47
+        },
+        {
+          "label": "第二十一条",
+          "line": 48
+        },
+        {
+          "label": "第二十二条",
+          "line": 50
+        },
+        {
+          "label": "第二十三条",
+          "line": 51
+        },
+        {
+          "label": "第二十四条",
+          "line": 52
+        }
+      ],
+      "revision_header": "（2004年1月7日国务院第34次常务会议通过 2004年1月13日中华人民共和国国务院令第397号公布 自公布之日起施行 根据2013年5月31日国务院第十次常务会议通过 2013年7月18日中华人民共和国国务院令第638号公布 自公布之日起施行的《国务院关于废止和修改部分行政法规的决定》第一次修正 根据2014年7月9日国务院第54次常务会议通过 2014年7月29日中华人民共和国国务院令第653号公布 自公布之日起施行的《国务院关于修改部分行政法规的决定》第二次修正",
+      "verification": "local_official_text_reviewed; not online knowledge verification"
+    },
+    {
+      "html": "construction-permit-128-gov-20220125.html",
+      "text": "construction-permit-128-gov-20220125.txt",
+      "source_url": "https://www.gov.cn/zhengce/2022-01/25/content_5712013.htm",
+      "retrieved_at": "2026-11-18T20:05:02.947180+00:00",
+      "html_sha256": "6f1620e73cca4677bd8aa98634572968a9e3372ac2f5eb67471417e4d2ffe42e",
+      "text_sha256": "1df1e56774eb999f11d86eea20efb200b0d15f9155fd8c7212876ae90e8b33d3",
+      "text_characters": 4016,
+      "article_count": 30,
+      "article_locations": [
+        {
+          "label": "第一条",
+          "line": 4
+        },
+        {
+          "label": "第二条",
+          "line": 5
+        },
+        {
+          "label": "第三条",
+          "line": 8
+        },
+        {
+          "label": "第四条",
+          "line": 12
+        },
+        {
+          "label": "第五条",
+          "line": 26
+        },
+        {
+          "label": "第六条",
+          "line": 27
+        },
+        {
+          "label": "第七条",
+          "line": 32
+        },
+        {
+          "label": "第八条",
+          "line": 34
+        },
+        {
+          "label": "第九条",
+          "line": 36
+        },
+        {
+          "label": "第十条",
+          "line": 37
+        },
+        {
+          "label": "第十一条",
+          "line": 38
+        },
+        {
+          "label": "第十二条",
+          "line": 39
+        },
+        {
+          "label": "第十三条",
+          "line": 43
+        },
+        {
+          "label": "第十四条",
+          "line": 44
+        },
+        {
+          "label": "第十五条",
+          "line": 45
+        },
+        {
+          "label": "第十六条",
+          "line": 46
+        },
+        {
+          "label": "第十七条",
+          "line": 53
+        },
+        {
+          "label": "第十八条",
+          "line": 54
+        },
+        {
+          "label": "第十九条",
+          "line": 55
+        },
+        {
+          "label": "第二十条",
+          "line": 56
+        },
+        {
+          "label": "第二十一条",
+          "line": 58
+        },
+        {
+          "label": "第二十二条",
+          "line": 65
+        },
+        {
+          "label": "第二十三条",
+          "line": 66
+        },
+        {
+          "label": "第二十四条",
+          "line": 67
+        },
+        {
+          "label": "第二十五条",
+          "line": 68
+        },
+        {
+          "label": "第二十六条",
+          "line": 69
+        },
+        {
+          "label": "第二十七条",
+          "line": 71
+        },
+        {
+          "label": "第二十八条",
+          "line": 73
+        },
+        {
+          "label": "第二十九条",
+          "line": 75
+        },
+        {
+          "label": "第三十条",
+          "line": 76
+        }
+      ],
+      "revision_header": "（2004年7月5日中华人民共和国建设部令第128号发布，根据2015年1月22日中华人民共和国住房和城乡建设部令第23号《住房和城乡建设部关于修改<市政公用设施抗灾设防管理规定>等部门规章的决定》修正）",
+      "verification": "local_official_text_reviewed; not online knowledge verification"
+    }
+  ],
+  "prior_uploaded_document_unchanged": true,
+  "old_uploaded_pdf_sha256": "226cae4ece5d8058b281aaa9a97697b0dc692777848ca1b648f8e78763b0f63c",
+  "limits": [
+    "official sources list 2014 and 2015 consolidated revisions; no complete check of all repeal lists or special-industry provisions",
+    "local HTML/text is not an official PDF or verified current online knowledge chunk",
+    "industry correspondence does not prove qualification category/grade/scale, certificate authenticity/current status or actual safety conditions"
+  ]
+}

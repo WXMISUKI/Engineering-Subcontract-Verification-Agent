@@ -310,6 +310,21 @@ def test_preliminary_qualification_text_match_does_not_imply_full_qualification(
     assert "已核查符合" not in point["summary"]
 
 
+def test_quantified_qualification_scope_can_give_explicit_verdict():
+    item = {**_item("qualification_match", "miss", "资质匹配", "未超过该等级承包工程范围"),
+            "item_id": "A2-04", "source": "建市〔2014〕159号",
+            "decision_trace": {"evidence_status": "precise"},
+            "evidence": {"material_id": 1, "page": 1, "location_mode": "precise", "quote": "资质类别"},
+            "evidence_list": [{"material_id": 11, "page": 3, "quote": "地基基础工程专业承包二级",
+                               "source_kind": "qualification_certificate"}]}
+    report = _report([item], completed=["a2"], selected=["a2"])
+    point = next(row for row in build_report_document(report)["sections"][1]["key_points"]
+                 if row["label"] == "主体资格")
+    assert point["verdict"] == "符合"
+    assert "承包工程范围" in point["summary"]
+    assert "未核定资质等级" not in point["summary"]
+
+
 def test_single_negative_list_miss_cannot_establish_full_list_coverage():
     item = {**_item("negative_list", "miss", "桥梁清单一项", "该项未触发"),
             "item_id": "NL-01", "source": "分包负面清单",

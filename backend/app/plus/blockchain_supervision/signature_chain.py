@@ -23,6 +23,7 @@ from .attachment_source import is_attachment_source
 from .models import STATUS_HIT, STATUS_MISS, STATUS_UNDECIDABLE, BsFinding, BsMaterial
 from .parsing import describe_reading_gap, material_page_readable, material_reading_gap
 from .rules import load_signature_chains
+from .signature_matrix import form_signature_matrices
 
 _KIND = "signature_chain"
 _TIMING_SOURCE = "先报批后实施（报审批复 ≤ 实施开工）"
@@ -47,6 +48,8 @@ def extract_signatures(material: BsMaterial, nodes: list) -> dict:
     out: dict = {}
     for p in material.pages_json or []:
         if not material_page_readable(material, p.get("page")):
+            continue
+        if re.search(r"模板|填写示例|样表", p.get("text") or ""):
             continue
         for raw in (p.get("text") or "").split("\n"):
             line = raw.strip()
@@ -327,7 +330,7 @@ def _form_opinion_clue(members):
             text = page.get("text") or ""
             if (type(number) is int and number > 0 and material_page_readable(material, number)
                     and "分包报审表" in text[:300] and all(label in text for label in labels)
-                    and not re.search(r"空白模板|填写示例|样表", text[:300])):
+                    and not re.search(r"空白模板|填写示例|样表", text)):
                 candidates.append((material, number))
     return candidates[0] if len(candidates) == 1 else None
 
@@ -442,6 +445,26 @@ def run_signature_chain_checks(task, materials: list, *, require_assigned: bool 
                     kind=_KIND, status=STATUS_UNDECIDABLE,
                     message="报审资料主体未确认或存在冲突，无法核验该主体的签字链，请先核实材料归属",
                     quote=None, page=None, source=source))
+                continue
+            forms = form_signature_matrices(group) if chain["id"] == "legal" else []
+            if forms:
+                for form in forms:
+                    details = "；".join("%s：%s%s" % (
+                        row["role"], row["signature_state"],
+                        "，%s需核对原件" % "、".join(row["seal_states"]) if row["seal_states"] else "")
+                        for row in form["roles"])
+                    findings.append(BsFinding(
+                        task_id=task.id, material_id=form["material_id"],
+                        subject_id=next(iter(group_subjects)) if len(group_subjects) == 1 else None,
+                        item_id=item_id, kind=_KIND, status=STATUS_UNDECIDABLE,
+                        message="%s第%s页签章矩阵：%s；%s，不能确认角色印章类型及实际签署，需人工核对原件" % (
+                            form["title"], form["page"], details,
+                            "同页检出通用章痕迹" if form["seal_signal"] else "未取得角色印章核验结果"),
+                        page=form["page"], quote=form["quote"],
+                        source="《上海市公路工程施工分包管理实施细则》%s签署栏" % (
+                            "附件3" if form["form_id"] == "attachment3" else "附件4"),
+                        evidence_json=[{**row, "form_id": form["form_id"], "clause_id": form["clause_id"]}
+                                       for row in form["roles"]]))
                 continue
             verdict = _decide_single_chain(group, nodes)
             rep = group[0]

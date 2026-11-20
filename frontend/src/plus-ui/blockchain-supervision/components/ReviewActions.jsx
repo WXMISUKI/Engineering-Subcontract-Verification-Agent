@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { reviewBucket } from '../lib/reviewDecision'
+import { countedStatusOf } from '../lib/statusDisplay'
 
 // 当前候选人工处置：问题项只提供采纳/忽略和可选说明。
 // 未人工处理不是可提交状态，而是由没有当前回执推导出的展示事实。
@@ -77,7 +78,7 @@ export default function ReviewActions({
   const review = finding?.review || null
   const invalidated = review?.invalidated || null
   const hasDecision = Boolean(review && ['accepted', 'ignored', 'confirm', 'reject'].includes(review.decision) && !invalidated)
-  const reviewable = ['hit', 'undecidable'].includes(finding?.status)
+  const reviewable = ['hit', 'undecidable'].includes(countedStatusOf(finding?.status))
   const canReview = !!actions.canReview && reviewable && (!hasDecision || editing || invalidated)
   const source = evidence?.[0] || null
   useEffect(() => { setEditing(false) }, [findingId])

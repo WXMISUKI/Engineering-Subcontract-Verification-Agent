@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from datetime import date
 
@@ -15,7 +16,22 @@ from sqlalchemy.exc import IntegrityError
 
 from .models import FACT_SCHEMA_VERSION, BsMaterialFact
 
-EXTRACTOR_VERSION = "material-facts.v2"
+EXTRACTOR_VERSION = "material-facts.v15"
+
+# 合同字段事实路径：与报告基础事实同源，落库后供跨合同比对和范围画像读取。
+# 金额统一万元、税率统一百分数，单位写进路径，避免裸值。
+_CONTRACT_FACT_PATHS = {
+    "project_name": "contract.project_name",
+    "total_project_name": "contract.total_project_name",
+    "subcontract_item_name": "contract.item_name",
+    "subcontract_scope": "contract.scope",
+    "general_contractor": "contract.party.general_contractor",
+    "employer": "contract.party.employer",
+    "subcontractor": "contract.party.subcontractor",
+    "subcontract_amount": "contract.amount.incl_wan",
+    "subcontract_amount_excl_tax": "contract.amount.excl_wan",
+    "subcontract_tax_rate": "contract.tax_rate_pct",
+}
 
 # 白名单：写入数据库前校验，避免把来源或质量写成无法复现的自由文本。
 SOURCE_KINDS = frozenset({"online_ocr_text", "local_ocr_text", "embedded_text_layer"})
@@ -147,6 +163,46 @@ def _fact(material, page, field_path: str, raw_value: str, *, quote: str | None 
     }
 
 
+def _contract_field_facts(material) -> list[dict]:
+    """把合同明确标签抽取的事实落成 contract.* 行；只写命中项，不猜缺失。
+
+    与报告基础事实共用同一抽取口径，避免报告、事实表、跨合同比对各存一套
+    判据。金额已换算万元、税率以百分数记录，单位为路径的一部分。
+    """
+    if (getattr(material, "role", None) not in {"general", "sub", "labor"}
+            or getattr(material, "parse_state", None) != "done"):
+        return []
+    from .report_basic_facts import extract_report_basic_facts
+    facts = extract_report_basic_facts([material])
+    pages = {page.get("page"): page for page in getattr(material, "pages_json", None) or []
+             if isinstance(page, dict)}
+    output = []
+    for key, path in _CONTRACT_FACT_PATHS.items():
+        fact = facts.get(key) or {}
+        if fact.get("status") != "matched" or fact.get("value") in (None, ""):
+            continue
+        value = str(fact["value"])
+        evidence = fact.get("evidence") or []
+        seen = set()
+        for row in evidence:
+            page_no = row.get("page")
+            if type(page_no) is not int or page_no < 1:
+                page_no = 0
+            identity = (page_no, value)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            page = pages.get(page_no) or {"page": page_no, "text": ""}
+            output.append(_fact(material, page, path, value,
+                                quote=row.get("quote") or value,
+                                quality=_quality(material, page)))
+        if not evidence:
+            page = {"page": 0, "text": ""}
+            output.append(_fact(material, page, path, value, quote=value,
+                                quality=_quality(material, page)))
+    return output
+
+
 def extract_material_facts(material) -> list[dict]:
     """从已落库页面文本提取可回指原文的字段事实。
 
@@ -199,6 +255,85 @@ def extract_material_facts(material) -> list[dict]:
             facts.append(_fact(material, page, "certificate.validity.end", end,
                                quote=validity_match.group(0), quality=quality, confidence=confidence,
                                normalized_value=_date_normalize(end)))
+    facts.extend(_contract_field_facts(material))
+    # 唯一键是材料/批次/字段/页：多人须保存在同页数组，不能反复写person.name。
+    if getattr(material, "parse_state", None) == "done" and getattr(material, "role", None):
+        from .personnel_evidence import (
+            extract_management_roster, extract_person_relation_evidence, extract_person_supplement_evidence,
+        )
+        from .personnel_certificates import extract_person_certificates
+        from .personnel_attendance import extract_attendance_records
+
+        by_page = {}
+        records = (extract_management_roster([material]) + extract_person_relation_evidence([material])
+                   + extract_person_supplement_evidence([material]) + extract_person_certificates([material])
+                   + extract_attendance_records([material]))
+        for record in records:
+            by_page.setdefault(record.get("page"), []).append(record)
+        for page in getattr(material, "pages_json", None) or []:
+            if not isinstance(page, dict) or not by_page.get(page.get("page")):
+                continue
+            records = by_page[page.get("page")]
+            value = json.dumps(records, ensure_ascii=False, sort_keys=True)
+            facts.append(_fact(material, page, "personnel.records", value,
+                               normalized_value=value, quality=_quality(material, page),
+                               quote="\n".join(record["quote"] for record in records)))
+        from .equipment_identity import extract_equipment_records
+        equipment = extract_equipment_records([material])
+        for page in getattr(material, "pages_json", None) or []:
+            rows = [row for row in equipment if row["page"] == page.get("page")]
+            if rows:
+                value = json.dumps(rows, ensure_ascii=False, sort_keys=True)
+                facts.append(_fact(material, page, "equipment.records", value, normalized_value=value,
+                    quality=_quality(material, page), quote="\n".join(row["quote"] for row in rows)))
+        from .plan_approval import extract_plan_records
+        plans = extract_plan_records([material])
+        for page in getattr(material, "pages_json", None) or []:
+            rows = [row for row in plans if row["page"] == page.get("page")]
+            if rows:
+                value = json.dumps(rows, ensure_ascii=False, sort_keys=True)
+                facts.append(_fact(material, page, "plan.records", value, normalized_value=value,
+                    quality=_quality(material, page), quote="\n".join(row["quote"] for row in rows)))
+    from .contract_responsibility import extract_responsibility_records
+    responsibilities = extract_responsibility_records([material])
+    for page in getattr(material, "pages_json", None) or []:
+        if not isinstance(page, dict):
+            continue
+        rows = [row for row in responsibilities if row["page"] == page.get("page")]
+        if rows:
+            value = json.dumps(rows, ensure_ascii=False, sort_keys=True)
+            facts.append(_fact(material, page, "contract.responsibility_records", value, normalized_value=value,
+                quality=_quality(material, page), quote="\n".join(row["quote"] for row in rows)))
+    from .training_records import extract_training_records
+    training = extract_training_records([material])
+    for page in getattr(material, "pages_json", None) or []:
+        if not isinstance(page, dict):
+            continue
+        rows = [row for row in training if row["page"] == page.get("page")]
+        if rows:
+            value = json.dumps(rows, ensure_ascii=False, sort_keys=True)
+            facts.append(_fact(material, page, "training.records", value, normalized_value=value,
+                quality=_quality(material, page), quote="\n".join(row["quote"] for row in rows)))
+    from .performance_security import extract_security_records
+    security = extract_security_records([material])
+    for page in getattr(material, "pages_json", None) or []:
+        if not isinstance(page, dict):
+            continue
+        rows = [row for row in security if row["page"] == page.get("page")]
+        if rows:
+            value = json.dumps(rows, ensure_ascii=False, sort_keys=True)
+            facts.append(_fact(material, page, "security.records", value, normalized_value=value,
+                quality=_quality(material, page), quote="\n".join(row["quote"] for row in rows)))
+    from .contract_changes import extract_change_records
+    changes = extract_change_records([material])
+    for page in getattr(material, "pages_json", None) or []:
+        if not isinstance(page, dict):
+            continue
+        rows = [row for row in changes if row["page"] == page.get("page")]
+        if rows:
+            value = json.dumps(rows, ensure_ascii=False, sort_keys=True)
+            facts.append(_fact(material, page, "change.records", value, normalized_value=value,
+                quality=_quality(material, page), quote="\n".join(row["quote"] for row in rows)))
     return facts
 
 
@@ -234,21 +369,10 @@ def _fact_exists(db, material_id, batch_id: str, field_path: str, page: int) -> 
             .first()) is not None
 
 
-def persist_material_facts(db, material, *, generation_id: str | None = None,
-                           parse_batch_id: str | None = None) -> list:
-    """把抽取结果追加为不可变事实行，返回本次真正新增的行。
-
-    同批次重放不重复插入；已有批次的行不会被更新或删除。写入前查重负责常规
-    路径，数据库唯一约束负责并发兜底：冲突按重复处理，但只在确认冲突键已存在
-    时吞掉 ``IntegrityError``，其他约束错误照常抛出。
-    """
-    content_sha256 = material_content_sha256(material)
-    batch_id = parse_batch_id or default_parse_batch_id(content_sha256)
-    if not batch_id or len(batch_id) > 64:
-        raise ValueError("parse_batch_id 长度必须在 1..64 之间")
-
+def _insert_facts(db, material, facts, *, batch_id: str, generation_id,
+                  content_sha256: str) -> list:
     inserted: list = []
-    for fact in extract_material_facts(material):
+    for fact in facts:
         if fact.get("source_kind") not in SOURCE_KINDS:
             raise ValueError(f"未登记的 source_kind: {fact.get('source_kind')!r}")
         if fact.get("quality") not in QUALITY_STATES:
@@ -290,6 +414,89 @@ def persist_material_facts(db, material, *, generation_id: str | None = None,
     return inserted
 
 
+def persist_material_facts(db, material, *, generation_id: str | None = None,
+                           parse_batch_id: str | None = None) -> list:
+    """把抽取结果追加为不可变事实行，返回本次真正新增的行。
+
+    同批次重放不重复插入；已有批次的行不会被更新或删除。写入前查重负责常规
+    路径，数据库唯一约束负责并发兜底：冲突按重复处理，但只在确认冲突键已存在
+    时吞掉 ``IntegrityError``，其他约束错误照常抛出。
+    """
+    content_sha256 = material_content_sha256(material)
+    batch_id = parse_batch_id or default_parse_batch_id(content_sha256)
+    if not batch_id or len(batch_id) > 64:
+        raise ValueError("parse_batch_id 长度必须在 1..64 之间")
+    return _insert_facts(db, material, extract_material_facts(material),
+                         batch_id=batch_id, generation_id=generation_id,
+                         content_sha256=content_sha256)
+
+
+def persist_contract_facts(db, material) -> list:
+    """历史合同补写仅追加contract.*，不触发新版人员/证书提取或创建新解析代。"""
+    facts = _contract_field_facts(material)
+    if not facts:
+        return []
+    current = latest_material_facts(db, material.id)
+    content_sha256 = material_content_sha256(material)
+    batch_id = (current[0].parse_batch_id if current else
+                content_sha256[:32] + "-contract-facts.v1")
+    for fact in facts:
+        fact["extractor_version"] = "contract-facts.v1"
+    return _insert_facts(db, material, facts, batch_id=batch_id,
+                         generation_id=current[0].generation_id if current else None,
+                         content_sha256=content_sha256)
+
+
+def persist_contract_candidates(db, material, result: dict, *,
+                                generation_id: str | None = None) -> list:
+    """把双路 LLM 候选追加为 ``contract.*.candidate`` 事实。
+
+    候选不改变正式结论，质量固定为 ``review_required``；批次身份包含 prompt/
+    schema/模型指纹，模型或提示词变化会生成新批次，旧候选保留可追溯。
+    """
+    if not isinstance(result, dict) or result.get("available") is not True:
+        return []
+    version = result.get("version") or {}
+    fingerprint = json.dumps(version, ensure_ascii=False, sort_keys=True)
+    content_sha256 = material_content_sha256(material)
+    batch_id = "%s-%s" % (content_sha256[:24],
+                          hashlib.sha256(fingerprint.encode("utf-8")).hexdigest()[:16])
+    # 模型编码必须保留在 80 字符内，便于回答「这条候选由哪个模型产生」。
+    # prompt/schema 只取末段短版本，完整值仍随事件 payload 保存。
+    prompt_version = str(version.get("prompt_version") or "").rsplit(".", 1)[-1]
+    schema_version = str(version.get("schema_version") or "").rsplit(".", 1)[-1]
+    extractor = ("%s;model=%s;prompt=%s;schema=%s" % (
+        version.get("resolver_version") or "contract-dual.v1",
+        version.get("model_code") or "unknown", prompt_version, schema_version))[:80]
+    pages = {page.get("page"): page for page in getattr(material, "pages_json", None) or []
+             if isinstance(page, dict)}
+    facts = []
+    for field, row in (result.get("fields") or {}).items():
+        evidence = row.get("evidence") or {}
+        page_no = evidence.get("page")
+        if type(page_no) is not int or page_no < 1:
+            page_no = 0
+        page = pages.get(page_no) or {"page": page_no, "text": ""}
+        value = str(row.get("value") or "")
+        if not value:
+            continue
+        facts.append({
+            "material_id": material.id,
+            "task_id": getattr(material, "task_id", None),
+            "field_path": "contract.%s.candidate" % field,
+            "raw_value": value,
+            "normalized_value": _normalize(value),
+            "page": page_no,
+            "quote": evidence.get("quote") or value,
+            "quality": "review_required",
+            "confidence": row.get("confidence"),
+            "source_kind": _page_source_kind(page),
+            "extractor_version": extractor,
+        })
+    return _insert_facts(db, material, facts, batch_id=batch_id,
+                         generation_id=generation_id, content_sha256=content_sha256)
+
+
 def material_fact_batches(db, material_id: int) -> list[str]:
     """该材料的批次标识，按写入顺序（旧→新）。"""
     rows = (db.query(BsMaterialFact.parse_batch_id)
@@ -304,8 +511,15 @@ def material_fact_batches(db, material_id: int) -> list[str]:
 
 
 def latest_material_facts(db, material_id: int) -> list:
-    """最新批次的事实行；用于业务读取，历史批次仍可单独查询。"""
-    batches = material_fact_batches(db, material_id)
+    """最新正式解析批次；模型候选及其批次不能替代人员/证照事实。"""
+    candidate_batches = (db.query(BsMaterialFact.parse_batch_id)
+                         .filter(BsMaterialFact.material_id == material_id,
+                                 BsMaterialFact.field_path.like("%.candidate")))
+    rows = (db.query(BsMaterialFact.parse_batch_id)
+            .filter(BsMaterialFact.material_id == material_id,
+                    ~BsMaterialFact.parse_batch_id.in_(candidate_batches))
+            .order_by(BsMaterialFact.id).all())
+    batches = list(dict.fromkeys(batch_id for (batch_id,) in rows))
     if not batches:
         return []
     return (db.query(BsMaterialFact)
@@ -326,6 +540,7 @@ def material_fact_history(db, material_id: int) -> list:
 __all__ = [
     "EXTRACTOR_VERSION", "SOURCE_KINDS", "QUALITY_STATES",
     "extract_material_facts", "material_content_sha256", "default_parse_batch_id",
-    "persist_material_facts", "material_fact_batches", "latest_material_facts",
+    "persist_material_facts", "persist_contract_facts", "persist_contract_candidates",
+    "material_fact_batches", "latest_material_facts",
     "material_fact_history",
 ]

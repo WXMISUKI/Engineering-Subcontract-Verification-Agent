@@ -20,5 +20,11 @@
   "cert_validity": {
     "soon_days": 30,
     "source_note": "临近到期预警窗口（天）：窗口内到期判「临近到期」并提示人工复核交人工终审。取值出处：《沪城公路〔2025〕118号》附件1第2项（营业执照、资质证书、安全生产许可证）、第4项（三类人员安考证等）与《沪交行规〔2026〕8号》附件3第2项、附件4第3项（证照须在有效期内）+ 现场指挥部2025.6.20要求三；30 天窗口属可配内部参数，非条款阈值（改本文件即生效）。"
+  },
+  "contract_dual_extraction": {
+    "enabled": true,
+    "max_chars": 16000,
+    "model_code": null,
+    "source_note": "合同字段双路候选：规则保底 + schema 约束 LLM。LLM 只产出候选，证据必须逐字回指原文；两路一致才自动采纳，仅 LLM 命中为 provisional，冲突不选边。默认关闭，改 enabled=true 后新解析/重新解析的合同材料会追加 contract.*.candidate 事实，不改变正式结论。model_code=null 使用当前任务所选模型。"
   }
 }

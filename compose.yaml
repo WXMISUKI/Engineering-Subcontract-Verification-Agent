@@ -107,6 +107,7 @@ services:
       SYSTEM_AES_KEY: ${KNOWLEDGE_AES_KEY:?请设置知识库 32 字节加密密钥}
       WEKNORA_SANDBOX_DOCKER_ENABLED: "false"
       SSRF_WHITELIST_EXTRA: ${KNOWLEDGE_SSRF_WHITELIST_EXTRA:-}
+      WEKNORA_BOOTSTRAP_SYSTEM_ADMIN_EMAIL: ${WEKNORA_BOOTSTRAP_SYSTEM_ADMIN_EMAIL:-}
     volumes:
       - knowledge-files:/data/files
       - knowledge-docreader-tmp:/tmp/docreader:ro

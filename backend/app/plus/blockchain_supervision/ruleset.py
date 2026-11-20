@@ -44,12 +44,20 @@ RULESET_FILES = (
     "transfer_rules.json",
     "negative_list_2024.json",
     "negative_list_matchers.json",
+    "negative_list_applicability.json",
     "province_negative_scope.json",
     "report_checklist.json",
     "review_flow.json",
+    "review_basis.json",
+    "basis_clauses.json",
+    "basis_index.json",
     "signature_chains.json",
     "extract_matchers.json",
     "qualification_matchers.json",
+    "qualification_scope.json",
+    "personnel_adequacy.json",
+    "special_operation_catalog.json",
+    "safety_permit_scope.json",
     "severity_matrix.json",
     "missing_material_map.json",
 )
@@ -233,6 +241,30 @@ def manifest() -> dict:
 def current_version() -> str:
     """当前规则数据版本（见模块 docstring 的算法）。"""
     return manifest()["version"]
+
+
+def verify_deployment_fingerprint(*, expected_version: str | None = None,
+                                  expected_manifest_hash: str | None = None) -> dict:
+    """部署前只读校验：当前规则文件指纹是否与冻结/预期版本一致。
+
+    不修改文件、不缓存结果；任一项不匹配即 ``ok=False``，部署脚本据此阻断或
+    记录差异，不能用「服务能启动」代替规则版本一致性。
+    """
+    data = manifest()
+    checks = []
+    if expected_version:
+        checks.append({"name": "version", "expected": expected_version,
+                       "actual": data["version"],
+                       "ok": data["version"] == expected_version})
+    if expected_manifest_hash:
+        checks.append({"name": "raw_manifest_hash",
+                       "expected": expected_manifest_hash,
+                       "actual": data["raw_manifest_hash"],
+                       "ok": data["raw_manifest_hash"] == expected_manifest_hash})
+    return {"ok": all(row["ok"] for row in checks) if checks else True,
+            "version": data["version"],
+            "raw_manifest_hash": data["raw_manifest_hash"],
+            "checks": checks}
 
 
 def _meta() -> dict:

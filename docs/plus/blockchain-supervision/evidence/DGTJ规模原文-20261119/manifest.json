@@ -1,0 +1,29 @@
+{
+  "scope": "local original table alignment and original 2017 effective date; not current all-region legal effect or online knowledge repair; technical title clause 4.2.2 physical page 15 visually reviewed",
+  "source_file": "C:\\project\\file\\区块链监管智能体\\前置背景\\新增依据\\08-DGTJ08-2225-2017-施工现场专业人员配备标准.pdf",
+  "provenance": "Existing authorized source README identifies Shanghai housing authority and records SHA256; no exact source URL independently recovered in this slice",
+  "source_url": null,
+  "pages": 44,
+  "pdf_file": "dgtj-08-2225-2017.pdf",
+  "pdf_sha256": "3ae2ff0dda06215ec32d44849f80fdc6fbd66200c10d8fa23eae84c7b3b6e905",
+  "selected_pages": [
+    1,
+    3,
+    12,
+    13,
+    15,
+    28,
+    29,
+    32
+  ],
+  "text_file": "selected-pages.txt",
+  "text_sha256": "d4c855dd49e48649cf3e84803dab4355472b919d7b7585b49035cf029df96daf",
+  "rendered_pages": {
+    "page-28.png": "1108cd8e8914075f27b569f8df1efe15d8309375fb125f3f62bad478f093dea7",
+    "page-29.png": "e1582aa7e2139d481732962fc1fb079767f797457596f437caeb06faca3587f1",
+    "page-15.png": "ef5511df42f5e975e140bb2dd49f3e3043f123a8295e83a3ab14d96781e6cbf9"
+  },
+  "human_verified": false,
+  "online_knowledge_verified": false,
+  "rule_change_status": "user_confirmed_original_correction_2026-11-19"
+}

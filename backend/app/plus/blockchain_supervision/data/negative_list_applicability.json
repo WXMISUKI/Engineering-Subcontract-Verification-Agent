@@ -1,0 +1,98 @@
+{
+  "schema_version": "bs-negative-applicability.v1",
+  "meta": {
+    "source": "交办公路〔2024〕6号 公路工程施工分包负面清单（2024年版）",
+    "rule_file": "negative_list_2024.json",
+    "basis_ids": [
+      "MOT-NL-2024#一、",
+      "MOT-NL-2024#二、",
+      "MOT-NL-2024#三、",
+      "SHJT-2026-8#第九条"
+    ],
+    "note": "适用性外置，不改动清单原文；scope 判定是工程语义分类，不是法律定性；无法识别范围时整体待核实，不默认不适用"
+  },
+  "structure_classification": {
+    "version": "2026-11-18.4",
+    "confirmed_at": "2026-11-18",
+    "confirmed_by": "user",
+    "basis_ids": [
+      "MOT-NL-2024#一、",
+      "SHJT-2026-8#第九条",
+      "JTG-F80-1-2017#3.1.1",
+      "JTG-F80-1-2017#附录A"
+    ],
+    "province_notes": {
+      "shanghai": "桥梁/隧道按部清单，路基路面暂不增补（沪交行规〔2026〕8号第九条）",
+      "other_provinces": "部分省份会增补桩基等条目；如西藏2024清单增补了直径≥2.5米、长度≥80米、水深≥10米和多年冻土区的钻孔灌注桩，跨省项目必须核对当地清单"
+    },
+    "rules": {
+      "pile_foundation": {
+        "label": "桩基",
+        "part": "foundation",
+        "negative_list_status": "not_listed_in_shanghai",
+        "cross_province_check": true,
+        "note": "国家2024清单未列桩基；上海未增补；如涉及水中沉井/围堰，按对应条目核对；其他省份可能增补"
+      },
+      "substructure": {
+        "label": "承台/墩柱/盖梁",
+        "part": "substructure",
+        "negative_list_status": "not_listed",
+        "note": "21叶未列，直接通过，不在报告中提及"
+      },
+      "precast_components": {
+        "label": "预制构件安装",
+        "part": "split_by_component",
+        "negative_list_status": "split",
+        "note": "立柱/盖梁→下部结构；箱梁/预制梁→上部结构"
+      },
+      "bridge_deck_ancillary": {
+        "label": "桥面铺装/支座/伸缩缝/护栏",
+        "part": "ancillary",
+        "negative_list_status": "not_superstructure",
+        "note": "按桥面系/附属处理，不套上部承重结构"
+      }
+    }
+  },
+  "keyword_map": {
+    "domains": {
+      "bridge": ["桥梁", "桥", "箱梁", "盖梁", "墩柱", "承台", "越江", "匝道", "高架"],
+      "tunnel": ["隧道", "盾构", "TBM", "沉管", "二衬", "出碴", "竖井", "斜井", "瓦斯"],
+      "roadbed": ["路基", "软基", "土石方", "填方", "挖方"],
+      "pavement": ["路面", "沥青", "水稳", "基层", "面层"],
+      "traffic_safety": ["护栏", "标志", "标线", "交通工程", "交通安全设施", "安全设施", "交安", "机电", "照明", "绿化"]
+    },
+    "structure_parts": {
+      "foundation": ["桩基", "沉井", "围堰", "基坑围护", "地基处理", "基础"],
+      "substructure": ["承台", "墩柱", "盖梁", "桥墩", "下部结构"],
+      "superstructure": ["箱梁", "梁板", "预制梁", "现浇梁", "上部结构", "桥面", "支座", "吊装", "架设", "悬臂", "顶推", "移动模架", "预制构件"],
+      "tunnel": ["隧道", "盾构", "TBM", "沉管", "二衬", "出碴", "竖井", "斜井", "瓦斯"],
+      "roadbed": ["路基", "软基", "土石方", "填方", "挖方"],
+      "pavement": ["路面", "沥青", "水稳", "基层", "面层"],
+      "traffic_safety": ["护栏", "标志", "标线", "交通工程", "交通安全设施", "安全设施", "交安", "机电", "照明", "绿化"]
+    },
+    "bridge_context": ["公路", "高速", "桥梁", "桥", "越江", "嘉松", "匝道", "高架"]
+  },
+  "rules": {
+    "NL-B-01": {"domain": "bridge", "structure_parts": ["foundation"], "parameter_all": ["height_m"], "work_types": ["沉井", "水中沉井"]},
+    "NL-B-02": {"domain": "bridge", "structure_parts": ["foundation"], "parameter_all": ["water_depth_m"], "work_types": ["围堰", "水中围堰"]},
+    "NL-B-03": {"domain": "bridge", "structure_parts": ["superstructure"], "parameter_all": ["height_m"], "work_types": ["落地式支撑架"]},
+    "NL-B-04": {"domain": "bridge", "structure_parts": ["superstructure"], "parameter_all": [], "work_types": ["附着式支撑架"]},
+    "NL-B-05": {"domain": "bridge", "structure_parts": ["superstructure"], "parameter_any": ["segment_weight_t", "segment_length_m"], "work_types": ["悬臂施工", "悬臂"]},
+    "NL-B-06": {"domain": "bridge", "structure_parts": ["superstructure"], "parameter_all": ["span_m"], "work_types": ["移动模架"]},
+    "NL-B-07": {"domain": "bridge", "structure_parts": ["superstructure"], "parameter_any": ["segment_weight_t", "segment_length_m"], "work_types": ["装配式节段梁", "悬拼"]},
+    "NL-B-08": {"domain": "bridge", "structure_parts": ["superstructure"], "parameter_all": [], "work_types": ["整孔预制安装", "预制梁", "箱梁"]},
+    "NL-B-09": {"domain": "bridge", "structure_parts": ["superstructure"], "parameter_all": ["unit_weight_t"], "work_types": ["装配式梁", "预制梁", "箱梁"]},
+    "NL-B-10": {"domain": "bridge", "structure_parts": ["superstructure"], "parameter_all": ["span_m"], "work_types": ["顶推"]},
+    "NL-B-11": {"domain": "bridge", "structure_parts": ["superstructure"], "parameter_all": [], "work_types": ["上跨", "跨线"]},
+    "NL-B-12": {"domain": "bridge", "structure_parts": ["superstructure"], "parameter_any": ["suspension_span_m", "cable_stayed_span_m", "arch_span_m"], "work_types": ["悬索桥", "斜拉桥", "拱桥"]},
+    "NL-T-01": {"domain": "tunnel", "structure_parts": ["tunnel"], "parameter_all": [], "work_types": ["沉管", "水中隧道"]},
+    "NL-T-02": {"domain": "tunnel", "structure_parts": ["tunnel"], "parameter_all": [], "work_types": ["盾构", "TBM"]},
+    "NL-T-03": {"domain": "tunnel", "structure_parts": ["tunnel"], "parameter_all": [], "work_types": ["高瓦斯", "瓦斯隧道"]},
+    "NL-T-04": {"domain": "tunnel", "structure_parts": ["tunnel"], "parameter_all": ["length_m"], "work_types": ["深埋富水"]},
+    "NL-T-05": {"domain": "tunnel", "structure_parts": ["tunnel"], "parameter_all": ["length_m"], "work_types": ["岩溶", "岩溶强发育"]},
+    "NL-T-06": {"domain": "tunnel", "structure_parts": ["tunnel"], "parameter_all": ["length_m", "section_area_m2"], "work_types": ["V级围岩", "围岩"]},
+    "NL-T-07": {"domain": "tunnel", "structure_parts": ["tunnel"], "parameter_all": ["shaft_diameter_m", "shaft_depth_m"], "work_types": ["斜井", "竖井"]},
+    "NL-T-08": {"domain": "tunnel", "structure_parts": ["tunnel"], "parameter_all": ["length_m"], "work_types": ["下穿"]},
+    "NL-R-01": {"domains": ["roadbed", "pavement"], "structure_parts": ["roadbed", "pavement"], "parameter_all": [], "work_types": []}
+  }
+}

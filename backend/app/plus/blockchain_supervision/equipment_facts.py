@@ -34,5 +34,7 @@ def extract_equipment_facts(materials) -> dict:
                 line = next((item.strip() for item in text.splitlines()
                              if _EQUIPMENT_HINT_RE.search(item)), "")
                 if line:
-                    rows.append({"page": page_no, "quote": re.sub(r"\s+", " ", line)[:120]})
-    return {"pages": sorted(pages), "rows": rows}
+                    rows.append({"material_id": material.id, "subject_id": getattr(material, "subject_id", None),
+                                 "page": page_no, "quote": re.sub(r"\s+", " ", line)[:120]})
+    from .equipment_identity import extract_equipment_records
+    return {"pages": sorted(pages), "rows": rows, "records": extract_equipment_records(materials or [])}

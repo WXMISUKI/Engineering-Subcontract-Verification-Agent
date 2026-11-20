@@ -3,6 +3,7 @@
 from __future__ import annotations
 import re
 from . import report_policy
+from .models import counted_status
 
 _CATEGORIES = (
     ("要素完整性核查", {"completeness", "signature_chain"},
@@ -10,8 +11,8 @@ _CATEGORIES = (
     ("资质与内容合规性审查", {"qualification_match", "negative_list", "transfer_scope",
                                 "illegal_subcontract", "a1_dependency"},
      ("分包性质与资质匹配", "拟分包内容与负面清单", "转包与违法分包情形", "审批及责任约定")),
-    ("关键岗位人员核查", {"person_consistency"},
-     ("主要人员及岗位", "人员与证件对应", "劳动关系及社保", "特殊工种人员")),
+    ("关键岗位人员核查", {"person_consistency", "personnel_adequacy"},
+     ("主要人员及岗位", "岗位配置与人员配备", "人员与证件对应", "劳动关系及社保", "特殊工种人员")),
     ("证件证照有效性核查", {"cert_validity"},
      ("企业证照有效期", "人员证件有效期", "证件信息一致性", "证照真实性及核验情况")),
     ("内部信用与事故材料核查", {"internal_records"},
@@ -25,7 +26,8 @@ _KEY_POINTS = (
      ("合同及清单", "合同及清单"), ("审批程序", "签字盖章及审批资料")),
     (("主体资格", "分包性质与资质匹配"), ("负面清单", "拟分包内容与负面清单"),
      ("再分包与挂靠", "转包与违法分包情形"), ("审批及责任约定", "审批及责任约定")),
-    (("关键岗位", "主要人员及岗位"), ("人员与证件对应", "人员与证件对应"),
+    (("关键岗位", "主要人员及岗位"), ("岗位配置", "岗位配置与人员配备"),
+     ("人员与证件对应", "人员与证件对应"),
      ("劳动关系社保", "劳动关系及社保"), ("特殊工种", "特殊工种人员")),
     (("企业证照有效期", "企业证照有效期"), ("人员证件有效期", "人员证件有效期"),
      ("证件信息一致性", "证件信息一致性"), ("证照真实性", "证照真实性及核验情况")),
@@ -54,8 +56,9 @@ def _limitation_groups(limitations: list[str]) -> list[dict]:
 def _status_sentence(items: list[dict], complete: bool, has_results: bool) -> str:
     counts = {"hit": 0, "miss": 0, "undecidable": 0}
     for item in items:
-        if item.get("status") in counts:
-            counts[item["status"]] += 1
+        status = counted_status(item.get("status"))
+        if status in counts:
+            counts[status] += 1
     if counts["hit"] or counts["undecidable"]:
         return "%s：需关注 %d 项、待核实 %d 项。" % (
             "本类已形成核查结果" if complete else "本类核查尚未完成，当前发现",
@@ -70,7 +73,8 @@ def _status_sentence(items: list[dict], complete: bool, has_results: bool) -> st
 def _key_point_status(items: list[dict], complete: bool, reading_incomplete: bool) -> str:
     if any(item.get("status") == "hit" for item in items):
         return "需关注"
-    if not items or not complete or reading_incomplete or any(item.get("status") == "undecidable" for item in items):
+    if not items or not complete or reading_incomplete or any(
+            counted_status(item.get("status")) == "undecidable" for item in items):
         return "待核实"
     return "已核查"
 
@@ -170,6 +174,40 @@ def _proven_person_certificate_conflict(items, policy, subject_types, baseline_d
     return False
 
 
+_SCOPE_EVIDENCE_KIND = "qualification_certificate"
+
+
+def _scope_segment(item: dict) -> bool:
+    """A2-04 第二段（等级/承包工程范围）条目：证据里带资质证书页。"""
+    return any(isinstance(ref, dict) and ref.get("source_kind") == _SCOPE_EVIDENCE_KIND
+               for ref in (item.get("evidence_list") or []))
+
+
+def _located(item: dict) -> bool:
+    return any(isinstance(ref, dict) and ref.get("material_id") is not None
+               and type(ref.get("page")) is int and ref["page"] > 0
+               and str(ref.get("quote") or "").strip()
+               for ref in (item.get("evidence_list") or []))
+
+
+def _qualification_verdict(items: list[dict]) -> str:
+    """A2-04 分节结论（设计 SH10-01）：类别、等级、规模可量化即判定。
+
+    第一段类别词表命中仍判待核实——文字上没看到不等于超出承揽范围；
+    第二段只有证书载明等级且依据原文已归档时才给出符合/不符合。
+    """
+    if any(item.get("status") == "undecidable" or item.get("reading_limited") for item in items):
+        return "待核实"
+    scope_items = [item for item in items if _scope_segment(item)]
+    if any(item.get("status") == "hit" for item in items if not _scope_segment(item)):
+        return "待核实"
+    if any(item.get("status") == "hit" for item in scope_items):
+        return "不符合"
+    if scope_items and all(item.get("status") == "miss" and _located(item) for item in scope_items):
+        return "符合"
+    return "待核实"
+
+
 def _point_verdict(items: list[dict], complete: bool, reading_incomplete: bool, scope_pending: bool = False,
                    policy=None, subject_types=None, baseline_date=None) -> str:
     # hit 包括预警，severity 是排序档位，均不足以判断不符合或基本符合。
@@ -187,10 +225,10 @@ def _point_verdict(items: list[dict], complete: bool, reading_incomplete: bool, 
         return "待核实"
     if scope_pending:
         return "待核实"
-    # A2-04 仅做证照文字类别比对，不覆盖等级、规模及真实性。
+    # A2-04：类别可量化、第二段等级/规模可量化时给明确结论；模糊或依据缺失才待核实。
     if any(item.get("kind") == "qualification_match" and item.get("item_id") == "A2-04"
            for item in items):
-        return "待核实"
+        return _qualification_verdict(items)
     # 负面清单内核只对召回条目产出结果，单条未命中不证明整个适用清单已覆盖。
     if any(item.get("kind") == "negative_list" for item in items):
         return "待核实"
@@ -448,6 +486,8 @@ def _field_matches(field: str, item: dict, policy=None) -> bool:
         return field == fixed[kind]
     if kind == "person_consistency":
         return field == "劳动关系及社保"
+    if kind == "personnel_adequacy":
+        return field == "岗位配置与人员配备"
     if kind == "cert_validity":
         if item_id in {"A2-03", "A2-05"}:
             return field == "证件信息一致性"
@@ -488,14 +528,16 @@ def _category_complete(kinds: set[str], selected: set[str], completed: set[str],
 
 
 def _kind_selected(kind: str, selected: set[str]) -> bool:
-    group = "a2" if kind in {"qualification_match", "person_consistency", "cert_validity"} else (
+    group = "a2" if kind in {"qualification_match", "person_consistency", "personnel_adequacy",
+                             "cert_validity"} else (
         "a1" if kind in {"negative_list", "transfer_scope", "illegal_subcontract", "a1_dependency"}
         else kind)
     return group in selected
 
 
 def _kind_completed(kind: str, completed: set[str]) -> bool:
-    group = "a2" if kind in {"qualification_match", "person_consistency", "cert_validity"} else (
+    group = "a2" if kind in {"qualification_match", "person_consistency", "personnel_adequacy",
+                             "cert_validity"} else (
         "a1" if kind in {"negative_list", "transfer_scope", "illegal_subcontract", "a1_dependency"}
         else kind)
     return group in completed
@@ -702,7 +744,8 @@ def build_report_document(report: dict) -> dict:
                           and not item.get("open_term") and item.get("status") in {"hit", "miss", "undecidable"}]
         applicable = bool(selected_kinds) and all(_kind_selected(kind, selected) for kind in kinds)
         required_groups = {"a1" if kind in {"negative_list", "transfer_scope", "illegal_subcontract", "a1_dependency"}
-                           else "a2" if kind in {"qualification_match", "person_consistency", "cert_validity"}
+                           else "a2" if kind in {"qualification_match", "person_consistency",
+                                                 "personnel_adequacy", "cert_validity"}
                            else kind for kind in selected_kinds}
         complete = applicable and bool(required_groups) and all(group in completed for group in required_groups)
         active_category_items = [item for item in category_items
@@ -724,13 +767,20 @@ def build_report_document(report: dict) -> dict:
         if title == "资质与内容合规性审查" and any(
                 item.get("item_id") == "A2-04" for item in by_label["分包性质与资质匹配"]):
             field = "分包性质与资质匹配"
-            summaries[field] = summaries[field].replace("已核查符合：", "已完成初步文字比对：")
-            summaries[field] += "该比对未核定资质等级、工程规模及证照真实性。"
+            if any(_scope_segment(item) for item in by_label[field]):
+                summaries[field] = summaries[field].replace(
+                    "已核查符合：", "已完成资质类别、等级与承包工程范围比对：")
+                summaries[field] += ("该比对以证书载明等级为准，未核定证照真实性；"
+                                     "未录入承包工程范围依据的类别仍需人工核对。")
+            else:
+                summaries[field] = summaries[field].replace("已核查符合：", "已完成初步文字比对：")
+                summaries[field] += "该比对未核定资质等级、工程规模及证照真实性。"
         if title == "资质与内容合规性审查" and by_label["拟分包内容与负面清单"]:
             summaries["拟分包内容与负面清单"] += "现有结果仅覆盖已识别事项，适用清单覆盖完整性需核实。"
         if title == "关键岗位人员核查":
             field_groups = {"主要人员及岗位": "completeness", "特殊工种人员": "completeness",
-                            "人员与证件对应": "a2", "劳动关系及社保": "a2"}
+                            "岗位配置与人员配备": "a2", "人员与证件对应": "a2",
+                            "劳动关系及社保": "a2"}
             for field, group in field_groups.items():
                 if group not in selected:
                     summaries[field] = "本次未选择相关核查。"
@@ -866,25 +916,37 @@ def build_report_document(report: dict) -> dict:
             return None
         return fact.get("value") or meta.get(key)
 
+    general_contractor_value = ((basic.get("general_contractor") or {}).get("company_display")
+                                or (basic.get("general_contractor") or {}).get("company")
+                                or ((basic.get("general_contractor") or {}).get("value")))
+    employer_value = ((basic.get("employer") or {}).get("company_display")
+                      or (basic.get("employer") or {}).get("company")
+                      or ((basic.get("employer") or {}).get("value")))
+    amount_fact = basic.get("subcontract_amount") or {}
+    amount_text = None
+    if amount_fact.get("value") is not None:
+        tax_label = {"含税": "（含税）", "不含税": "（不含税）"}.get(amount_fact.get("tax_basis"), "")
+        amount_text = "%s%s%s" % (amount_fact.get("value"), amount_fact.get("unit") or "", tax_label)
     information = {
         "工程名称": project_value("project_name"),
         "标段": project_value("contract_section"),
-        "施工总承包单位": ((basic.get("general_contractor") or {}).get("company")
-                         or ((basic.get("general_contractor") or {}).get("value"))),
-        "建设单位（业主）": ((basic.get("employer") or {}).get("company")
-                          or ((basic.get("employer") or {}).get("value"))),
-        "分包单位": ((basic.get("subcontractor") or {}).get("company")
+        "建设单位": employer_value,
+        "总包单位": general_contractor_value,
+        "施工总承包单位": general_contractor_value,
+        "建设单位（业主）": employer_value,
+        "分包单位": ((basic.get("subcontractor") or {}).get("company_display")
+                    or (basic.get("subcontractor") or {}).get("company")
                     or ((basic.get("subcontractor") or {}).get("value"))),
         "分包类型": basic.get("subcontract_type"),
         "拟分包范围": (basic.get("subcontract_scope") or {}).get("value"),
-        "拟分包金额": ("%s%s" % ((basic.get("subcontract_amount") or {}).get("value"),
-                               (basic.get("subcontract_amount") or {}).get("unit") or "")
-                    if (basic.get("subcontract_amount") or {}).get("value") is not None else None),
+        "拟分包金额": amount_text,
         "核查基准日": basic.get("baseline_date") or meta.get("baseline_date"),
         "报告日期": meta.get("generated_at"),
     }
     field_status = {"工程名称": (basic.get("project_name") or {}).get("status"),
                     "标段": (basic.get("contract_section") or {}).get("status"),
+                    "建设单位": (basic.get("employer") or {}).get("status"),
+                    "总包单位": (basic.get("general_contractor") or {}).get("status"),
                     "施工总承包单位": (basic.get("general_contractor") or {}).get("status"),
                     "建设单位（业主）": (basic.get("employer") or {}).get("status"),
                     "分包单位": (basic.get("subcontractor") or {}).get("status"),

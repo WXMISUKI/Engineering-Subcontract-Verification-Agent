@@ -26,9 +26,10 @@ from . import (a1_check, a2_check, a3_check, extract, internal_records, parsing,
                pinning, reporting, severity, signature_chain, zip_ingestion,
                semantic_review, knowledge_runs, reference_snapshots, subject_reviews,
                ruleset, rule_item_catalog, checklist, knowledge, material_versions, supplement_impact,
-               supplement_generation, ai_guarded_review, ai_advisory_snapshots, ai_review_batch, reference_visibility,
+               supplement_generation, ai_guarded_review, ai_advisory_snapshots, ai_review_batch, ai_review_jobs, reference_visibility,
                personnel_evidence, certificate_facts, certificate_number_check, evidence_projection, identity_observation, negative_candidate_plan,
-               section_projection, material_confirmation, report_policy, optional_source_scope)
+               section_projection, material_confirmation, report_policy, optional_source_scope,
+               rule_source_coverage, page_text_candidates, basis_validation, reading_gate)
 from ..startup_conditions_check.llm import client_from_env, run_sync
 from .classify import ROLE_LABELS, classify_material, validate_materials, validate_role
 from .finding_text import bounded_finding_message
@@ -37,7 +38,7 @@ from .identity_labels import subject_identity_label
 from .material_facts import persist_material_facts
 from .relation_resolution import resolve_task_relations
 from .models import (PARSE_STATE_STORED, STATUS_LABELS, BsFinding, BsMaterial, BsMaterialConfirmation, BsPacket,
-                     BsReviewVersion, BsSubject, BsTask, BsTaskEvent)
+                     BsReviewVersion, BsSubject, BsTask, BsTaskEvent, counted_status)
 from .rules import load_config
 
 logger = logging.getLogger(__name__)
@@ -183,6 +184,24 @@ def _check_upload_size(content: bytes) -> None:
         )
 
 
+def _event_database_clock(db: Session) -> tuple[datetime | None, int | None]:
+    """事件时间取数据库时钟，并记录数据库时区偏移。
+
+    MySQL/MariaDB 以会话时钟与 UTC 时钟的差值确定偏移；SQLite 与独立版应用
+    同机使用 UTC；未知方言不推测时区，保持 NULL。
+    """
+    dialect = db.get_bind().dialect.name
+    if dialect == "sqlite":
+        return datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0), 0
+    if dialect in {"mysql", "mariadb"}:
+        local, utc = db.query(func.current_timestamp(), func.utc_timestamp()).one()
+        seconds = (local - utc).total_seconds()
+        if seconds % 60 == 0 and abs(seconds) <= 14 * 3600:
+            return local, int(seconds // 60)
+        return local, None
+    return None, None
+
+
 def add_event(db: Session, task_id: int, event_type: str, *, stage: str = None,
               payload: dict = None, commit: bool = True) -> int:
     """写任务事件并返回序号。
@@ -199,8 +218,13 @@ def add_event(db: Session, task_id: int, event_type: str, *, stage: str = None,
         .first()
     )
     seq = (last[0] if last else 0) + 1
-    db.add(BsTaskEvent(task_id=task_id, sequence=seq, event_type=event_type,
-                       stage=stage, payload_json=payload or {}))
+    event_time, offset = _event_database_clock(db)
+    event = BsTaskEvent(task_id=task_id, sequence=seq, event_type=event_type,
+                        stage=stage, payload_json=payload or {},
+                        created_at_utc_offset_minutes=offset)
+    if event_time is not None:
+        event.created_at = event_time
+    db.add(event)
     if commit:
         db.commit()
     else:
@@ -312,23 +336,30 @@ def baseline_date_source(task: BsTask) -> str:
     return source if source in {"automatic", "manual"} else ("manual" if task.baseline_date else "automatic")
 
 
+from . import review_mode as task_review_mode
+
+
 def create_task(db: Session, *, conversation_id: int, title: str,
                 scope_a1: bool, scope_a3: bool, created_by: int,
                 created_by_type: str = "web",
                 project_name: str = None, contract_section: str = None,
                 baseline_date=None, jurisdiction: str = None,
-                profile_code: str = None) -> BsTask:
-    if not scope_a1 and not scope_a3:
+                profile_code: str = None, review_mode: str = task_review_mode.ADMISSION) -> BsTask:
+    review_mode = task_review_mode.validate(review_mode)
+    if review_mode == task_review_mode.ADMISSION and not scope_a1 and not scope_a3:
         raise ValueError("至少选择一个核查范围（A1 违法转包分包识别 / A3 报审资料合规核查）")
+    selected_baseline = _coerce_date(baseline_date)
     task = BsTask(
         conversation_id=conversation_id, title=title,
         scope_a1=scope_a1, scope_a3=scope_a3,
         scale="standard",  # 标准档唯一实装；写进快照即锁定
-        options_snapshot_json={"scope": {"A1": scope_a1, "A3": scope_a3}, "scale": "standard",
-                               "baseline_date_source": "manual" if _coerce_date(baseline_date) else "automatic"},
+        options_snapshot_json={"review_mode": review_mode,
+                               "scope": {"A1": scope_a1, "A3": scope_a3}, "scale": "standard",
+                               "baseline_date_source": "manual" if selected_baseline else "automatic"},
         project_name=_clean_str(project_name),
         contract_section=_clean_str(contract_section),
-        baseline_date=_coerce_date(baseline_date) or _default_baseline_date(),
+        baseline_date=(selected_baseline if selected_baseline or review_mode == task_review_mode.RETROSPECTIVE
+                       else _default_baseline_date()),
         jurisdiction=_coerce_jurisdiction(jurisdiction),
         profile_code=_coerce_profile_code(profile_code),
         created_by=created_by, created_by_type=created_by_type,
@@ -336,7 +367,7 @@ def create_task(db: Session, *, conversation_id: int, title: str,
     db.add(task)
     db.commit()
     db.refresh(task)
-    add_event(db, task.id, "task.created", payload={"title": title})
+    add_event(db, task.id, "task.created", payload={"title": title, "review_mode": review_mode})
     return task
 
 
@@ -483,6 +514,155 @@ def _reusable_subject_anchor(db: Session, task: BsTask,
     return None
 
 
+def _subject_has_event(db: Session, task_id: int, subject_id: int, event_type: str) -> bool:
+    rows = (db.query(BsTaskEvent)
+            .filter(BsTaskEvent.task_id == task_id, BsTaskEvent.event_type == event_type)
+            .all())
+    return any((row.payload_json or {}).get("subject_id") == subject_id for row in rows)
+
+
+def _repair_subject_name_if_safe(db: Session, task: BsTask, material: BsMaterial,
+                                 subject: BsSubject, candidate: str | None) -> bool:
+    """仅在 setup/补件编辑态，按唯一明确分包人角色纠正自动主体名称。
+
+    不覆盖人工确认：存在 ``subject.name_confirmed`` 事件的主体一律跳过；同时
+    要求主体由材料自动归并建立（``material.subject_assigned``），避免改写用户在
+    上传阶段显式创建的主体。修复写 ``subject.name_repaired`` 审计事件。
+    """
+    if not candidate or material.role not in ("sub", "labor"):
+        return False
+    if not _setup_write_allowed(task):
+        return False
+    if not subject.name or a2_check.norm_company(subject.name) == a2_check.norm_company(candidate):
+        return False
+    if not _subject_has_event(db, task.id, subject.id, "material.subject_assigned"):
+        return False
+    if _subject_has_event(db, task.id, subject.id, "subject.name_confirmed"):
+        return False
+    peers = (db.query(BsSubject)
+             .filter(BsSubject.task_id == task.id, BsSubject.id != subject.id,
+                     BsSubject.retired.is_(False)).all())
+    if any(peer.name and a2_check.norm_company(peer.name) == a2_check.norm_company(candidate)
+           for peer in peers):
+        return False
+    old_name = subject.name
+    subject.name = candidate
+    db.flush()
+    add_event(db, task.id, "subject.name_repaired", payload={
+        "subject_id": subject.id,
+        "stable_code": subject.stable_code,
+        "old_name": old_name,
+        "name": candidate,
+        "material_id": material.id,
+        "file_name": material.file_name,
+        "reason": "explicit_subcontractor_role_in_contract",
+    })
+    return True
+
+
+def repair_auto_subject_names(db: Session, task: BsTask) -> list[dict]:
+    """启动前按合同唯一分包人角色修复自动主体名称；证据不唯一时保持原状。"""
+    if not _setup_write_allowed(task):
+        return []
+    materials = (db.query(BsMaterial)
+                 .filter(BsMaterial.task_id == task.id,
+                         BsMaterial.role.in_(("sub", "labor")),
+                         BsMaterial.parse_state == "done").all())
+    candidates: dict[int, set] = {}
+    for material in materials:
+        if material.subject_id is None:
+            continue
+        name = extract.extract_subcontractor_name(material)
+        if name:
+            candidates.setdefault(material.subject_id, set()).add(name)
+    repaired = []
+    for subject_id, names in candidates.items():
+        if len(names) != 1:
+            continue
+        subject = (db.query(BsSubject)
+                   .filter(BsSubject.id == subject_id, BsSubject.task_id == task.id).first())
+        material = next(row for row in materials if row.subject_id == subject_id)
+        if subject is not None and _repair_subject_name_if_safe(
+                db, task, material, subject, next(iter(names))):
+            repaired.append({"subject_id": subject_id, "name": subject.name})
+    return repaired
+
+
+def run_contract_dual_extraction(db: Session, task: BsTask, material: BsMaterial,
+                                 *, client=None) -> dict:
+    """对单份合同运行双路候选抽取：规则 + LLM，结果只落候选事实。
+
+    默认关闭（config.contract_dual_extraction.enabled）；LLM 输出必须通过原文
+    证据回验，候选质量固定 ``review_required``，不改变正式结论。
+    """
+    config = load_config().get("contract_dual_extraction") or {}
+    if not config.get("enabled"):
+        return {"skipped": "disabled"}
+    from . import contract_extraction, material_facts as material_facts_module, report_basic_facts
+    if client is None:
+        client = client_from_env(model_code=config.get("model_code"))
+    result = run_sync(contract_extraction.extract_llm_candidates(
+        material, client=client,
+        max_chars=int(config.get("max_chars") or 16000)))
+    rule = contract_extraction.rule_candidates(
+        report_basic_facts.extract_report_basic_facts([material]))
+    merged = contract_extraction.merge_candidates(rule, result.get("fields") or {})
+    inserted = material_facts_module.persist_contract_candidates(db, material, result)
+    add_event(db, task.id, "contract.candidates_extracted", payload={
+        "material_id": material.id,
+        "available": result.get("available"),
+        "reason": result.get("reason"),
+        "truncated": result.get("truncated"),
+        "version": result.get("version"),
+        "statuses": {field: row.get("status") for field, row in merged.items()},
+        "inserted": len(inserted),
+        "dropped": result.get("dropped") or [],
+    })
+    return {"available": result.get("available"), "reason": result.get("reason"),
+            "merged": merged, "inserted": len(inserted)}
+
+
+def _run_contract_dual_extraction_task(task_id: int, material_id: int, bind) -> None:
+    with SessionLocal(bind=bind) as session:
+        task = session.get(BsTask, task_id)
+        material = session.get(BsMaterial, material_id)
+        if task is None or material is None:
+            return
+        try:
+            run_contract_dual_extraction(session, task, material)
+            session.commit()
+        except Exception:
+            session.rollback()
+            logger.warning("[bs] 合同双路抽取失败 task=%s material=%s",
+                           task_id, material_id, exc_info=True)
+
+
+def _launch_contract_dual_extraction(task_id: int, material_id: int, bind) -> None:
+    threading.Thread(target=_run_contract_dual_extraction_task,
+                     args=(task_id, material_id, bind),
+                     daemon=True, name="bs-contract-dual").start()
+
+
+def backfill_contract_facts(db: Session, task: BsTask) -> int:
+    """为已解析合同补写 contract.* 事实行；同批次幂等，不覆盖历史批次。
+
+    历史任务在解析时还没有合同事实抽取；重新核查前补写一次，避免报告/跨合同
+    比对读取到空的 contract.* 事实。单份材料失败只记日志，不阻断启动。
+    """
+    materials = (db.query(BsMaterial)
+                 .filter(BsMaterial.task_id == task.id,
+                         BsMaterial.parse_state == "done",
+                         BsMaterial.role.in_(("general", "sub", "labor"))).all())
+    inserted = 0
+    for material in materials:
+        try:
+            from .material_facts import persist_contract_facts
+            inserted += len(persist_contract_facts(db, material))
+        except Exception:
+            logger.warning("[bs] 合同事实补写跳过 material=%s", material.id, exc_info=True)
+    return inserted
+
+
 def assign_material_subject_by_exact_name(db: Session, task: BsTask,
                                           material: BsMaterial) -> BsSubject | None:
     """只按正文中唯一、明确的分包方单位名归并材料；不按文件名或模糊相似度猜测。"""
@@ -493,16 +673,21 @@ def assign_material_subject_by_exact_name(db: Session, task: BsTask,
 
     # 上传阶段已建立的临时主体只用于材料归集。解析收口时补写正文识别出的
     # 单位名称，保持 stable_code 和报审资料绑定不变。
+    candidate = extract.extract_subcontractor_name(material)
     existing = None
     if material.subject_id is not None:
         existing = db.query(BsSubject).filter(
             BsSubject.id == material.subject_id,
             BsSubject.task_id == task.id,
         ).first()
-        if existing is None or existing.name:
+        if existing is None:
+            return None
+        if existing.name:
+            # 自动主体可能在上传阶段把总包误当成分包人；仅在证据唯一且无人为
+            # 确认时按合同角色纠正，保留原 stable_code 与材料绑定。
+            _repair_subject_name_if_safe(db, task, material, existing, candidate)
             return existing
 
-    candidate = extract.extract_subcontractor_name(material)
     if not candidate:
         return None
 
@@ -1586,6 +1771,9 @@ def validate_task_materials(db: Session, task: BsTask) -> dict:
     材料集走 `_rule_materials`（剔除父容器、已替代旧版和待生效候选）：容器不是证据，
     旧版/候选也不能参与构成计数；解析中的候选仍从全量材料单独计算 pending 闸。
     """
+    if task_review_mode.is_retrospective(task):
+        from .retrospective_input import readiness
+        return readiness(db, task)
     all_materials = db.query(BsMaterial).filter(BsMaterial.task_id == task.id).all()
     materials = _rule_materials(db, task)
     validation_roles = []
@@ -2111,6 +2299,10 @@ def _finish_ingest(task_id: int, material_id: int, bind,
                                  if d.get("kind") == "ocr_fallback"),
         })
         owner = session.get(BsTask, task_id)
+        if (load_config().get("contract_dual_extraction") or {}).get("enabled") \
+                and mat.role in ("general", "sub", "labor"):
+            # LLM 候选异步执行，不拖慢材料收口；失败只记事件，不影响已解析文本。
+            _launch_contract_dual_extraction(task_id, mat.id, session.bind)
         if owner is not None:
             _activate_pending_replacement(session, owner, session.get(BsMaterial, mat.id))
     except Exception:  # pragma: no cover —— 后台线程兜底：任何未预期异常不留无声
@@ -2238,6 +2430,8 @@ def _material_write_allowed(task) -> bool:
     层改成一并拒绝非 setup，就会把「补 preparing 门」变成「顺手收紧既有语义」，
     造成与 T10-B 无关的回归。契约 §7.3.3 要求的正是 preparing 期必须拒绝。
     """
+    if task is not None and task_review_mode.is_retrospective(task):
+        return task.state == TASK_STATE_SETUP
     return task is not None and task.state != TASK_STATE_PREPARING
 
 
@@ -2991,6 +3185,13 @@ def _replace_findings(db: Session, task: BsTask, findings: list, *, commit: bool
     kinds = {f.kind for f in findings} | set(expected_kinds or ())
     if scoped_ids is not None:
         findings = [f for f in findings if f.item_id in scoped_ids]
+    # 依据闸门（第二道，设计 1.6）：登记过的条目必须绑定到可引用条款，错配即拒落库。
+    basis_validation.gate_findings(findings)
+    # 阅读门禁（设计 2.5）：未读/可疑页不得支撑「符合」结论，就地降级为缺项。
+    # 放在删旧行之前，保证本代结论无论来自哪条 run_* 路径都过同一道闸。
+    if findings:
+        materials = db.query(BsMaterial).filter(BsMaterial.task_id == task.id).all()
+        reading_gate.gate_reading_findings(findings, materials)
     query = (db.query(BsFinding)
              .filter(BsFinding.task_id == task.id, BsFinding.kind.in_(kinds)))
     if scoped_ids is not None:
@@ -3068,6 +3269,13 @@ def run_completeness(db: Session, task: BsTask) -> list:
                 .filter(BsSubject.task_id == task.id, BsSubject.id.in_(ids))
                 .order_by(BsSubject.id).all()) if ids else []
     findings = checklist.run_subject_completeness(task, subjects, materials)
+    from . import contract_responsibility
+    for topic, item_id in contract_responsibility.ITEMS.items():
+        findings += _run_subject_checks(
+            db, task, materials,
+            lambda current_task, owned, topic=topic: contract_responsibility.run_responsibility_check(
+                current_task, owned, topic=topic),
+            item_id=item_id, kind="completeness", source=contract_responsibility.SOURCE, allow_empty=True)
     _explain_supplement_certificate_category(findings, materials, supplement_issue_associations(db, task.id))
     pinning.pin_findings(findings, materials)
     return _persist_reference_group(db, task, reference_plan, findings)
@@ -3571,6 +3779,18 @@ def run_signature_chain(db: Session, task: BsTask) -> list:
     confirmed_ids = {subject.id for subject in subjects if subject_reviews.subject_is_confirmed(subject)}
     findings = signature_chain.run_signature_chain_checks(
         task, materials, require_assigned=True, allowed_subject_ids=confirmed_ids)
+    from . import plan_approval
+    findings += _run_subject_checks(
+        db, task, materials, plan_approval.run_plan_approval_check,
+        item_id=plan_approval.ITEM_ID, kind="signature_chain", source=plan_approval.SOURCE, allow_empty=True)
+    from . import performance_security
+    findings += _run_subject_checks(
+        db, task, materials, performance_security.run_security_check,
+        item_id=performance_security.ITEM_ID, kind="signature_chain", source=performance_security.SOURCE, allow_empty=True)
+    from . import contract_changes
+    findings += _run_subject_checks(
+        db, task, materials, contract_changes.run_change_check,
+        item_id=contract_changes.ITEM_ID, kind="signature_chain", source=contract_changes.SOURCE, allow_empty=True)
     pinning.pin_findings(findings, materials)
     return _persist_reference_group(db, task, reference_plan, findings)
 
@@ -3616,6 +3836,16 @@ def run_cert_validity(db: Session, task: BsTask, *, persist: bool = True) -> lis
         db, task, materials, identity_observation.run_identity_observations,
         item_id=identity_observation.ITEM_ID, kind="cert_validity",
         source=identity_observation.SOURCE, allow_empty=True)
+    from . import safety_permit_scope
+    findings += _run_subject_checks(
+        db, task, materials, a2_check.run_safety_permit_scope_check,
+        item_id=safety_permit_scope.ITEM_ID, kind="cert_validity",
+        source=safety_permit_scope.SOURCE, use_expected_company=True)
+    from . import personnel_certificates
+    findings += _run_subject_checks(
+        db, task, materials, a2_check.run_person_certificate_fields_check,
+        item_id=personnel_certificates.ITEM_ID, kind="cert_validity",
+        source=personnel_certificates.SOURCE, allow_empty=True)
     active_ids = active_subject_ids(db, task)
     subjects = (db.query(BsSubject)
                 .filter(BsSubject.task_id == task.id, BsSubject.id.in_(active_ids))
@@ -3644,11 +3874,51 @@ def run_person_consistency(db: Session, task: BsTask, *, persist: bool = True) -
         db, task, materials, a2_check.run_person_consistency_check,
         item_id=a2_check.ITEM_UNIT, kind="person_consistency", source=a2_check.SOURCE_P,
         use_expected_company=True)
+    from . import personnel_attendance
+    findings += _run_subject_checks(
+        db, task, materials, a2_check.run_person_attendance_check,
+        item_id=personnel_attendance.ITEM_ID, kind="person_consistency",
+        source=personnel_attendance.SOURCE, allow_empty=True)
     if not persist:
         return findings
     _replace_findings(db, task, findings)
     add_event(db, task.id, "check.completed", payload={
         "kind": "person_consistency",
+        "counts": Counter(f.status for f in findings),
+    })
+    return findings
+
+
+def run_personnel_staffing(db: Session, task: BsTask, *, persist: bool = True) -> list:
+    """A2 批次2b：关键岗位齐套与人员配备（DG/TJ 08-2225 表3.3.3/3.4.1）。"""
+    if not task.scope_a3:
+        raise ValueError("任务未选择 A3 核查范围")
+    materials = _rule_materials(db, task)
+    findings = _run_subject_checks(
+        db, task, materials, a2_check.run_personnel_staffing_check,
+        item_id=a2_check.ITEM_STAFF, kind="personnel_adequacy", source=a2_check.SOURCE_STAFF)
+    findings += _run_subject_checks(
+        db, task, materials, a2_check.run_special_operation_coverage_check,
+        item_id=a2_check.ITEM_SPECIAL, kind="personnel_adequacy", source=a2_check.SOURCE_SPECIAL)
+    from . import equipment_identity
+    findings += _run_subject_checks(
+        db, task, materials, a2_check.run_technical_title_check,
+        item_id=a2_check.ITEM_TECHNICAL_TITLE, kind="personnel_adequacy",
+        source=a2_check.SOURCE_TECHNICAL_TITLE, allow_empty=True)
+    findings += _run_subject_checks(
+        db, task, materials, a2_check.run_equipment_identity_check,
+        item_id=equipment_identity.ITEM_ID, kind="personnel_adequacy",
+        source=equipment_identity.SOURCE, allow_empty=True)
+    from . import training_records
+    findings += _run_subject_checks(
+        db, task, materials, training_records.run_training_check,
+        item_id=training_records.ITEM_ID, kind="personnel_adequacy",
+        source=training_records.SOURCE, allow_empty=True)
+    if not persist:
+        return findings
+    _replace_findings(db, task, findings)
+    add_event(db, task.id, "check.completed", payload={
+        "kind": "personnel_adequacy",
         "counts": Counter(f.status for f in findings),
     })
     return findings
@@ -3958,7 +4228,8 @@ def _negative_candidate_pending(event) -> bool:
 
 async def run_negative_candidate_ai_advisory(db: Session, task: BsTask, user, *, max_batches: int,
                                              expected_run_id: str, client=None, retry: bool = False,
-                                             background_job_id: str | None = None) -> dict:
+                                             background_job_id: str | None = None,
+                                             background_lease_token: str | None = None) -> dict:
     """任务级互斥与用量护栏；仅保存内部候选，不直接产生业务结论。"""
     if type(max_batches) is not int or max_batches < 1 or not isinstance(expected_run_id, str) or not expected_run_id:
         raise ValueError("候选核查预算或运行标识无效")
@@ -4040,6 +4311,13 @@ async def run_negative_candidate_ai_advisory(db: Session, task: BsTask, user, *,
         if not latest or (latest.payload_json or {}).get("request_id") != request_id or not _negative_candidate_pending(latest):
             raise AiContextChanged("负面清单辅助核查已过期或被替代")
 
+    def renew_job_lease(session):
+        """批间/批次进展时续后台任务租约；租约丢失必须停止继续计费。"""
+        if not background_job_id or not background_lease_token:
+            return
+        if not ai_review_jobs.heartbeat(session, background_job_id, background_lease_token):
+            raise AiContextChanged("后台核查租约已失效")
+
     def batch_progress(current_run, index, total, status, failure_categories=None):
         with SessionLocal(bind=bind) as progress_db:
             locked = progress_db.query(BsTask).filter_by(id=task_id).with_for_update().one_or_none()
@@ -4047,6 +4325,7 @@ async def run_negative_candidate_ai_advisory(db: Session, task: BsTask, user, *,
                 raise AiContextChanged("核查任务不存在")
             assert_ai_context_current(progress_db, locked, current_run, user)
             owned(progress_db, current_run)
+            renew_job_lease(progress_db)
             add_event(progress_db, task_id, "check.ai_batch_progress", stage="check", payload={
                 "group_id": "a1", "category": "negative_candidates", "batch_index": index,
                 "batch_total": total, "status": status, "failure_categories": failure_categories or [],
@@ -4061,6 +4340,7 @@ async def run_negative_candidate_ai_advisory(db: Session, task: BsTask, user, *,
                 raise AiContextChanged("核查任务不存在")
             assert_ai_context_current(lease_db, locked, current_run, user)
             owned(lease_db, current_run)
+            renew_job_lease(lease_db)
             add_event(lease_db, task_id, "check.negative_candidates_started", stage="check", payload={
                 "run_id": current_run["run_id"], "review_run_id": current_run.get("review_run_id"),
                 "request_id": request_id, "validation_version": validation_version,
@@ -4210,7 +4490,8 @@ def _apply_ai_adjudication(db: Session, task_id: int, result: dict, *, model_cod
 async def run_linked_batch_ai_advisory(db: Session, task: BsTask, user, *, group_id: str,
                                       finding_ids: list[int], client=None, resume_partial: bool = False,
                                       expected_run_id: str | None = None, retry_failed: bool = True,
-                                      background_job_id: str | None = None) -> list[dict]:
+                                      background_job_id: str | None = None,
+                                      background_lease_token: str | None = None) -> list[dict]:
     """按项共用单项租约，分批建议单独留痕；固定结论与人工处置不变。"""
     if not finding_ids or any(type(value) is not int for value in finding_ids) or len(set(finding_ids)) != len(finding_ids):
         raise ValueError("核查结论标识无效或重复")
@@ -4283,6 +4564,13 @@ async def run_linked_batch_ai_advisory(db: Session, task: BsTask, user, *, group
                     or not ai_advisory_pending(latest)):
                 raise AiContextChanged("辅助核查请求已过期或被替代")
 
+    def renew_job_lease(session):
+        """批间/批次进展时续后台任务租约；租约丢失必须停止继续计费。"""
+        if not background_job_id or not background_lease_token:
+            return
+        if not ai_review_jobs.heartbeat(session, background_job_id, background_lease_token):
+            raise AiContextChanged("后台核查租约已失效")
+
     def renew(current_run):
         with SessionLocal(bind=bind) as lease_db:
             locked = lease_db.query(BsTask).filter_by(id=task_id).with_for_update().one_or_none()
@@ -4290,6 +4578,7 @@ async def run_linked_batch_ai_advisory(db: Session, task: BsTask, user, *, group
                 raise AiContextChanged("核查任务不存在")
             assert_ai_context_current(lease_db, locked, current_run, user)
             owned(lease_db, current_run)
+            renew_job_lease(lease_db)
             for finding_id in reserved:
                 add_event(lease_db, task_id, "check.ai_advisory_started", stage="check", payload={
                     "run_id": current_run["run_id"], "group_id": group_id, "finding_id": finding_id, "request_id": request_id,
@@ -4304,6 +4593,7 @@ async def run_linked_batch_ai_advisory(db: Session, task: BsTask, user, *, group
                 raise AiContextChanged("核查任务不存在")
             assert_ai_context_current(progress_db, locked, current_run, user)
             owned(progress_db, current_run)
+            renew_job_lease(progress_db)
             add_event(progress_db, task_id, "check.ai_batch_progress", stage="check", payload={
                 "group_id": group_id, "batch_index": index, "batch_total": total,
                 "status": status, "failure_categories": failure_categories or [], "run_id": current_run["run_id"],
@@ -4434,8 +4724,10 @@ def run_semantic_checks(db: Session, task: BsTask) -> list:
     for index, proposal in enumerate(result['findings']):
         refs = [dict(ref, location_mode='precise') for ref in proposal['evidence']]
         ref = next((r for r in refs if any(m.id == r['material_id'] and m.role != 'general' for m in materials)), refs[0])
+        sub_material = next((m for m in materials if m.id == ref['material_id']), None)
         findings.append(BsFinding(task_id=task_id, item_id=f'BS-SEM-{index + 1}',
-            kind='contract_semantic', status='hit', message=('待人工确认：' + proposal['message'])[:500],
+            subject_id=getattr(sub_material, "subject_id", None),
+            kind='contract_semantic', status='undecidable', message=('待人工确认：' + proposal['message'])[:500],
             material_id=ref['material_id'], quote=ref['quote'], page=ref['page'],
             location_mode='precise', evidence_json=refs,
             source='总包与分包合同原文比对；语义风险提议，非违法定性'))
@@ -4462,6 +4754,7 @@ def run_a2_checks(db: Session, task: BsTask) -> list:
     reference_plan = _prepare_reference_group(db, task, "a2")
     findings = (run_cert_validity(db, task, persist=False)
                 + run_person_consistency(db, task, persist=False)
+                + run_personnel_staffing(db, task, persist=False)
                 + run_qualification_match(db, task, persist=False))
     return _persist_reference_group(db, task, reference_plan, findings)
 
@@ -4909,8 +5202,9 @@ def _apply_start_gates(db: Session, task: BsTask, *, check: dict, operator=None)
         # 历史快照和版本差异都只读这一份；不得在读取旧结论时重新读取工作树当前规则。
         task.ruleset_version = ruleset_manifest["version"]
         task.options_snapshot_json = {
+            "review_mode": task_review_mode.of(task),
             "baseline_date_source": date_source,
-            "semantic_review_version": 1,
+            "semantic_review_version": semantic_review.SEMANTIC_REVIEW_VERSION,
             "ruleset_manifest": ruleset_manifest,
             "task": {"id": task.id, "title": task.title,
                       "routing": _routing_snapshot(task)},
@@ -4975,10 +5269,20 @@ def start_review(db: Session, task: BsTask, *, operator=None) -> dict:
     db.rollback()
     db.refresh(task, with_for_update=True)
     # ① 已受理（含并发/重复点击）：返回同一准备态，不建第二 worker（契约 §7.3.3）
+    if task_review_mode.is_retrospective(task):
+        return {"ok": False, "reason": "mode_not_ready",
+                "detail": {"message": "合同倒查阶段已保存；倒查执行与自动报告正在实现，暂不能开始核查"}}
     if task.state == TASK_STATE_PREPARING:
         return _preparing_acceptance(db, task)
     if task.state in {"running", "review", "done"}:
         return {"ok": True, "soft_gaps": ((task.options_snapshot_json or {}).get("parse") or {}).get("soft_gaps", [])}
+    # 启动前按合同唯一分包人角色纠正自动主体名称；人工确认与多候选保持原状。
+    try:
+        repair_auto_subject_names(db, task)
+    except Exception:
+        logger.warning("[bs] 主体名称自动修复跳过 task=%s", task.id, exc_info=True)
+    # 历史任务在解析阶段尚无 contract.* 事实，重新核查前按同批次幂等补写。
+    backfill_contract_facts(db, task)
     check = validate_task_materials(db, task)
     if not check["hard_ok"]:
         return {"ok": False, "reason": "hard_gaps", "detail": check}
@@ -5033,6 +5337,7 @@ def observation_stats(db: Session, created_by: int = None,
                               {"kind": kind, "item_id": item_id,
                                "total": 0, "hit": 0, "miss": 0, "undecidable": 0})
         cell["total"] += n
+        status = counted_status(status)
         if status in cell:
             cell[status] += n
     items = []
@@ -5079,7 +5384,7 @@ def review_finding(db: Session, finding: BsFinding, *, reviewer: str,
 
 # 收口闸「必须有结论」的分组（范围 → 结论类型）。
 # 真源＝data/review_flow.json 五步主线登记的内核 kind（rules.in_scope_kinds()）：
-# 这里的清单只做范围切分，**必须**与流程图一致，由 tests/test_bs_review_flow.py 对锚。
+# 这里的清单只做范围切分，入口/报告映射由 backend/tests/test_bs_review_flow.py 锁定。
 # 教训（2026-10-14）：此前本表把已转「后续功能」的占比类算成必查，占比默认关闭后
 # 任务永远收不了口（409 一直挂「尚无结论：分包金额占比核算」）。
 _SCOPE_REQUIRED_KINDS = {scope: tuple(kind for group in reference_snapshots.CHECK_GROUPS.values()
@@ -6045,15 +6350,37 @@ REPORT_READINESS_SCHEMA_VERSION = "bs.report-readiness.v1"
 
 
 def _finding_review_projection(db: Session, task: BsTask, *, user=None) -> dict:
+    from .finding_semantics import is_manual_prompt
+
     user = user or SimpleNamespace(id=task.created_by, user_type=task.created_by_type)
     findings = db.query(BsFinding).filter(BsFinding.task_id == task.id).all()
     findings = ai_advisory_snapshots.filter_current_candidate_findings(db, task, user, findings)
-    blocking = [{"finding_id": f.id, "item_id": f.item_id, "material_id": f.material_id,
-                 "page": f.page, "code": "pending_undecidable_review"}
-                for f in findings if reporting.report_gate_blocking(f)
-                and reporting.canonical_review_decision((f.review_json or {}).get("decision"))
-                not in ("accepted", "ignored")]
-    return {"blocking": blocking}
+    pending_actions = pending_manual = pending_machine = accepted = ignored = 0
+    blocking = []
+    for finding in findings:
+        decision = reporting.canonical_review_decision((finding.review_json or {}).get("decision"))
+        if decision == "accepted":
+            accepted += 1
+        elif decision == "ignored":
+            ignored += 1
+        if (finding.status in {"hit", "undecidable"}
+                and not reporting.is_open_term(finding)
+                and not checklist.is_material_only_finding(finding)
+                and decision not in ("accepted", "ignored")):
+            pending_actions += 1
+        if is_manual_prompt(finding):
+            if decision not in ("accepted", "ignored"):
+                pending_manual += 1
+            continue
+        if (finding.status == "undecidable" and reporting.report_gate_blocking(finding)
+                and decision not in ("accepted", "ignored")):
+            pending_machine += 1
+            blocking.append({"finding_id": finding.id, "item_id": finding.item_id,
+                             "material_id": finding.material_id, "page": finding.page,
+                             "code": "pending_undecidable_review"})
+    return {"pending_actions": pending_actions, "pending_machine_review": pending_machine,
+            "pending_manual_prompt": pending_manual, "accepted": accepted,
+            "ignored": ignored, "blocking": blocking}
 
 
 def _ai_coverage_output_ready(db: Session, task: BsTask, snapshot: dict, coverage: dict | None) -> bool:
@@ -6188,12 +6515,15 @@ def build_report_readiness(db: Session, task: BsTask, *, user=None) -> dict:
         warnings.append({"code": "reading_quality_limited", "scope": "reading",
                          "message": "部分页面识别不完整，相关内容尚未完整评估；此提示不阻断报告生成，报告将保留读取范围说明。",
                          "evidence_refs": quality_pages})
+    materials = material_versions.active_input_materials(
+        db.query(BsMaterial).filter(BsMaterial.task_id == task.id).all())
     return {"schema_version": REPORT_READINESS_SCHEMA_VERSION,
             "draft_readable": output.get("ok") is True and supplement_publication(task).get("state") != "candidate",
             "confirmed_output_ready": confirmed, "task_close_ready": close,
             "execution": {"state": execution_state},
             "reading_quality": {"state": quality_state, "pages": quality_pages, "blocking": False},
-            "finding_review": finding_review, "blocking_reasons": reasons, "next_actions": actions, "warnings": warnings}
+            "finding_review": finding_review, "blocking_reasons": reasons, "next_actions": actions, "warnings": warnings,
+            "rule_source_coverage": rule_source_coverage.build_rule_source_coverage(materials)}
 
 
 def complete_review(db: Session, task: BsTask) -> dict:
@@ -6407,8 +6737,8 @@ def _write_carried_forward_runs(db: Session, task: BsTask, *, seed: dict,
                   payload=payload, commit=False)
 
 
-def _prepare_targeted_page_refresh(db: Session, task: BsTask, material_id: int, page_nos: list[int], *, prepare) -> dict:
-    """只准备候选，冻结所基于的任务输入；不修改任务或创建核查代。"""
+def _targeted_page_refresh_inputs(db: Session, task: BsTask, material_id: int, page_nos: list[int]) -> dict:
+    """只读校验并冻结候选所基于的任务输入；不执行 OCR、不改任务。"""
     bind, task_id = db.get_bind(), task.id
     with Session(bind=bind) as read_db:
         current = read_db.get(BsTask, task_id)
@@ -6432,18 +6762,33 @@ def _prepare_targeted_page_refresh(db: Session, task: BsTask, material_id: int, 
         fingerprint = knowledge_runs.material_fingerprint(read_db, current)
         rule_hash = knowledge_runs.rule_fingerprint()
         review_id = (current.options_snapshot_json or {}).get(reference_snapshots.REVIEW_POINTER)
-        state, path, pages = current.state, material.path, deepcopy(material.pages_json or [])
-    candidate = prepare(material_abs_path(path), pages, page_nos, expected_sha256=source_sha)
+        return {
+            "task_state": current.state, "path": material.path,
+            "pages": deepcopy(material.pages_json or []),
+            "source_sha256": source_sha.lower(),
+            "input_material_fingerprint": fingerprint,
+            "input_rule_fingerprint": rule_hash,
+            "review_run_id": review_id,
+        }
+
+
+def _prepare_targeted_page_refresh(db: Session, task: BsTask, material_id: int, page_nos: list[int], *, prepare) -> dict:
+    """只准备候选，冻结所基于的任务输入；不修改任务或创建核查代。"""
+    bind, task_id = db.get_bind(), task.id
+    frozen = _targeted_page_refresh_inputs(db, task, material_id, page_nos)
+    candidate = prepare(material_abs_path(frozen["path"]), frozen["pages"], page_nos,
+                        expected_sha256=frozen["source_sha256"])
     with Session(bind=bind) as verify_db:
         latest = verify_db.get(BsTask, task_id)
-        if (latest is None or latest.state != state
-                or (latest.options_snapshot_json or {}).get(reference_snapshots.REVIEW_POINTER) != review_id
-                or knowledge_runs.material_fingerprint(verify_db, latest) != fingerprint
-                or knowledge_runs.rule_fingerprint() != rule_hash):
+        if (latest is None or latest.state != frozen["task_state"]
+                or (latest.options_snapshot_json or {}).get(reference_snapshots.REVIEW_POINTER) != frozen["review_run_id"]
+                or knowledge_runs.material_fingerprint(verify_db, latest) != frozen["input_material_fingerprint"]
+                or knowledge_runs.rule_fingerprint() != frozen["input_rule_fingerprint"]):
             raise ValueError("任务输入在补读期间变化，候选已丢弃")
     return {**candidate, "task_id": task_id, "material_id": material_id,
-            "input_material_fingerprint": fingerprint, "input_rule_fingerprint": rule_hash,
-            "review_run_id": review_id, "task_state": state}
+            "input_material_fingerprint": frozen["input_material_fingerprint"],
+            "input_rule_fingerprint": frozen["input_rule_fingerprint"],
+            "review_run_id": frozen["review_run_id"], "task_state": frozen["task_state"]}
 
 
 def prepare_targeted_roster_refresh(db: Session, task: BsTask, material_id: int, page_nos: list[int]) -> dict:
@@ -6617,6 +6962,240 @@ def start_page_text_refresh(db: Session, task: BsTask, material_id: int, page_no
             finish_page_text_refresh(db, task.id, lease["run_id"], "failed")
             raise
     return lease
+
+
+def _page_text_candidate_context(db: Session, task: BsTask, material_id: int, page_no: int) -> dict:
+    """只读取候选登记所需的当前输入，不执行 OCR。"""
+    frozen = _targeted_page_refresh_inputs(db, task, material_id, [page_no])
+    return {
+        "task_id": task.id, "material_id": material_id, "page_no": page_no,
+        "review_run_id": frozen["review_run_id"], "source_sha256": frozen["source_sha256"],
+        "input_material_fingerprint": frozen["input_material_fingerprint"],
+        "input_rule_fingerprint": frozen["input_rule_fingerprint"],
+    }
+
+
+def _run_page_text_candidate_preparation(task_id: int, material_id: int, page_no: int,
+                                         candidate_id: str, lease_token: str, bind) -> None:
+    try:
+        with SessionLocal(bind=bind) as session:
+            task = session.get(BsTask, task_id)
+            if task is None:
+                return
+            candidate = prepare_targeted_page_text_refresh(session, task, material_id, [page_no])
+            pages = [page for page in candidate.get("pages") or [] if page.get("page") == page_no]
+            if candidate.get("status") != "review_required" or len(pages) != 1:
+                page_text_candidates.fail_candidate(
+                    session, candidate_id=candidate_id, lease_token=lease_token,
+                    reason="本页没有可核对的候选正文")
+                session.commit()
+                return
+            page = pages[0]
+            meta = {
+                "engine": candidate.get("engine"),
+                "quality_suspect": bool(page.get("quality_suspect")),
+                "ocr_meta": page.get("ocr_meta"),
+                "requested_pages": candidate.get("requested_pages"),
+                "missing_pages": candidate.get("missing_pages"),
+                "source_sha256": candidate.get("source_sha256"),
+                "page": page,
+            }
+            page_text_candidates.store_pending_candidate(
+                session, candidate_id=candidate_id, lease_token=lease_token,
+                text=page.get("text", ""), meta=meta, signature=candidate.get("signature", ""))
+            session.commit()
+    except Exception as exc:  # noqa: BLE001 - 候选失败必须可见，不能抛出线程
+        logger.warning("[bs] page text candidate failed task=%s candidate=%s error=%s",
+                       task_id, candidate_id, type(exc).__name__)
+        try:
+            with SessionLocal(bind=bind) as failure_db:
+                page_text_candidates.fail_candidate(
+                    failure_db, candidate_id=candidate_id, lease_token=lease_token,
+                    reason="候选生成失败，请稍后重试")
+                failure_db.commit()
+        except Exception:  # noqa: BLE001 - 不覆盖原始失败
+            logger.warning("[bs] page text candidate failure recording failed candidate=%s", candidate_id)
+
+
+def _launch_page_text_candidate_preparation(task_id: int, material_id: int, page_no: int,
+                                            candidate_id: str, lease_token: str, bind) -> None:
+    threading.Thread(
+        target=_run_page_text_candidate_preparation,
+        args=(task_id, material_id, page_no, candidate_id, lease_token, bind),
+        daemon=True, name="bs-page-text-candidate").start()
+
+
+def start_page_text_candidate_preparation(db: Session, task: BsTask, material_id: int, page_no: int) -> dict:
+    """登记单页候选并在后台生成；生成结果必须等待人工确认后才消费。"""
+    context = _page_text_candidate_context(db, task, material_id, page_no)
+    candidate = page_text_candidates.create_candidate(db, **context)
+    db.commit()
+    accepted = candidate.status == "requested"
+    if candidate.status in {"requested", "preparing"}:
+        claimed = page_text_candidates.claim_candidate(db, candidate_id=candidate.id)
+        db.commit()
+        if claimed is None:
+            accepted = False
+        else:
+            accepted = True
+            try:
+                _launch_page_text_candidate_preparation(
+                    task.id, material_id, page_no, candidate.id, claimed["lease_token"], db.get_bind())
+            except Exception:
+                page_text_candidates.fail_candidate(
+                    db, candidate_id=candidate.id, lease_token=claimed["lease_token"],
+                    reason="候选任务启动失败")
+                db.commit()
+                raise
+    candidate = page_text_candidates.get_candidate(db, candidate_id=candidate.id, task_id=task.id)
+    return {"candidate": page_text_candidates.candidate_payload(candidate), "accepted": accepted}
+
+
+def get_page_text_candidate(db: Session, task_id: int, candidate_id: str) -> dict | None:
+    candidate = page_text_candidates.get_candidate(db, candidate_id=candidate_id, task_id=task_id)
+    return (page_text_candidates.candidate_payload(candidate, include_text=True)
+            if candidate is not None else None)
+
+
+def list_page_text_candidates(db: Session, task_id: int, status: str | None = None) -> list[dict]:
+    return [page_text_candidates.candidate_payload(row)
+            for row in page_text_candidates.list_candidates(db, task_id, status)]
+
+
+def _page_candidate_rerun_payload(task: BsTask, rows: list) -> dict:
+    """把已确认候选还原为 rerun 所需的签名候选；正文取人工校对优先。"""
+    pages = []
+    material_id = rows[0].material_id
+    for row in rows:
+        if row.material_id != material_id:
+            raise ValueError("一次只能消费同一材料的候选")
+        meta = dict(row.candidate_meta_json or {})
+        page = dict(meta.get("page") or {})
+        text = (row.reviewed_text or row.candidate_text or "").strip()
+        if not text:
+            raise ValueError("候选正文为空，不能消费")
+        page.update({"page": row.page_no, "text": text,
+                     "quality_suspect": bool(meta.get("quality_suspect"))})
+        pages.append(page)
+    payload = {
+        "task_id": task.id, "material_id": material_id, "status": "review_required",
+        "task_state": task.state, "review_run_id": rows[0].review_run_id,
+        "input_material_fingerprint": rows[0].input_material_fingerprint,
+        "input_rule_fingerprint": rows[0].input_rule_fingerprint,
+        "source_sha256": rows[0].source_sha256,
+        "requested_pages": sorted(page["page"] for page in pages),
+        "pages": pages, "missing_pages": [],
+    }
+    payload["signature"] = _page_text_candidate_signature(payload)
+    return payload
+
+
+def _run_page_text_candidate_consume(task_id: int, candidate_ids: list[str], bind) -> None:
+    """后台消费已确认候选：一次重跑；失败时把候选标为失效，不保留半截应用。"""
+    with SessionLocal(bind=bind) as session:
+        task = session.get(BsTask, task_id)
+        rows = (session.query(page_text_candidates.BsPageTextCandidate)
+                .filter(page_text_candidates.BsPageTextCandidate.task_id == task_id,
+                        page_text_candidates.BsPageTextCandidate.id.in_(candidate_ids)).all())
+        rows = [row for row in rows if row.status == "confirmed"]
+        if task is None or not rows:
+            return
+        try:
+            payload = _page_candidate_rerun_payload(task, rows)
+            result = rerun_task(session, task, scope="all", version_trigger="rerun",
+                                page_text_candidate=payload)
+        except Exception as exc:  # noqa: BLE001 - 消费失败必须落到候选状态
+            logger.warning("[bs] page text candidate consume failed task=%s error=%s",
+                           task_id, type(exc).__name__)
+            result = {"ok": False, "detail": "候选消费失败，请重新生成"}
+        if result.get("ok"):
+            for candidate_id in candidate_ids:
+                page_text_candidates.mark_consumed(
+                    session, candidate_id=candidate_id,
+                    rerun_version_no=result.get("superseded_version_no"))
+        else:
+            detail = str(result.get("detail") or "候选确认未完成")
+            for candidate_id in candidate_ids:
+                page_text_candidates.mark_invalidated(session, candidate_id=candidate_id, reason=detail)
+        session.commit()
+
+
+def _launch_page_text_candidate_consume(task_id: int, candidate_ids: list[str], bind) -> None:
+    threading.Thread(target=_run_page_text_candidate_consume,
+                     args=(task_id, list(candidate_ids), bind),
+                     daemon=True, name="bs-page-text-consume").start()
+
+
+def confirm_page_text_candidates(db: Session, task: BsTask, items: list[dict], *, operator) -> dict:
+    """批量确认后一次消费；任一候选失效或版本变化则整批拒绝。"""
+    if not isinstance(items, list) or not items:
+        raise ValueError("请选择要确认的页")
+    if len(items) > 20:
+        raise ValueError("一次最多确认 20 页")
+    candidate_ids = [str(item.get("candidate_id") or "") for item in items]
+    if any(not candidate_id for candidate_id in candidate_ids):
+        raise ValueError("候选参数无效")
+    if len(set(candidate_ids)) != len(candidate_ids):
+        raise ValueError("候选重复")
+    db.rollback()
+    db.refresh(task, with_for_update=True)
+    if task.state not in ("running", "review", "done"):
+        raise ValueError("当前任务状态不允许确认补读")
+    rows = (db.query(page_text_candidates.BsPageTextCandidate)
+            .filter(page_text_candidates.BsPageTextCandidate.task_id == task.id,
+                    page_text_candidates.BsPageTextCandidate.id.in_(candidate_ids))
+            .order_by(page_text_candidates.BsPageTextCandidate.id).with_for_update().all())
+    by_id = {row.id: row for row in rows}
+    if len(by_id) != len(candidate_ids):
+        raise ValueError("候选不存在")
+    material_ids = {row.material_id for row in rows}
+    if len(material_ids) != 1:
+        raise ValueError("一次只能确认同一材料的候选页")
+    material = (db.query(BsMaterial)
+                .filter(BsMaterial.id == rows[0].material_id, BsMaterial.task_id == task.id)
+                .with_for_update().first())
+    gap = parsing.material_reading_gap(material) if material is not None else None
+    operator_id = getattr(operator, "id", None)
+    operator_type = getattr(operator, "user_type", None)
+    confirmed = []
+    for item in items:
+        row = by_id[str(item["candidate_id"])]
+        if row.status == "consumed":
+            raise ValueError("候选已确认，请刷新")
+        if row.status != "pending_review" or row.candidate_version != item.get("expected_candidate_version"):
+            raise ValueError("候选版本已变化，请刷新后重新核对")
+        if gap is None or row.page_no not in gap:
+            raise ValueError("候选页已不再标记为未读，请刷新后重新核对")
+        corrected = item.get("corrected_text")
+        if corrected is not None:
+            corrected = str(corrected).strip()
+            if not corrected:
+                raise ValueError("人工校正文不能为空")
+            if len(corrected) > 200000:
+                raise ValueError("人工校正文过长")
+            row.reviewed_text = corrected
+            row.reviewed_by = operator_id
+            row.reviewed_by_type = operator_type
+            row.reviewed_at = page_text_candidates.utc_naive_now()
+        row.status = "confirmed"
+        row.confirmed_by = operator_id
+        row.confirmed_by_type = operator_type
+        row.confirmed_at = page_text_candidates.utc_naive_now()
+        row.lease_token = None
+        row.lease_expires_at = None
+        confirmed.append(row)
+    db.commit()
+    bind = db.get_bind()
+    try:
+        _launch_page_text_candidate_consume(task.id, candidate_ids, bind)
+    except Exception:
+        for candidate_id in candidate_ids:
+            page_text_candidates.mark_invalidated(db, candidate_id=candidate_id,
+                                                  reason="候选消费任务启动失败")
+        db.commit()
+        raise
+    return {"accepted": True,
+            "candidates": [page_text_candidates.candidate_payload(row) for row in confirmed]}
 
 
 READING_QUALITY_EVENT = "material.reading_quality_reviewed"
@@ -7141,7 +7720,7 @@ def rerun_task(db: Session, task: BsTask, *, scope: str = "all", item_ids=None,
     options["baseline_date_source"] = date_source
     options["section"] = _section_snapshot(task)
     options["section_auto_sources"] = {**(options.get("section_auto_sources") or {}), **section_sources}
-    options["semantic_review_version"] = 1
+    options["semantic_review_version"] = semantic_review.SEMANTIC_REVIEW_VERSION
     options["ruleset_manifest"] = current_ruleset_manifest
     options["rerun"] = {
         **plan,
@@ -7494,6 +8073,12 @@ def enter_material_edit(db: Session, task: BsTask) -> dict:
 
 # 事件中文化白名单（唯一表源）：新增 event_type 必须在此登记（契约测试锁发射端）。
 EVENT_LABELS = {
+    "retrospective.accepted": "合同倒查已受理",
+    "retrospective.input_frozen": "合同及核查依据已冻结",
+    "retrospective.batch_started": "正在核查合同批次",
+    "retrospective.batch_completed": "合同批次已处理",
+    "retrospective.completed": "合同倒查报告已保存",
+    "retrospective.failed": "合同倒查执行中断",
     _PAGE_TEXT_REFRESH_EVENT: "材料页面补读",
     "task.supplement_planned": "补件局部核查计划已生成",
     "task.supplement_blocked": "补件局部核查计划被阻止",
@@ -7525,6 +8110,9 @@ EVENT_LABELS = {
     "check.ai_adjudication_applied": "AI 判定已写入",
     "check.ai_advisory_started": "AI 辅助核查进行中",
     "check.ai_advisory_failed": "AI 辅助核查未完成",
+    # 广场版历史事件：保留中文标签，避免跨版本回放退化成“任务动态”。
+    "check.ai_job_recovered": "辅助核查已恢复",
+    "check.negative_list_failed": "负面清单核查失败",
     "check.ai_batch_checkpoint": "AI 辅助核查进展已保存",
     "check.ai_batch_progress": "AI 批次核查进展",
     "check.negative_candidates_started": "负面清单辅助核查进行中",
@@ -7779,17 +8367,30 @@ def event_dto(ev: BsTaskEvent) -> dict:
             label = "AI 辅助核查部分结果待核实"
         elif raw.get("execution_status") in {"failed", "not_run"}:
             label = "AI 辅助核查未完成"
+    retrospective_event = ev.event_type.startswith("retrospective.")
+    if retrospective_event:
+        # 冻结正文、检索原文、模型结果和配置身份不通过SSE广播。
+        payload = {key: raw[key] for key in ("run_id", "phase", "label", "index", "total", "batch_id", "execution_status", "state") if key in raw}
+        if ev.event_type in {"retrospective.batch_started", "retrospective.batch_completed"}:
+            label = raw.get("label") or label
     diagnostics = _safe_event_diagnostics(raw)
+    event_time = ev.created_at
+    # 兼容历史/替身事件对象：没有偏移列时按“未知”输出，不阻断时间线投影。
+    offset = getattr(ev, "created_at_utc_offset_minutes", None)
+    if event_time is not None and event_time.tzinfo is None and type(offset) is int and -840 <= offset <= 840:
+        event_time = event_time.replace(tzinfo=timezone(timedelta(minutes=offset)))
     return {
         "sequence": ev.sequence,
         "event_type": ev.event_type,
         "label": label,
-        "message": _event_message(ev),
+        "message": (f'{raw["index"]}/{raw["total"]}批' if retrospective_event and raw.get("total", 0) > 1 and "index" in raw else None) if retrospective_event else _event_message(ev),
+        "run_id": raw.get("run_id") if retrospective_event else None,
         "stage": ev.stage,
         "payload": payload,
         "progress_key": progress_key,
         "diagnostics": diagnostics,
-        "created_at": ev.created_at.isoformat(timespec="seconds") if ev.created_at else None,
+        "created_at": event_time.isoformat(timespec="seconds") if event_time else None,
+        "created_at_utc_offset_minutes": offset,
     }
 
 

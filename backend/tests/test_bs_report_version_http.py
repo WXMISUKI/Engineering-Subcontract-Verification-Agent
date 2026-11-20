@@ -138,7 +138,7 @@ def test_corrupted_frozen_policy_returns_explainable_conflict_for_report_outputs
         db.flush()
         event = db.query(BsTaskEvent).filter_by(task_id=task_id, event_type=reference_snapshots.REVIEW_EVENT).one()
         payload = copy.deepcopy(event.payload_json)
-        payload["report_policy"]["content"]["version"] = "2.0.0"
+        payload["report_policy"]["content"]["version"] = "9.9.9"  # 与当前策略版本必然不匹配
         event.payload_json = payload
         db.commit()
     base = f"/api/plus/blockchain-supervision/tasks/{task_id}"

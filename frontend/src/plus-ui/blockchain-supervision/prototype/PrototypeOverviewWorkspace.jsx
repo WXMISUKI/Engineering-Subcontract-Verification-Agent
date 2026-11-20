@@ -1,8 +1,9 @@
 import StepOverviewPanel from '../components/StepOverviewPanel'
 import SubjectChecklistSummary from '../components/SubjectChecklistSummary'
+import { countedStatusOf } from '../lib/statusDisplay'
 
 function isException(finding) {
-  return finding?.status === 'hit' || finding?.status === 'undecidable'
+  return countedStatusOf(finding?.status) === 'hit' || countedStatusOf(finding?.status) === 'undecidable'
 }
 
 function isReviewed(finding) {
@@ -11,7 +12,7 @@ function isReviewed(finding) {
 
 function basisTextOf(finding) {
   if (typeof finding?.basis === 'string') return finding.basis
-  return finding?.basis?.docNo || finding?.basis?.doc_no || finding?.basis?.text || (finding?.status === 'undecidable' ? '证据不足，暂不能支持该判断' : '系统发现，需要人工查看')
+  return finding?.basis?.docNo || finding?.basis?.doc_no || finding?.basis?.text || (countedStatusOf(finding?.status) === 'undecidable' ? '证据不足，暂不能支持该判断' : '系统发现，需要人工查看')
 }
 
 function Metric({ label, value, tone = 'normal', hint }) {

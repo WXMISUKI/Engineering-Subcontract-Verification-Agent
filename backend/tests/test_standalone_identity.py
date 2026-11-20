@@ -298,6 +298,47 @@ def test_model_status_does_not_expose_key(monkeypatch):
     assert 'synthetic-secret' not in response.text
 
 
+def test_model_choice_filters_catalog_and_persists_deployment_default():
+    from datetime import datetime, timedelta
+    from app.models.billing_models import BillingSettings, LlmModel, LlmProvider, ModelPriceVersion
+
+    client, engine = client_and_engine()
+    for model in (LlmProvider, LlmModel, ModelPriceVersion, BillingSettings):
+        model.__table__.create(engine, checkfirst=True)
+    with Session(engine) as db:
+        provider = LlmProvider(code='synthetic', api_key_ref='SYNTHETIC_KEY_REFERENCE')
+        db.add(provider)
+        db.flush()
+        for index, code in enumerate(('first', 'second', 'disabled', 'hidden', 'unpriced'), 1):
+            model = LlmModel(code=code, display_name=code, provider_id=provider.id,
+                             enabled=code != 'disabled', is_user_selectable=code != 'hidden',
+                             is_default=code == 'first', sort_order=index)
+            db.add(model)
+            db.flush()
+            if code != 'unpriced':
+                db.add(ModelPriceVersion(model_id=model.id, version=1, status='published',
+                    effective_from=datetime.now() - timedelta(days=1),
+                    cache_miss_input_micro_per_1k=100, output_micro_per_1k=100))
+        db.commit()
+    assert client.get('/api/models').status_code == 401
+    assert client.put('/api/model', json={'model_code': 'second'}).status_code == 401
+    client.post('/api/login', json={'username': 'alice', 'password': 'Alice-pass-123'})
+    response = client.get('/api/models')
+    assert response.json() == {'current': 'first', 'models': [
+        {'code': 'first', 'display_name': 'first'}, {'code': 'second', 'display_name': 'second'}]}
+    assert 'SYNTHETIC_KEY_REFERENCE' not in response.text
+    for code in ('disabled', 'hidden', 'unpriced', 'unknown'):
+        assert client.put('/api/model', json={'model_code': code}).status_code == 409
+    assert client.get('/api/model').json() == {'model': 'first'}
+    assert client.put('/api/model', json={'model_code': 'second'}).json() == {'model': 'second'}
+    with Session(engine) as db:
+        chosen = db.query(LlmModel).filter_by(code='second').one()
+        assert db.get(BillingSettings, 1).default_model_id == chosen.id
+    client.post('/api/logout')
+    client.post('/api/login', json={'username': 'bob', 'password': 'Bob-password-456'})
+    assert client.get('/api/model').json() == {'model': 'second'}
+
+
 def test_uninitialized_knowledge_is_reported_before_start(monkeypatch):
     monkeypatch.delenv('BS_REFERENCE_MAPPING_FILE', raising=False)
     client, _ = client_and_engine()

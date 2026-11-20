@@ -18,19 +18,25 @@
 """
 from datetime import date
 from html import unescape
+import hashlib
 import re
 
 from ..startup_conditions_check.validity import (
     extract_validity_records, judge_expiry, parse_date_text,
 )
 from ..startup_conditions_check.date_reliability import build_date_fact
-from .models import STATUS_HIT, STATUS_MISS, STATUS_UNDECIDABLE, BsFinding
+from .finding_text import bounded_finding_message
+from .models import (STATUS_HIT, STATUS_MISS, STATUS_NOT_INCLUDED, STATUS_UNDECIDABLE,
+                     BsFinding)
 from .personnel_evidence import (
-    extract_management_roster, extract_person_relation_evidence,
+    extract_management_roster, extract_person_relation_evidence, extract_special_trade_roster,
     extract_roster_names, extract_social_names, social_evidence_materials,
+    normalize_identity_number,
+    extract_person_supplement_evidence,
 )
 from .parsing import material_page_readable, material_reading_gap
-from .rules import load_config, load_extract_matchers, load_qualification_matchers
+from .rules import (load_config, load_extract_matchers, load_qualification_matchers)
+from . import qualification_scope
 
 # 结论「依据」字段＝条款坐标（纪律 2：结论回源码坐标，不引用内部需求稿）。
 # 坐标与 data/review_flow.json 第④步 basis 同源，由 tests/test_bs_a2_kernels.py 对锚。
@@ -43,16 +49,17 @@ ITEM_ID = "A2-02"
 _CERT_HINT_RE = re.compile(r"资质证书|安全生产许可证|安许证|营业执照|证照|执业证|岗位证书|"
                            r"特种作业|建造师|安考证|交安[ABC]?证|三类人员")
 _CERT_TITLE_RE = re.compile(
-    r"(?m)^\s*(?:建筑业企业资质证书|资质证书|安全生产许可证|营业执照|"
-    r"注册建造师证书|特种作业操作证|安全生产考核合格证(?:书)?)"
-    r"(?:[（(](?:正本|副本)[）)])?\s*$")
+    r"(?m)^[ \t]*(?:" + "|".join(r"\s*".join(re.escape(char) for char in title) for title in (
+        "建筑业企业资质证书", "资质证书", "安全生产许可证", "营业执照", "注册建造师证书",
+        "特种作业操作证", "安全生产考核合格证", "安全生产考核合格证书")) +
+    r")[ \t]*(?:[（(]?[ \t]*(?:正本|副本)[ \t]*[）)]?)?[ \t]*$")
 _CERT_DECLARATION_RE = re.compile(
     r"资质情况|资质信息|申报信息|声明|合同价款|填写示例|示例填写|空白模板|空白样表"
     r"|(?:应当|应|须|需).{0,8}(?:提供|提交|出示)")
 _CERT_INDIRECT_SOURCE_RE = re.compile(r"台账|情况说明|模板|样表|填写示例|信息汇总|登记表|信息表")
 _CERT_PROOF_FIELDS = (
     re.compile(r"(?:证书编号|许可证编号|统一社会信用代码)[ \t]*[:：][ \t]*([^\n]+)"),
-    re.compile(r"(?:注册单位|注册企业|聘用单位|受聘单位|单位名称)[ \t]*[:：][ \t]*([^\n]+)"),
+    re.compile(r"(?:注册单位|注册企业|聘用单位|受聘单位|单位名称|企业名称)[ \t]*[:：][ \t]*([^\n]+)"),
     re.compile(r"(?:发证机关|颁发机关|核发机关|登记机关|许可机关)[ \t]*[:：][ \t]*([^\n]+)"),
 )
 _CERT_BOUNDARY_NOTICE = "仅核对所附证照文字，真实性未核验"
@@ -609,16 +616,30 @@ def certificate_registered_companies(material) -> set[str]:
 
 
 def subcontractor_name_evidence(materials: list) -> list[dict]:
-    """显式分包名称及原页出处；识别冲突保留双侧，不模糊合并企业。"""
+    """显式分包名称及原页出处；识别冲突保留双侧，不模糊合并企业。
+
+    角色判据与主体归属共用 `extract` 的公开常量：只认「分包人/分包单位」，
+    泛化「乙方」不参与；附属协议反转的甲乙方与占位词一并排除。
+    """
+    from .extract import (SUBCONTRACTOR_PARTY_ROLES, is_placeholder_party_name,
+                          party_scoped_pages)
     party_re = re.compile(load_extract_matchers()["party_name_regex"])
-    return [{"company": norm_company(match.group(2)), "material_id": material.id,
-             "page": page.get("page"), "quote": match.group()[:240], "location_mode": "page"}
-            for material in materials if material.parse_state == "done"
-            for page in material.pages_json or []
-            if isinstance(page, dict) and type(page.get("page")) is int and page["page"] > 0
-            and material_page_readable(material, page["page"])
-            for match in party_re.finditer(page.get("text") or "")
-            if match.group(1) in {"乙方", "分包人", "分包单位"} and norm_company(match.group(2))]
+    output = []
+    for material in materials:
+        if material.parse_state != "done":
+            continue
+        for page_no, text in party_scoped_pages(material):
+            if not material_page_readable(material, page_no):
+                continue
+            for match in party_re.finditer(text):
+                company = norm_company(match.group(2))
+                if (match.group(1) not in SUBCONTRACTOR_PARTY_ROLES or not company
+                        or is_placeholder_party_name(company)):
+                    continue
+                output.append({"company": company, "material_id": material.id,
+                               "page": page_no, "quote": match.group()[:240],
+                               "location_mode": "page"})
+    return output
 
 
 def subcontractor_names(materials: list) -> set[str]:
@@ -739,7 +760,7 @@ def _person_evidence_refs(facts: list[dict], materials_by_id: dict) -> list[dict
         post = str(fact.get("post") or "").strip() or None
         material = materials_by_id.get(fact.get("material_id"))
         subject_id = getattr(material, "subject_id", None) if material is not None else None
-        key = (subject_id, re.sub(r"\s+", "", name))
+        key = (subject_id, _person_key(fact))
         if name and post:
             posts_by_person.setdefault(key, set()).add(post)
 
@@ -753,7 +774,7 @@ def _person_evidence_refs(facts: list[dict], materials_by_id: dict) -> list[dict
         name = str(fact.get("name") or "").strip()
         material = materials_by_id.get(fact.get("material_id"))
         subject_id = getattr(material, "subject_id", None) if material is not None else None
-        person_key = re.sub(r"\s+", "", name) or None
+        person_key = _person_key(fact) or None
         key = (subject_id, person_key)
         posts = posts_by_person.get(key, set())
         post = str(fact.get("post") or "").strip() or (next(iter(posts)) if len(posts) == 1 else None)
@@ -779,11 +800,391 @@ def norm_company(name: str) -> str:
 
 
 
+_BASELINE_MONTH_RE = re.compile(
+    r"(?<!\d)(20\d{2})\s*(?:[年./-]\s*(\d{1,2})(?!\d)|(\d{2})(?!\d))"
+    r"(?:\s*月)?(?:\s*[./-]\s*\d{1,2}(?!\d)|\s*\d{1,2}\s*日)?")
+_PERSON_LEVEL_ORDER = {"pass": 0, "pending": 1, "missing": 2, "blocking": 3}
+_PERSON_STATUS = {"pass": STATUS_MISS, "pending": STATUS_UNDECIDABLE,
+                  "missing": STATUS_NOT_INCLUDED, "blocking": STATUS_HIT}
+
+
+def branch_proof_state(expected_company, employer, proofs) -> str:
+    expected, actual = norm_company(expected_company), norm_company(employer)
+    rows = [proof for proof in proofs if norm_company(proof.get("branch_name")) == actual
+            or actual in {norm_company(value) for value in proof.get("branch_candidates") or []}]
+    if any(len(proof.get("branch_candidates") or []) > 1
+           or len(proof.get("parent_candidates") or []) > 1 for proof in rows):
+        return "conflict"
+    parents = {norm_company(proof["parent_company"]) for proof in rows if proof.get("parent_company")}
+    if len(parents) > 1 or (parents and parents != {expected}):
+        return "conflict"
+    registration = any(proof.get("evidence_kind") == "branch_registration"
+                       and proof.get("non_independent") for proof in rows)
+    affiliation = any(proof.get("evidence_kind") == "branch_affiliation"
+                      and norm_company(proof.get("parent_company")) == expected for proof in rows)
+    return "proved" if registration and affiliation else "missing"
+
+
+def same_unit(expected_company, employer, *, branch_proofs=()) -> bool | None:
+    """单位归属：本部与分公司（非独立法人）视同本单位；子公司/派遣不认。
+
+    返回 None 表示任一侧缺失或分公司证明不足，不能据此判不一致。
+    """
+    expected, actual = norm_company(expected_company or ""), norm_company(employer or "")
+    if not expected or not actual:
+        return None
+    if expected == actual:
+        return True
+    if "子公司" in actual or "人力资源" in actual or "劳务派遣" in actual:
+        return False
+    if "分公司" in actual or "分支机构" in actual:
+        return True if branch_proof_state(expected, actual, branch_proofs) == "proved" else None
+    return False
+
+
+def social_period_state(period, baseline) -> str:
+    """社保期间覆盖态：covered / stale / unknown。
+
+    口径（0A.5，2026-11-18.2）：基准日所在月或上一自然月任一被覆盖即算覆盖；
+    期间文本无法解析、或基准日缺失时返回 unknown，不猜。
+    """
+    if baseline is None:
+        return "unknown"
+    text = period or ""
+    matches = list(_BASELINE_MONTH_RE.finditer(text))
+    months = [(int(match[1]), int(match[2] or match[3])) for match in matches]
+    if not months or any(not 1 <= month <= 12 for _, month in months):
+        return "unknown"
+    ranges = []
+    for index in range(len(matches) - 1):
+        separator = text[matches[index].end():matches[index + 1].start()].strip()
+        if re.fullmatch(r"(?:至|到|—|–|-|~|～)", separator):
+            start, end = months[index:index + 2]
+            if start > end:
+                return "unknown"
+            ranges.append((start, end))
+    index = baseline.year * 12 + baseline.month - 1 - 1
+    previous = (index // 12, index % 12 + 1)
+    for target in ((baseline.year, baseline.month), previous):
+        if target in months or any(start <= target <= end for start, end in ranges):
+            return "covered"
+    return "stale"
+
+
+def _person_identity_numbers(fact):
+    return {number for value in [fact.get("id_number"), *(fact.get("id_number_candidates") or [])]
+            for number in [normalize_identity_number(value)] if number}
+
+
+def _person_key(fact):
+    numbers = _person_identity_numbers(fact)
+    if len(numbers) == 1:
+        # 身份号不直接用作前端分组键；候选原值仍只保留在有来源的事实字段。
+        return "id:" + hashlib.sha256(next(iter(numbers)).encode()).hexdigest()[:24]
+    return re.sub(r"\s+", "", fact.get("name") or "")
+
+
+def _person_relation_pool(person, relations, kind, *, ambiguous_name=False):
+    """先同主体再身份号；异号/多号只形成身份核对问题，不借单位判违规。"""
+    numbers = _person_identity_numbers(person)
+    name = re.sub(r"\s+", "", person.get("name") or "")
+    scoped = [fact for fact in relations if fact.get("evidence_kind") == kind
+              and fact.get("subject_id") == person.get("subject_id")]
+    named = [fact for fact in scoped if re.sub(r"\s+", "", fact.get("name") or "") == name]
+    if len(numbers) > 1:
+        return [], "名单身份证号存在多个候选", False
+    if numbers:
+        exact = [fact for fact in scoped if _person_identity_numbers(fact) == numbers]
+        matched = [fact for fact in exact if re.sub(r"\s+", "", fact.get("name") or "") == name]
+        if matched:
+            return matched, None, True
+        if exact:
+            return [], "身份证号相同但姓名不一致，需核对原件", False
+        if any(_person_identity_numbers(fact) for fact in named):
+            return [], "同名证明身份证号不一致或存在多个候选，不能确认为同一人", False
+        if named and ambiguous_name:
+            return [], "同名多人缺少可对应的身份证号，不能借用证明", False
+        return named, None, False
+    candidates = set().union(*(_person_identity_numbers(fact) for fact in named)) if named else set()
+    if len(candidates) > 1 or ambiguous_name:
+        return [], "同名证明存在多个身份证号，不能合并为同一人", False
+    return named, None, False
+
+
+def _retirement_review(person, relations, expected_company):
+    """退休证明触发例外核对；文本候选永远不能代替实际批准及签章复核。"""
+    retired, _, identity_matched = _person_relation_pool(person, relations, "retirement_certificate")
+    if not retired:
+        return None
+    if not identity_matched:
+        return STATUS_UNDECIDABLE, "同名退休证明身份尚未交叉核对，需确认是否适用退休例外"
+    from .personnel_adequacy import normalize_post
+    from .rules import load_personnel_adequacy
+
+    data = load_personnel_adequacy()
+    post = normalize_post(person.get("post"))
+    key_posts = {key for key, value in data["posts"].items() if value.get("key")}
+    if post in key_posts:
+        return STATUS_NOT_INCLUDED, "关键岗位按已确认口径不自动适用退休返聘例外，需补报符合要求人员"
+    other_labels = {value["label"] for value in data.get("other_management", {}).values() if isinstance(value, dict)}
+    if post is None and person.get("post") not in other_labels:
+        return STATUS_UNDECIDABLE, "退休人员岗位未明确，不能推定为可适用例外的非关键岗位"
+    missing, conflicts = [], []
+    for kind, label in (("reemployment_agreement", "返聘协议"),
+                        ("attendance_commitment", "到岗承诺"), ("owner_approval", "业主书面允许")):
+        pool, issue, linked = _person_relation_pool(person, relations, kind)
+        if issue:
+            conflicts.append(label + "身份存在冲突")
+        elif not pool:
+            missing.append(label)
+        elif not linked:
+            conflicts.append(label + "缺少身份证交叉核对")
+        elif kind == "owner_approval" and any(row.get("approval_state") != "candidate" for row in pool):
+            conflicts.append("业主意见未明确允许返聘或存在拒绝，需人工核对")
+        elif kind == "reemployment_agreement":
+            units = {norm_company(row.get("employer")) for row in pool if row.get("employer")}
+            if not units:
+                missing.append("返聘单位字段")
+            elif units != {norm_company(expected_company)}:
+                conflicts.append("返聘单位与本单位不一致，需核对")
+    if missing:
+        return STATUS_NOT_INCLUDED, "退休人员默认不按普通社保关系放行，缺" + "、".join(missing)
+    if conflicts:
+        return STATUS_UNDECIDABLE, "；".join(conflicts)
+    return STATUS_UNDECIDABLE, "非关键岗位退休返聘证明候选齐备，需人工核对业主实际书面允许、签章及适用条件"
+
+
+def evaluate_person_relations(names, relations, *, expected_company, baseline_date,
+                               posts=None, roster=None) -> list[dict]:
+    """逐人核验劳动合同/社保/单位/期间（纯函数，不重开 PDF、不推断同人）。
+
+    一人一结论：单位不一致=不符合；缺合同/缺社保/期间不覆盖=缺项；
+    候选冲突、期间不可解析、单位基准缺失=待核实（证据矛盾或缺外部参数）。
+    """
+    expected = norm_company(expected_company or "")
+    posts = posts or {}
+    results = []
+    people = roster if roster is not None else [{"name": name} for name in names]
+    seen = set()
+    for person in people:
+        name = person["name"]
+        key = re.sub(r"\s+", "", name)
+        identity_key = (person.get("subject_id"), _person_key(person))
+        if identity_key in seen:
+            continue
+        seen.add(identity_key)
+        retirement = _retirement_review(person, relations, expected_company)
+        if retirement:
+            status, reason = retirement
+            results.append({"name": name, "post": person.get("post"), "status": status,
+                            "person_key": identity_key[1], "subject_id": person.get("subject_id"),
+                            "identity_basis": "retirement_exception_candidate",
+                            "message": "%s（%s）：%s" % (name, person.get("post") or "岗位未明", reason)})
+            continue
+        same_name = [fact for fact in [*people, *relations]
+                     if fact.get("subject_id") == person.get("subject_id")
+                     and re.sub(r"\s+", "", fact.get("name") or "") == key]
+        numbers = set().union(*(_person_identity_numbers(fact) for fact in same_name))
+        ambiguous = len(numbers) > 1
+        social, social_issue, social_id = _person_relation_pool(
+            person, relations, "social_record", ambiguous_name=ambiguous)
+        labor, labor_issue, labor_id = _person_relation_pool(
+            person, relations, "labor_contract", ambiguous_name=ambiguous)
+        level, issues = "pass", []
+        branch_proofs = [fact for fact in relations if fact.get("subject_id") == person.get("subject_id")
+                         and fact.get("evidence_kind") in {"branch_registration", "branch_affiliation"}]
+
+        def bump(candidate):
+            nonlocal level
+            if _PERSON_LEVEL_ORDER[candidate] > _PERSON_LEVEL_ORDER[level]:
+                level = candidate
+
+        facts = social + labor
+        for issue in (social_issue, labor_issue):
+            if issue:
+                issues.append(issue)
+                bump("pending")
+        if (any(len(f.get("employer_candidates") or []) > 1 for f in facts)
+                or any(len(f.get("period_candidates") or []) > 1 for f in facts)):
+            issues.append("证明材料内单位或期间存在多个候选")
+            bump("pending")
+        if not labor and not labor_issue:
+            issues.append("缺劳动合同")
+            bump("missing")
+        if not social and not social_issue:
+            issues.append("缺社保缴费记录")
+            bump("missing")
+        if expected:
+            for label, pool in (("劳动合同", labor), ("社保", social)):
+                for fact in pool:
+                    matched = same_unit(expected, fact.get("employer"), branch_proofs=branch_proofs)
+                    if matched is False:
+                        identity_matched = labor_id if label == "劳动合同" else social_id
+                        if identity_matched:
+                            issues.append("%s单位「%s」与本单位不一致" % (label, fact.get("employer")))
+                            bump("blocking")
+                        else:
+                            issues.append("%s同名证明单位不同且缺少身份证交叉核对，需核对本人关系" % label)
+                            bump("pending")
+                    elif matched is None:
+                        employer = norm_company(fact.get("employer"))
+                        if employer and ("分公司" in employer or "分支机构" in employer):
+                            conflict = branch_proof_state(expected, employer, branch_proofs) == "conflict"
+                            issues.append("分公司登记或隶属关系证明%s" % ("存在冲突，需核对" if conflict else "缺项"))
+                            bump("pending" if conflict else "missing")
+                        else:
+                            issues.append("%s单位缺失" % label)
+                            bump("missing")
+        labor_units = {norm_company(f["employer"]) for f in labor if f.get("employer")}
+        social_units = {norm_company(f["employer"]) for f in social if f.get("employer")}
+        pair_states = [same_unit(left, right, branch_proofs=branch_proofs)
+                       for labor_unit in labor_units for social_unit in social_units
+                       for left, right in ((labor_unit, social_unit), (social_unit, labor_unit))]
+        if pair_states and all(state is False for state in pair_states):
+            issues.append("劳动合同与社保单位不一致")
+            bump("blocking" if labor_id and social_id else "pending")
+        if social:
+            states = [social_period_state(fact.get("period"), baseline_date) for fact in social]
+            if all(state == "unknown" for state in states):
+                issues.append("社保缴费期间不明")
+                bump("pending")
+            elif "covered" not in states:
+                issues.append("社保缴费期间未覆盖基准月或上一自然月")
+                bump("missing")
+        if not expected:
+            issues.append("分包单位基准未明确")
+            bump("pending")
+        if level == "pass" and not (social_id and labor_id):
+            issues.append("缺少可交叉核对的完整身份证号，仅形成姓名单位候选，需核对同一人")
+            bump("pending")
+        advisories = []
+        salary, salary_issue, salary_linked = _person_relation_pool(person, relations, "salary_record", ambiguous_name=ambiguous)
+        if salary_issue:
+            advisories.append("工资补充证据身份需核对（仅提示）")
+        elif salary and not salary_linked:
+            advisories.append("已见同名工资补充记录，身份尚未交叉核对（仅提示）")
+        elif salary:
+            salary_units = {norm_company(row.get("employer")) for row in salary if row.get("employer")}
+            advisories.append("已见工资补充记录，单位线索%s（仅提示）" % (
+                "一致" if salary_units == {expected} else "不明或不同，需核对"))
+        label = "；".join(dict.fromkeys(issues)) if issues else "劳动合同、社保单位一致且缴费期间覆盖基准月"
+        if advisories:
+            label += "；" + "；".join(advisories)
+        post = person.get("post") or posts.get(key)
+        results.append({
+            "name": name, "post": post, "status": _PERSON_STATUS[level],
+            "person_key": identity_key[1], "subject_id": person.get("subject_id"),
+            "identity_basis": "id_number" if social_id and labor_id else "name_company_candidate",
+            "advisories": advisories,
+            "message": ("%s（%s）：%s" % (name, post, label)) if post else ("%s：%s" % (name, label)),
+        })
+    return results
+
+
+def aggregate_person_status(results: list[dict]) -> str:
+    """整体结论取最严一档：不符合 > 缺项 > 待核实 > 符合。"""
+    statuses = {result["status"] for result in results}
+    for status in (STATUS_HIT, STATUS_NOT_INCLUDED, STATUS_UNDECIDABLE, STATUS_MISS):
+        if status in statuses:
+            return status
+    return STATUS_UNDECIDABLE
+
+
+def run_person_certificate_fields_check(task, materials):
+    """A2-10：逐人保留证件字段与身份对应候选；不代替A2-02/05的判定。"""
+    from . import personnel_certificates as certs
+    by_id = {m.id: m for m in materials}
+    def readable(fact):
+        material = by_id.get(fact.get("material_id"))
+        return material is not None and material_page_readable(material, fact.get("page"))
+    roster = [row for row in extract_management_roster(materials) if readable(row)]
+    proofs = [row for row in certs.extract_person_certificates(materials) if readable(row)]
+    if not roster:
+        return []
+    identities = {}
+    for row in roster:
+        identities.setdefault((row.get("subject_id"), row["name"]), set()).add(_person_key(row))
+    findings = []
+    for person in roster:
+        ambiguous = len(identities[(person.get("subject_id"), person["name"])]) > 1
+        matched, error, identity_matched = _person_relation_pool(
+            person, proofs, "person_certificate", ambiguous_name=ambiguous)
+        # 未匹配记录也保留为原文候选，但不得放入另一个人的证据组。
+        refs = _person_evidence_refs([person, *matched], by_id)
+        state = "identity_fields_correspond" if identity_matched else "identity_pending"
+        for ref in refs:
+            ref["certificate_identity_state"] = state
+        label = person["name"] + ("（%s）" % person["post"] if person.get("post") else "")
+        details = []
+        for proof in matched:
+            values = [proof.get("certificate_type") or proof["document_title"],
+                      proof.get("certificate_number") or "编号未唯一提取",
+                      "有效期至" + proof["validity_end"] if proof.get("validity_end") else
+                      proof.get("validity_period") or "有效期未唯一提取"]
+            details.append("、".join(values))
+        message = "人员证件字段：%s；%s；%s；需核对原件、岗位适用性及证件有效期" % (
+            label, "；".join(details) or "尚无可对应的人员证书字段",
+            error or ("姓名及完整身份证字段对应，不代表证件真实性已验证" if identity_matched else
+                      "缺少可交叉对应的完整身份证字段，仅保留姓名候选"))
+        findings.append(BsFinding(task_id=task.id, item_id=certs.ITEM_ID, kind="cert_validity",
+            status=STATUS_UNDECIDABLE, source=certs.SOURCE, material_id=person["material_id"],
+            page=person["page"], quote=person["quote"], location_mode="page",
+            message=bounded_finding_message(message), evidence_json=refs))
+    return findings
+
+
+def run_person_attendance_check(task, materials):
+    """A2-11辅助履约提示，不推断出勤率、缺勤或同时受聘。"""
+    from . import personnel_attendance as attendance
+    by_id = {m.id: m for m in materials}
+    def readable(row):
+        m = by_id.get(row.get("material_id"))
+        return m is not None and material_page_readable(m, row.get("page"))
+    roster = [row for row in extract_management_roster(materials) if readable(row)]
+    records = [row for row in attendance.extract_attendance_records(materials) if readable(row)]
+    commitments = [row for row in extract_person_supplement_evidence(materials)
+                   if row.get("evidence_kind") == "attendance_commitment" and readable(row)]
+    identities = {}
+    for row in roster:
+        identities.setdefault((row.get("subject_id"), row["name"]), set()).add(_person_key(row))
+    findings = []
+    for person in roster:
+        sources, reasons = [], []
+        for kind in ("attendance_record", "project_assignment", "attendance_commitment"):
+            matched, error, identity_matched = _person_relation_pool(person, records + commitments, kind,
+                ambiguous_name=len(identities[(person.get("subject_id"), person["name"])]) > 1)
+            sources.extend({**row, "attendance_identity_state": "identity_fields_correspond" if identity_matched else
+                            "identity_pending"} for row in matched)
+            if error and error not in reasons:
+                reasons.append(error)
+        details = []
+        for row in sources:
+            if row["evidence_kind"] == "attendance_commitment":
+                details.append("已见到岗承诺，仅为声明，不能证明实际出勤")
+            else:
+                details.append("%s：%s，%s，原文状态%s%s" % (
+                    "考勤记录" if row["evidence_kind"] == "attendance_record" else "任职记录",
+                    row.get("project") or "项目未唯一提取", row.get("period") or "日期/期间未唯一提取",
+                    row.get("attendance_state") or "未唯一提取",
+                    "（身份仅为候选）" if row["attendance_identity_state"] != "identity_fields_correspond" else ""))
+        refs = _person_evidence_refs([person, *sources], by_id)
+        for ref in refs:
+            if ref.get("evidence_kind") == "management_roster":
+                ref["attendance_identity_state"] = "identity_pending"
+        findings.append(BsFinding(task_id=task.id, item_id=attendance.ITEM_ID, kind="person_consistency",
+            status=STATUS_UNDECIDABLE, finding_semantics="manual_prompt", source=attendance.SOURCE,
+            material_id=person["material_id"], page=person["page"], quote=person["quote"], location_mode="page",
+            evidence_json=refs, message=bounded_finding_message("在岗辅助核对：%s；%s；%s请结合原件核对实际任职时段与项目归属，单份材料不证明未在其他项目受聘" % (
+                person["name"], "；".join(details) or "尚无可对应的考勤或任职记录，不能由此认定未到岗",
+                "；".join(reasons) + "；" if reasons else ""))))
+    return findings
+
+
 def run_person_consistency_check(task, materials: list, *, expected_company=None) -> list:
-    """A2-01：分别呈现名单覆盖事实与尚未证明的劳动/本单位社保关系。
+    """A2-01：逐人核验劳动合同、本单位社保与缴费期间。
 
     规则只读取摄取结果；不重开PDF、不发OCR。姓名相同不是同人证明，
-    缺名也不是未参保证明；月份适用口径未确认时不自动给出关系成立结论。
+    缺名也不是未参保证明；基准日缺失或期间不可解析时判待核实，不猜。
     """
     by_id = {material.id: material for material in materials}
 
@@ -794,8 +1195,8 @@ def run_person_consistency_check(task, materials: list, *, expected_company=None
 
     roster = [fact for fact in extract_management_roster(materials) if readable_fact(fact)]
     relations = [fact for fact in extract_person_relation_evidence(materials) if readable_fact(fact)]
+    relations.extend(fact for fact in extract_person_supplement_evidence(materials) if readable_fact(fact))
     social = [fact for fact in relations if fact["evidence_kind"] == "social_record"]
-    labor = [fact for fact in relations if fact["evidence_kind"] == "labor_contract"]
     candidates = social_evidence_materials(materials)
     facts = roster + relations
     refs = _person_evidence_refs(facts, by_id)
@@ -810,11 +1211,6 @@ def run_person_consistency_check(task, materials: list, *, expected_company=None
                        for m in candidates for p in m.pages_json or [])
         gaps.append("社保信息里未提取到人员姓名，需人工核对"
                     if has_text else "社保材料里没有可读文字，需人工翻看原件并重新解析核查")
-    missing = [name for name in names if name not in {fact["name"] for fact in social}]
-    if social and missing:
-        gaps.append("现有可读社保未见" + "、".join(missing[:5]) + "，需补充材料或人工核实")
-    elif names and social:
-        gaps.append("姓名层面已覆盖当前已提取的 %d 名主要管理人员" % len(names))
     roster_ids = {fact["material_id"] for fact in roster}
     roster_gaps = [(m, material_reading_gap(m)) for m in materials if m.id in roster_ids]
     roster_gaps = [(m, pages) for m, pages in roster_gaps if pages is not None]
@@ -831,39 +1227,32 @@ def run_person_consistency_check(task, materials: list, *, expected_company=None
         gaps.append("已确认主体与合同单位冲突，需核对主体归属")
     if not expected:
         gaps.append("分包单位基准未明确")
-    if social:
-        if any(len(fact.get("employer_candidates", [])) > 1 for fact in social):
-            gaps.append("同一证明参保单位冲突，需人工核对")
-        if any(len(fact.get("period_candidates", [])) > 1 for fact in social):
-            gaps.append("同一证明缴费期间冲突，需人工核对")
-        if any(not fact.get("employer") for fact in social):
-            gaps.append("参保单位缺失，不能证明本单位社保关系")
-        if expected and any(fact.get("employer") and norm_company(fact["employer"]) != expected
-                            for fact in social):
-            gaps.append("参保单位冲突，不能证明本单位社保关系")
-        if any(not fact.get("period") for fact in social):
-            gaps.append("社保缴费期间不明")
-        else:
-            gaps.append("已保留缴费期间，适用月份口径尚待确认")
-    labor_names = {fact["name"] for fact in labor}
-    missing_labor = [name for name in names if name not in labor_names]
-    if missing_labor or not labor:
-        gaps.append("劳动合同关系未证明" + ("（缺" + "、".join(missing_labor[:5]) + "）" if missing_labor else ""))
-    if any(not fact.get("employer") for fact in labor):
-        gaps.append("劳动合同用人单位缺失")
-    if expected and any(fact.get("employer") and norm_company(fact["employer"]) != expected
-                        for fact in labor):
-        gaps.append("劳动合同用人单位冲突")
-    if any(not fact.get("period") for fact in labor):
-        gaps.append("劳动合同期间不明")
-    if names and relations:
-        gaps.append("同名尚不能证明同一人，需人工核对身份及关系")
+    baseline = getattr(task, "baseline_date", None)
+    if baseline is None:
+        created = getattr(task, "created_at", None)
+        baseline = created.date() if hasattr(created, "date") else None
+    posts = {}
+    for fact in roster:
+        if fact.get("post"):
+            posts.setdefault(re.sub(r"\s+", "", fact["name"]), fact["post"])
+    persons = evaluate_person_relations(names, relations, expected_company=expected,
+                                        baseline_date=baseline, posts=posts, roster=roster)
+    if names and relations and any(person["identity_basis"] == "name_company_candidate" for person in persons):
+        gaps.append("同名尚不能证明同一人，缺号时仅按姓名及单位形成候选，需人工核对身份及关系")
+    if persons:
+        status = aggregate_person_status(persons)
+    elif any(len(fact.get("employer_candidates") or []) > 1
+             or len(fact.get("period_candidates") or []) > 1 for fact in relations):
+        status = STATUS_UNDECIDABLE
+    else:
+        status = STATUS_NOT_INCLUDED
+    messages = [person["message"] for person in persons[:5]] + gaps
     anchor = (social or roster or relations or [None])[0]
     return [BsFinding(
         task_id=task.id, material_id=anchor["material_id"] if anchor else (
             candidates[0].id if candidates else None),
-        item_id=ITEM_UNIT, kind="person_consistency", status=STATUS_UNDECIDABLE,
-        message="；".join(gaps), source=SOURCE_P,
+        item_id=ITEM_UNIT, kind="person_consistency", status=status,
+        message=bounded_finding_message("；".join(messages)), source=SOURCE_P,
         quote=anchor["quote"] if anchor else None,
         page=anchor["page"] if anchor else None, evidence_json=refs,
     )]
@@ -941,8 +1330,23 @@ def _labor_certificate_finding(task, materials: list):
                 message="劳务分包，已提供%s%s；施工劳务备案/资质不适用专业承包类别匹配；%s"
                         % (title, "（%s）" % "，".join(details) if details else "",
                            _QUAL_BOUNDARY_NOTICE),
-                quote=text[:240], page=page.get("page"), source=SOURCE_Q)
+                quote=text[:240], page=page.get("page"), source=SOURCE_Q,
+                evidence_json=[{"material_id": material.id, "page": page.get("page"),
+                                "quote": text[:240], "source_kind": "labor_certificate"}])
     return None
+
+
+def _certificate_pages(materials: list) -> list:
+    """A2-04 第二段：把每页证照原文连同材料/页码交给等级核对（纯函数模块不依赖 DB）。"""
+    pages = []
+    for material in materials:
+        for page in material.pages_json or []:
+            certificate = _certificate_text(material, page.get("text") or "")
+            if certificate is None:
+                continue
+            pages.append({"material_id": material.id, "page": page.get("page"),
+                          "text": _WSQ_RE.sub("", certificate)})
+    return pages
 
 
 def run_qualification_match_check(task, materials: list) -> list:
@@ -1043,4 +1447,374 @@ def run_qualification_match_check(task, materials: list) -> list:
             source=SOURCE_Q,
             evidence_json=[biz_ref],
         ))
+    # 第二段：等级与规模覆盖（设计 5.1–5.4）。类别已由第一段识别；这里只对
+    # 证照载明类别核对等级与量化阈值，参数或依据缺失一律待核实，不猜。
+    findings.extend(qualification_scope.evaluate_scope(
+        task_id=task.id, item_id=ITEM_QUAL, source=SOURCE_Q,
+        scope_categories=scope_cats,
+        scope_text=scope_win or _material_full_text(scope_mat),
+        scope_material=scope_mat,
+        certificate_pages=_certificate_pages(done),
+    ))
     return findings
+
+
+# ===========================================================================
+# ③ 关键岗位人员核查 · 岗位配置与人员配备（内核名 personnel_adequacy）
+# ===========================================================================
+"""判定纪律（DG/TJ 08-2225 表3.3.3/3.4.1，见 docs/design/2026-11-18-dgtj-2225-staffing-table-review.md）：
+- 专业分包按工程类别与规模套表，劳务分包按作业人数分档套表；
+- 关键岗位未配置＝缺项；安全员低于交安25号令法定下限＝不符合；
+- 非关键岗位人数不足只作提示，不改变「通过」结论；
+- 分包类型、工程类别、规模或作业人数任一无法确定时不估算，判「无法核实」并写明缺什么。
+"""
+
+SOURCE_STAFF = ("依据：上海市工程建设规范 DG/TJ 08-2225-2017《建筑工程、公路与市政工程施工现场专业人员配备标准》"
+                "表3.3.3（专业分包）、表3.4.1（劳务分包）；"
+                "《公路水运工程安全生产监督管理办法》（交通运输部令2017年第25号）第十四条（专职安全员数量）；"
+                "《沪交行规〔2026〕8号》第七条（现场管理机构及主要管理人员）")
+ITEM_STAFF = "A2-07"
+
+_STAFF_CATEGORY_KEYWORDS = (
+    ("隧道", "tunnel"),
+    ("桥梁", "bridge"),
+    ("交通安全设施", "traffic_safety"),
+    ("高速公路", "highway_expressway"),
+    ("一级公路", "highway_first_class"),
+    ("二级公路", "highway_secondary"),
+    ("三级公路", "highway_secondary"),
+    ("四级公路", "highway_secondary"),
+)
+_STAFF_CONTRACT_TYPES = {"劳务合作": "labor", "劳务分包": "labor",
+                         "专业分包": "professional", "专业承包": "professional"}
+
+
+def _staffing_contract(materials: list, extract_fields) -> dict:
+    """从分包/劳务合同读取分包类型、合同额（万元）与工程范围文本。
+
+    只认 ``sub`` / ``labor``：总包合同（``general``）的主体与金额口径不同，
+    混入会污染分包合同额并导致规模档位误判。
+    """
+    from .safety_permit_scope import extract_contract_scope_records
+    types, amounts, amount_refs = set(), set(), []
+    type_conflict = False
+    for material in materials:
+        if getattr(material, "role", None) not in ("sub", "labor"):
+            continue
+        fields = (extract_fields(material) or {}).get("fields") or {}
+        type_field = fields.get("contract_type") or {}
+        label = type_field.get("value")
+        type_conflict |= any("冲突" in str(value) for value in type_field.get("missing") or [])
+        if label in _STAFF_CONTRACT_TYPES:
+            types.add(_STAFF_CONTRACT_TYPES[label])
+            if material.role == "labor" and _STAFF_CONTRACT_TYPES[label] != "labor":
+                type_conflict = True
+        amount = fields.get("amount") or {}
+        if (amount.get("status") == STATUS_HIT and type(amount.get("value")) in (int, float)
+                and material_page_readable(material, amount.get("page"))):
+            amounts.add(float(amount["value"]))
+            amount_refs.append({"material_id": material.id, "page": amount.get("page"),
+                                "quote": amount.get("quote"), "evidence_kind": "staffing_contract_amount",
+                                "value_wan": amount["value"]})
+    roles = {getattr(material, "role", None) for material in materials}
+    if not types and not type_conflict:
+        if "labor" in roles:
+            types.add("labor")
+        elif "sub" in roles:
+            types.add("professional")
+    by_id = {material.id: material for material in materials}
+    records = extract_contract_scope_records(materials)
+    scopes = [record for record in records if record.get("complete")
+              and material_page_readable(by_id[record["material_id"]], record["page"])]
+    return {
+        "type": next(iter(types)) if len(types) == 1 and not type_conflict else None,
+        "amount_wan": next(iter(amounts)) if len(amounts) == 1 else None,
+        "scope": "\n".join(record["scope"] for record in scopes),
+        "scope_records": scopes, "amount_refs": amount_refs,
+        "scope_incomplete": len(scopes) != len(records),
+        "amount_conflict": len(amounts) > 1,
+    }
+
+
+def _staffing_category(scope_text: str) -> str | None:
+    categories = {category for keyword, category in _STAFF_CATEGORY_KEYWORDS if keyword in scope_text}
+    specialties = categories & {"tunnel", "bridge", "traffic_safety"}
+    if specialties:
+        if len(specialties) == 1 and not re.search(r"路基|路面", scope_text):
+            return next(iter(specialties))
+        return None
+    return next(iter(categories)) if len(categories) == 1 else None
+
+
+def _staffing_scale_fields(category: str | None, scope_text: str) -> list[str] | None:
+    """仅完整范围明示单项分包时排除不适用维度，普通提及不作排除证明。"""
+    if category not in {"highway_first_class", "highway_secondary"}:
+        return None
+    text = re.sub(r"\s+", "", scope_text)
+    parts = set(re.findall(r"路基|路面", text))
+    only = re.search(r"仅(?:承担|实施|包括|负责)?(路基|路面)(?:工程|施工)?(?:[，。；,;]|$)", text)
+    if only and parts == {only.group(1)}:
+        field = "roadbed_km" if only.group(1) == "路基" else "pavement_area_wan_m2"
+        return [field, "contract_amount_yi"]
+    return None
+
+
+def _staffing_scale_context(contract: dict) -> dict:
+    from .personnel_adequacy import determine_scale, extract_scale_parameters
+    params, candidates, conflicts = extract_scale_parameters(contract["scope_records"])
+    if contract["amount_wan"] is not None:
+        params["contract_amount_yi"] = contract["amount_wan"] / 10000
+    category = _staffing_category(contract["scope"])
+    fields = _staffing_scale_fields(category, contract["scope"])
+    errors = []
+    if conflicts:
+        errors.append("规模参数冲突：" + "、".join(conflicts))
+    if category is None and contract["scope"]:
+        errors.append("工程类别冲突或未能唯一识别本次分包工程类别")
+    if contract["scope_incomplete"]:
+        errors.append("分包范围段未完整读取")
+    if contract["amount_conflict"]:
+        errors.append("分包合同额冲突")
+    if re.search(r"不含|不包括|不涉及|不承担|拟实施|暂定|不超过|不大于|不少于|不小于|以上|以下|[<>≤≥]|约\s*\d", contract["scope"]):
+        errors.append("分包范围含否定、范围值或暂定表述，规模参数归属需核对")
+    info = determine_scale(category, params, scale_fields=fields)
+    return {"params": params, "candidates": candidates, "conflicts": conflicts,
+            "category": category, "scale_fields": fields, "scale_info": info,
+            "scale": None if errors else info["scale"], "errors": errors}
+
+
+ITEM_TECHNICAL_TITLE = "A2-14"
+SOURCE_TECHNICAL_TITLE = "DG/TJ 08-2225-2017第4.2.2条，PDF物理第15页（工程技术职称等级与规模维度，非全部岗位资格）"
+
+
+def run_technical_title_check(task, materials: list) -> list:
+    from .extract import extract_contract_fields
+    from .personnel_adequacy import normalize_post, evaluate_technical_title, scale_reason_text
+    from .personnel_certificates import extract_person_certificates
+    from .finding_text import bounded_finding_message
+    by_id = {m.id: m for m in materials}
+
+    def readable(row):
+        return row.get("material_id") in by_id and material_page_readable(
+            by_id[row["material_id"]], row.get("page"))
+
+    roster = [row for row in extract_management_roster(materials) if readable(row)]
+    people = [row for row in roster if normalize_post(row.get("post")) == "technical_lead"]
+    if not people:
+        return []
+    contract = _staffing_contract(materials, extract_contract_fields)
+    if contract["type"] == "labor":
+        return []
+    context = _staffing_scale_context(contract)
+    proofs = [row for row in extract_person_certificates(materials) if readable(row)]
+    identities = {}
+    for row in roster:
+        identities.setdefault((row.get("subject_id"), row["name"]), set()).add(_person_key(row))
+    findings = []
+    for person in people:
+        matched, error, exact = _person_relation_pool(person, proofs, "person_certificate",
+            ambiguous_name=len(identities[(person.get("subject_id"), person["name"])]) > 1)
+        result = evaluate_technical_title(matched, context["scale"])
+        reasons = list(context["errors"])
+        if not exact:
+            reasons.append(error or "完整身份证字段尚未交叉对应，需核对身份")
+        if contract["type"] != "professional":
+            reasons.append("分包类型未唯一识别，需核对适用性")
+        if result["status"] != STATUS_MISS and any(material_reading_gap(m) is not None for m in materials):
+            reasons.append("材料存在未确认页，需核对是否还有对应职称证明")
+        if reasons:
+            result = {**result, "status": STATUS_UNDECIDABLE,
+                      "reason": "；".join(dict.fromkeys(reasons + [result["reason"]]))}
+        if context["scale"] is None:
+            result["reason"] += "；" + scale_reason_text(context["scale_info"]["reason"])
+        refs = _person_evidence_refs([person, *matched], by_id)
+        for ref in refs:
+            ref.update(certificate_identity_state="identity_fields_correspond" if exact else "identity_pending",
+                       technical_title_assessment=result, technical_title_scale=context["scale"])
+        refs.extend({**row, "technical_title_scale": context["scale"]}
+                    for row in contract["scope_records"] + contract["amount_refs"])
+        scale_label = {"small": "小型", "medium": "中型", "large": "大型"}.get(context["scale"], "待核实")
+        findings.append(BsFinding(task_id=task.id, item_id=ITEM_TECHNICAL_TITLE, kind="personnel_adequacy",
+            status=result["status"], source=SOURCE_TECHNICAL_TITLE, material_id=person["material_id"],
+            page=person["page"], quote=person["quote"], location_mode="page", evidence_json=refs,
+            message=bounded_finding_message("技术负责人职称与规模：%s，%s；%s；仅核已提交证书等级维度，原件真实性及其他岗位资格另行核对" % (
+                person["name"], scale_label, result["reason"]))))
+    return findings
+
+
+def run_personnel_staffing_check(task, materials: list) -> list:
+    """A2-07 岗位配置与人员配备，返回落库前 BsFinding 列表（不 commit）。"""
+    from .extract import extract_contract_fields
+    from .finding_text import bounded_finding_message
+    from .personnel_adequacy import evaluate_staffing, scale_reason_text
+
+    by_id = {material.id: material for material in materials}
+
+    def readable_fact(fact):
+        material = by_id.get(fact.get("material_id"))
+        page = fact.get("page")
+        return material is not None and type(page) is int and page > 0 and material_page_readable(material, page)
+
+    roster = [fact for fact in extract_management_roster(materials) if readable_fact(fact)]
+    refs = _person_evidence_refs(roster, by_id)
+    contract = _staffing_contract(materials, extract_contract_fields)
+    if not contract["type"]:
+        return [BsFinding(
+            task_id=task.id, item_id=ITEM_STAFF, kind="personnel_adequacy",
+            status=STATUS_UNDECIDABLE, source=SOURCE_STAFF,
+            message="未能从分包合同识别分包类型（专业分包/劳务分包），暂不能套用人员配置表，需人工核对",
+            evidence_json=refs or None)]
+
+    gaps = [(material, pages) for material, pages in
+            ((material, material_reading_gap(material)) for material in materials) if pages is not None]
+    if not roster and gaps:
+        return [BsFinding(
+            task_id=task.id, material_id=gaps[0][0].id, item_id=ITEM_STAFF,
+            kind="personnel_adequacy", status=STATUS_UNDECIDABLE, source=SOURCE_STAFF,
+            message="主要管理人员名单所在材料存在未确认页，暂不能认定岗位是否齐全，需人工核对原件")]
+
+    amount = contract["amount_wan"]
+    context = _staffing_scale_context(contract)
+    params, candidates, conflicts = context["params"], context["candidates"], context["conflicts"]
+    category = context["category"]
+    refs.extend(contract["scope_records"] + contract["amount_refs"])
+    result = evaluate_staffing(
+        subcontract_type=contract["type"],
+        roster=[{"name": fact.get("name"), "post": fact.get("post")} for fact in roster],
+        category=category,
+        params=params,
+        contract_amount_wan=amount,
+        scale_fields=context["scale_fields"],
+    )
+
+    errors = context["errors"] if contract["type"] == "professional" else []
+    if errors:
+        result = {**result, "verdict": "不符合" if result["verdict"] == "不符合" else "待核实",
+                  "reason": "；".join(errors)}
+
+    verdict = result["verdict"]
+    if verdict == "符合":
+        status = STATUS_MISS
+        message = "岗位配置符合标准表要求（已识别 %d 名管理人员）" % len(
+            {(fact.get("name") or "") for fact in roster})
+        if result.get("advisories"):
+            message += "；另有 %d 项非关键岗位配置不足，仅作提示" % len(result["advisories"])
+    elif verdict in ("缺项", "不符合"):
+        status = STATUS_NOT_INCLUDED if verdict == "缺项" else STATUS_HIT
+        lines = [str(item.get("message") or "").strip()
+                 for item in result.get("details") or []
+                 if item.get("verdict") in ("缺项", "不符合") and item.get("message")]
+        message = "；".join(lines[:6]) or (result.get("reason") or "岗位配置不符合标准表要求")
+    else:
+        status = STATUS_UNDECIDABLE
+        message = scale_reason_text(result.get("reason") or "岗位配置所需信息不足，无法判定")
+    if verdict in ("缺项", "不符合") and result.get("reason"):
+        message += "；" + scale_reason_text(result["reason"])
+
+    scale_info = result.get("scale_info") or {}
+    scale = None if errors else result.get("scale")
+    if scale:
+        message = "工程规模按分包内容核为%s；%s" % ({"small": "小型", "medium": "中型", "large": "大型"}[scale], message)
+    for ref in refs:
+        if ref.get("evidence_kind") in {"subcontract_scope", "staffing_contract_amount"}:
+            ref.update(staffing_scale=scale, staffing_preliminary_scale=scale_info.get("preliminary_scale"),
+                       staffing_scale_complete=bool(scale_info.get("complete")) and not errors,
+                       staffing_scale_required_fields=scale_info.get("required_fields", []),
+                       staffing_scale_parameters=params, staffing_scale_candidates=candidates,
+                       staffing_scale_conflicts=conflicts)
+    source = SOURCE_STAFF
+    if scale_info.get("source_pages"):
+        source += "；规模依据：DG/TJ附录A，PDF物理第%s页" % "、".join(map(str, scale_info["source_pages"]))
+
+    anchor = roster[0] if roster else None
+    return [BsFinding(
+        task_id=task.id, material_id=anchor.get("material_id") if anchor else None,
+        item_id=ITEM_STAFF, kind="personnel_adequacy", status=status,
+        message=bounded_finding_message(message), source=source,
+        quote=anchor.get("quote") if anchor else None,
+        page=anchor.get("page") if anchor else None,
+        evidence_json=refs or None)]
+
+
+ITEM_SPECIAL = "A2-08"
+SOURCE_SPECIAL = ("依据：《沪交行规〔2026〕8号》第十条（二）、第十二条及报审附件人员要求；"
+                  "交安25号令第十六条、JTG F90-2015第5.5.1/5.6.2条；证书类型按已确认特种作业目录核对")
+
+
+def run_special_operation_coverage_check(task, materials):
+    from .extract import extract_contract_fields
+    from .special_operation_coverage import evaluate_coverage
+
+    scope_rows = []
+    for material in materials:
+        if material.role not in {"sub", "labor"} or material.parse_state != "done":
+            continue
+        field = ((extract_contract_fields(material) or {}).get("fields") or {}).get("scope") or {}
+        if field.get("status") == STATUS_HIT and field.get("value"):
+            scope_rows.append({"material_id": material.id, "page": field.get("page"),
+                               "quote": field.get("quote") or str(field["value"]),
+                               "scope": str(field["value"]), "evidence_kind": "subcontract_scope"})
+    by_id = {material.id: material for material in materials}
+    roster = [fact for fact in extract_special_trade_roster(materials)
+              if fact.get("page") and material_page_readable(by_id[fact["material_id"]], fact["page"])]
+    # 任一相关合同/报审材料未读完，缺名单不能被当作已查无该人员。
+    complete = all(material_reading_gap(material) is None for material in materials
+                   if material.role in {"sub", "labor", "packet"})
+    result = evaluate_coverage("；".join(row["scope"] for row in scope_rows), roster, reading_complete=complete)
+    refs = scope_rows + _person_evidence_refs(roster, by_id)
+    messages = [detail["message"] for detail in result["details"]] + result["gaps"]
+    messages.append(result["quantity_notice"])
+    anchor = (scope_rows or roster or [None])[0]
+    return [BsFinding(task_id=task.id, item_id=ITEM_SPECIAL, kind="personnel_adequacy",
+                      status=result["status"], source=SOURCE_SPECIAL,
+                      material_id=anchor["material_id"] if anchor else None,
+                      page=anchor["page"] if anchor else None, quote=anchor["quote"] if anchor else None,
+                      message=bounded_finding_message("；".join(messages)), evidence_json=refs or None)]
+
+
+def run_equipment_identity_check(task, materials):
+    from . import equipment_identity as equipment
+    records = equipment.extract_equipment_records(materials)
+    inventories = [row for row in records if row["evidence_kind"] == "equipment_inventory"]
+    proofs = [row for row in records if row["evidence_kind"] != "equipment_inventory"]
+    labels = {"equipment_inspection": "检验报告", "equipment_registration": "使用登记",
+              "equipment_ownership": "权属证明", "equipment_lease": "租赁合同"}
+    findings = []
+    for item in inventories:
+        matched = equipment.matching_proofs(item, proofs, inventories=inventories)
+        details = []
+        for row in matched:
+            fields = [row.get("model"), row.get("owner"), row.get("user"), row.get("inspection_result"),
+                      "下次检验" + row["next_inspection"] if row.get("next_inspection") else None,
+                      row.get("period")]
+            details.append(labels[row["evidence_kind"]] + "：" + "、".join(value for value in fields if value))
+        identity = "、".join(label + str(item[field]) for field, label in (
+            ("internal_id", "设备编号"), ("factory_id", "出厂编号"), ("registration_id", "登记号")) if item.get(field))
+        message = "设备辅助核对：%s（%s）；%s；请逐台核对编号、设备类型/适用条件、检验期间和权属/租赁，字段对应不证明原件真实或满足施工需要" % (
+            item["name"], identity or "无唯一编号", "；".join(details) or "尚无同编号体系可唯一对应的独立证明，清单声明不能替代检验报告")
+        findings.append(BsFinding(task_id=task.id, item_id=equipment.ITEM_ID, kind="personnel_adequacy",
+            status=STATUS_UNDECIDABLE, finding_semantics="manual_prompt", source=equipment.SOURCE,
+            message=bounded_finding_message(message), material_id=item["material_id"], page=item["page"],
+            quote=item["quote"], location_mode="page", evidence_json=[item, *matched]))
+    return findings
+
+
+def run_safety_permit_scope_check(task, materials, *, expected_company=None):
+    from . import safety_permit_scope as permit
+
+    names = subcontractor_names(materials)
+    expected = norm_company(expected_company) if expected_company else None
+    company = (next(iter(names)) if len(names) == 1 else expected if not names else None)
+    if expected and names and names != {expected}:
+        company = None
+    records = permit.extract_safety_permit_records(materials, _certificate_text, _CERT_TITLE_RE)
+    scopes = permit.extract_contract_scope_records(materials)
+    status, message = permit.evaluate_scope(records, company=company, normalize_company=norm_company,
+                                            reading_complete=permit.reading_complete(materials),
+                                            contract_scopes=scopes, baseline_date=getattr(task, "baseline_date", None))
+    refs = records + scopes
+    anchor = refs[0] if refs else {}
+    return [BsFinding(task_id=task.id, item_id=permit.ITEM_ID, kind="cert_validity", status=status,
+                      source=permit.SOURCE, message=bounded_finding_message(message),
+                      material_id=anchor.get("material_id"), page=anchor.get("page"),
+                      quote=anchor.get("quote"), evidence_json=refs or None)]

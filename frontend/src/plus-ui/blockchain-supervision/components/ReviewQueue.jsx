@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { LoaderCircle } from 'lucide-react'
-import { isMaterialOnly, reviewBucket } from '../lib/reviewDecision'
+import { isMaterialOnly, REVIEWABLE_STATUSES, reviewBucket } from '../lib/reviewDecision'
+import { countedStatusOf } from '../lib/statusDisplay'
 import { collectContainerIds } from '../lib/materialState'
 import { buildReviewQueueSections, reviewQueueCounts } from '../lib/reviewQueueModel'
 import ReviewActions from './ReviewActions'
@@ -32,7 +33,7 @@ function basisVerification(basis) {
 }
 
 function noMatchText(status) {
-  if (status === 'undecidable') return '无匹配原文：未取得可核实的材料证据，需补件或人工核实'
+  if (countedStatusOf(status) === 'undecidable') return '无匹配原文：未取得可核实的材料证据，需补件或人工核实'
   return '无匹配原文：本条未记录引用原文，仅有规则依据与问题描述'
 }
 
@@ -43,8 +44,6 @@ function basisStatusText(item) {
   if (item?.basisStatus === 'unavailable') return '暂无固定规则依据，需人工确认'
   return '规则依据未返回，需人工确认'
 }
-
-const REVIEWABLE_STATUSES = new Set(['hit', 'undecidable'])
 
 function QueueItem({ item, selected, onSelect, actions, submitting, onReview, materialsById, containerIds, onOpenSource, hideItemActions = false, prototypeMode = false }) {
   const material = item.materialId != null ? materialsById?.[item.materialId] : null
@@ -248,7 +247,7 @@ export default function ReviewQueue({
     if (filter === 'all') return REVIEWABLE_STATUSES.has(item.status)
     if (filter === 'pending') return REVIEWABLE_STATUSES.has(item.status) && reviewBucket(item) === 'pending'
     if (filter === 'processed') return REVIEWABLE_STATUSES.has(item.status) && ['accepted', 'ignored'].includes(reviewBucket(item))
-    if (filter === 'undecidable') return item.status === 'undecidable'
+    if (filter === 'undecidable') return countedStatusOf(item.status) === 'undecidable'
     if (filter === 'hit') return item.status === 'hit'
     return false
   }

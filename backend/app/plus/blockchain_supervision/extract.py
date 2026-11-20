@@ -36,6 +36,19 @@ _WS_RE = re.compile(r"\s+")
 _PROJECT_NAME_RE = re.compile(
     r"(?:工程名称|项目名称|工程全称|工程标段名称)\s*[:：]\s*([^\r\n]{4,160})"
 )
+# 附属/补充协议常重新约定甚至反转甲乙方；主体角色判定只认主合同正文。
+# 附件、委托代发工资、廉政责任书、文明施工等协议都属于主合同之后的附件段落，
+# 一旦出现即停止角色抽取，避免把「甲方=分包人」的附件角色当成主合同证据。
+_SUPPLEMENT_HEADING_RE = re.compile(
+    r"^(?:附\s*属\s*协\s*议|补\s*充\s*协\s*议|附\s*件\s*协\s*议|"
+    r"附\s*件\s*[0-9一二三四五六七八九十]+|"
+    r"委托代发工资协议书|工程建设项目廉政责任书|廉政责任书|"
+    r"文明施工管理协议书|安全生产协议书|质量责任书|治安.{0,6}责任书)")
+_CONTRACT_HEADING_RE = re.compile(r"(?:劳务|专业|工程|施工)?分包合同|施工合同|总承包合同")
+# 仅这些显式角色可作为分包人；泛化的「乙方」在不同协议中可能指总包。
+_SUBCONTRACTOR_ROLES = {"分包人", "分包单位", "分包单位名称"}
+# 公开给其他模块复用的同一判据（避免各处再存一份角色词表而漂移）。
+SUBCONTRACTOR_PARTY_ROLES = frozenset(_SUBCONTRACTOR_ROLES)
 
 # 字段键 → 展示名（供报告/前端事实认定；F1-F9 为本层内部字段编号）
 FIELD_LABELS = {
@@ -83,6 +96,39 @@ def _flat(material) -> str:
     return "\n".join(_norm_text(p.get("text", "")) for p in (material.pages_json or []))
 
 
+def party_scoped_pages(material):
+    """产出参与主体角色判定的页；跳过附属/补充协议，遇新主合同标题恢复。
+
+    补充协议可能把甲乙方角色反转（如「甲方=分包人」），若参与角色归并会与
+    主合同冲突。这里只做确定性的段落排除，不修改原始页文本。
+    """
+    stopped = False
+    for page in getattr(material, "pages_json", None) or []:
+        if not isinstance(page, dict):
+            continue
+        number = page.get("page")
+        if type(number) is not int or number < 1:
+            continue
+        raw = str(page.get("text") or "")
+        if not raw.strip():
+            continue
+        lines = [line.strip() for line in raw.splitlines() if line.strip()]
+        head = lines[:3]
+        if any(_SUPPLEMENT_HEADING_RE.match(line) for line in head):
+            stopped = True
+        if stopped:
+            continue
+        yield number, _norm_text(raw)
+
+
+def is_placeholder_party_name(name: str) -> bool:
+    """占位词（如「专业公司」「乙方公司」）不是可识别主体，不得用于归属或修复。"""
+    normalized = norm_company(name)
+    if not normalized:
+        return True
+    return normalized in set(load_extract_matchers().get("party_placeholder_names") or [])
+
+
 def _hit(value, unit=None, quote=None, page=None, **extra) -> dict:
     return {"value": value, "unit": unit, "status": STATUS_HIT,
             "missing": [], "quote": quote, "page": page, **extra}
@@ -101,14 +147,20 @@ def _f_contract_type(material, flat: str, matchers: dict) -> dict:
     name = material.file_name or ""
     types = matchers["types"]
     labels = matchers["type_labels"]
-    for key, kws in types.items():
-        for kw in kws:
-            if kw in name:
-                return _hit(labels.get(key, key), quote=name)
-    for key, kws in types.items():
-        for kw in kws:
-            if kw in flat:
-                return _hit(labels.get(key, key), quote=kw)
+    for text in (name, flat):
+        matches = [(key, kw, found.start(), found.end())
+                   for key, kws in types.items() for kw in kws
+                   for found in re.finditer(re.escape(kw), text)]
+        # “劳务分包”内的“分包”等重叠短词不能抢占更具体的类型。
+        specific = [row for row in matches if not any(
+            other[2] <= row[2] and row[3] <= other[3] and len(other[1]) > len(row[1])
+            for other in matches)]
+        keys = {row[0] for row in specific}
+        if len(keys) > 1:
+            return _undecidable("合同类型关键词冲突，需核对合同原件")
+        if keys:
+            return _hit(labels.get(specific[0][0], specific[0][0]),
+                        quote=name if text == name else specific[0][1])
     return _undecidable("合同类型（总包/专业分包/劳务合作）关键词")
 
 
@@ -156,16 +208,20 @@ def _f_parties(flat: str, matchers: dict) -> dict:
 
 
 def extract_subcontractor_name(material) -> str | None:
-    """从正文明确标注的分包方角色中提取唯一单位名；文件名与歧义结果不作判断。"""
+    """从主合同正文明确标注的分包方角色中提取唯一单位名。
+
+    只认「分包人/分包单位/分包单位名称」：泛化的「乙方」在不同协议中可能指
+    总包，不能作为分包人证据；多候选或占位词一律返回 ``None``，交给人工确认。
+    """
     matchers = load_extract_matchers()
     party_re = re.compile(matchers["party_name_regex"])
-    subcontractor_roles = {"乙方", "分包人", "分包单位"}
     names = {
         norm_company(match.group(2))
-        for _page, text in _pages(material)
+        for _page, text in party_scoped_pages(material)
         for match in party_re.finditer(text)
-        if match.group(1) in subcontractor_roles and norm_company(match.group(2))
+        if match.group(1) in _SUBCONTRACTOR_ROLES and norm_company(match.group(2))
     }
+    names = {name for name in names if not is_placeholder_party_name(name)}
     return next(iter(names)) if len(names) == 1 else None
 
 

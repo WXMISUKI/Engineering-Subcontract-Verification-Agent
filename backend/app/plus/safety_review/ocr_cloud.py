@@ -332,7 +332,8 @@ def cloud_config() -> dict:
         raise ValueError('不支持的 OCR provider')
     model = os.environ.get("OCR_CLOUD_MODEL", "").strip()
     endpoint = os.environ.get("OCR_CLOUD_ENDPOINT", "").strip()
-    api_key = os.environ.get("OCR_CLOUD_API_KEY", "").strip()
+    api_key = (os.environ.get("OCR_CLOUD_API_KEY")
+               or os.environ.get("LLM_API_KEY") or "").strip()
     if not all((model, endpoint, api_key)):
         return {}
     if provider == 'moma':

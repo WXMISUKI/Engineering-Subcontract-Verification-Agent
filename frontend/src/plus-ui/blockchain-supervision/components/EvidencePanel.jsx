@@ -1,13 +1,16 @@
 import { useMemo, useState } from 'react'
 import { FileText } from 'lucide-react'
 import { bsMaterialFileUrl } from '../lib/api'
-import { STATUS_CODES, STATUS_WORD, statusLabelOf } from '../lib/statusDisplay'
+import { countedStatusOf, STATUS_CODES, STATUS_WORD, statusLabelOf } from '../lib/statusDisplay'
 
 // 结论三态配色（全站统一：不符合=红 / 符合=绿 / 无法核实=琥珀）。状态码不变，只换展示词。
+// 扩展状态沿用所属计数三态的配色：缺项=琥珀（需补正）、不适用=灰（不构成待办）。
 export const STATUS_STYLE = {
   hit: { chip: 'bg-red-50 text-red-700 border-red-200', dot: 'bg-red-600' },
   miss: { chip: 'bg-emerald-50 text-emerald-700 border-emerald-200', dot: 'bg-emerald-600' },
   undecidable: { chip: 'bg-amber-50 text-amber-800 border-amber-200', dot: 'bg-amber-500' },
+  not_included: { chip: 'bg-amber-50 text-amber-800 border-amber-200', dot: 'bg-amber-500' },
+  not_applicable: { chip: 'bg-gray-50 text-gray-600 border-gray-200', dot: 'bg-gray-400' },
 }
 
 // A-13（B2）严重度配色（与 STATUS_STYLE 并列；high=红 / medium=琥珀 / low=灰）。
@@ -39,6 +42,7 @@ export const KIND_SECTIONS = [
   { kind: 'qualification_match', title: '② 资质与内容合规性审查', sub: '资质与承揽范围匹配（只提示可能超范围，需人工核实）' },
   { kind: 'a1_dependency', title: '② 资质与内容合规性审查', sub: '监理审查与方案编制责任（证据取自报审结论）' },
   { kind: 'person_consistency', title: '③ 关键岗位人员核查', sub: '人员一致性 + 社保证明（分包合同/报审材料/名单/社保四方比对）' },
+  { kind: 'personnel_adequacy', title: '③ 关键岗位人员核查', sub: '岗位配置与人员配备（对照 DG/TJ 08-2225-2017 表3.3.3/3.4.1）' },
   { kind: 'cert_validity', title: '④ 证件证照有效性核查', sub: '营业执照/资质证书/安全生产许可证/三类人员证书有效期' },
   { kind: 'internal_records', title: '⑤ 内部信用与事故材料核查', sub: '仅核对本任务提供的业主内部记录，不访问外部网站' },
   // 后续功能（业主部署文件 二、（六）「分包合同总合同额匹配…预留接口」）：本期默认关闭，
@@ -87,7 +91,7 @@ function ReviewRow({ finding, onReview }) {
   const rv = finding.review
 
   // 仅问题项进入人工处置；符合项不显示处置控件。
-  if (!['hit', 'undecidable'].includes(finding.status)) return null
+  if (!['hit', 'undecidable'].includes(countedStatusOf(finding.status))) return null
 
   if (!editing && !rv) {
     return (
@@ -183,7 +187,10 @@ export default function EvidencePanel({ findings, materialsById, onReview }) {
         // A-13（B2）：用户口径「报告按严重度排序」——high→medium→low→未分级（稳定排序保留原序）
         const ordered = [...list].sort(bySeverity)
         const counts = { hit: 0, miss: 0, undecidable: 0 }
-        for (const f of list) counts[f.status] += 1
+        for (const f of list) {
+          const code = countedStatusOf(f.status)
+          if (Object.prototype.hasOwnProperty.call(counts, code)) counts[code] += 1
+        }
         return (
           <section key={kind} className="rounded-[6px] border border-[#E5E5E5] bg-white">
             <header className="flex items-baseline gap-2 border-b border-gray-100 px-4 py-2.5">
@@ -243,7 +250,7 @@ export default function EvidencePanel({ findings, materialsById, onReview }) {
             onClick={(e) => e.stopPropagation()}
           >
             <header className="flex items-center gap-2 border-b border-gray-100 px-4 py-3">
-              <span className={`rounded px-1.5 py-0.5 text-xs border ${(STATUS_STYLE[modalFinding.status] || STATUS_STYLE.undecidable).chip}`}>
+              <span className={`rounded px-1.5 py-0.5 text-xs border ${(STATUS_STYLE[modalFinding.status] || STATUS_STYLE[countedStatusOf(modalFinding.status)] || STATUS_STYLE.undecidable).chip}`}>
                 {statusLabelOf(modalFinding)}
               </span>
               <span className="truncate text-sm font-medium text-primary">

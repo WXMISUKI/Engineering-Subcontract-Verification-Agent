@@ -7,19 +7,50 @@ import zipfile
 from pathlib import Path
 
 import fitz
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
-from app.plus.blockchain_supervision.models import BsMaterial
+from app.plus.blockchain_supervision.models import BsMaterial, BsTask
 
 from app.standalone.identity import Base, create_account
 from app.standalone.main import create_app
 from app.plus.blockchain_supervision import (
-    parsing, service, reference_snapshots, negative_candidate_plan, optional_source_scope,
+    ai_review_jobs, background_ai_review, parsing, service, reference_snapshots,
+    negative_candidate_plan, optional_source_scope,
 )
 
 
-def test_uploaded_pdf_starts_and_runs_checks_with_unavailable_knowledge(tmp_path, monkeypatch):
+@pytest.fixture
+def synthetic_providers(monkeypatch):
+    """Install synthetic providers before uploads can launch background work."""
+    class SyntheticClient:
+        async def complete(self, *_args, **_kwargs):
+            return json.dumps({'proposals': []})
+
+    monkeypatch.setattr(negative_candidate_plan, 'negative_list_rules', lambda: [])
+    monkeypatch.setattr(service, 'effective_model_code_or_default', lambda *_: 'synthetic-model')
+    monkeypatch.setattr(service, 'client_from_env', lambda **_kwargs: SyntheticClient())
+    monkeypatch.setattr(service, '_launch_contract_dual_extraction', lambda *_: None)
+
+
+def _run_synthetic_background(engine, task_id):
+    # A worker can only claim a real persisted queue row, not an invented job id.
+    with Session(engine) as db:
+        task = db.get(BsTask, task_id)
+        snapshot = reference_snapshots.get_reference_snapshot(db, task)
+        job = ai_review_jobs.enqueue(db, task_id, snapshot['review_run_id'], snapshot['ai_auto_groups'])
+        actor = (task.created_by, task.created_by_type)
+        db.commit()
+    asyncio.run(background_ai_review._run_background(
+        engine, task_id, *actor, snapshot['review_run_id'], job['id'], snapshot['ai_auto_groups'], False))
+    with Session(engine) as db:
+        status = background_ai_review.job_status(db, db.get(BsTask, task_id), snapshot['review_run_id'])
+    assert status['state'] in {'completed', 'review_required'}, status
+
+
+def test_uploaded_pdf_starts_and_runs_checks_with_unavailable_knowledge(tmp_path, monkeypatch, synthetic_providers):
+    # Phase 1: upload, start and execute the selected checks in an isolated database.
     monkeypatch.setenv('SECRET_KEY', 'synthetic-secret-key-0123456789-abcdefgh')
     monkeypatch.setenv(optional_source_scope.SCOPE_POLICY_ENV, 'true')
     reference = Path(__file__).parent.parent / 'app/plus/blockchain_supervision/data/reference_package.json'
@@ -100,13 +131,19 @@ def test_uploaded_pdf_starts_and_runs_checks_with_unavailable_knowledge(tmp_path
     assert report.status_code == 200, report.text
     assert report.json()['sections']
     exported = client.get(f'{base}/tasks/{task_id}/report/export?fmt=docx&stage=draft')
-    assert exported.status_code == 200, exported.text
-    assert exported.content.startswith(b'PK')
+    assert exported.status_code == 409, exported.text
+    assert exported.json()['detail']['code'] == 'draft_file_output_blocked'
+    confirmed_report = client.get(f'{base}/tasks/{task_id}/report?stage=confirmed')
+    assert confirmed_report.status_code == 409, confirmed_report.text
+    assert confirmed_report.json()['detail']['code'] == 'ai_execution_incomplete'
+    assert client.post(f'{base}/tasks/{task_id}/complete').status_code == 409
+    _run_synthetic_background(engine, task_id)
     confirmed_report = client.get(f'{base}/tasks/{task_id}/report?stage=confirmed')
     assert confirmed_report.status_code == 409, confirmed_report.text
     assert confirmed_report.json()['detail']['code'] == 'pending_undecidable_review'
     completed = client.post(f'{base}/tasks/{task_id}/complete')
     assert completed.status_code == 409, completed.text
+    # Phase 2: freeze the baseline; editing/uploading must not rewrite its evidence.
     plan = client.post(f'{base}/tasks/{task_id}/supplement-plan', json={
         'generation_id': 'synthetic-supplement', 'category': 'general_contract',
         'item_ids': ['T15-01'],
@@ -211,33 +248,14 @@ def test_uploaded_pdf_starts_and_runs_checks_with_unavailable_knowledge(tmp_path
     ]
     assert new_scope_after_checks['limitations'] == []
     rows = client.get(f'{base}/tasks/{task_id}/findings').json()['findings']
-    monkeypatch.setattr(negative_candidate_plan, 'negative_list_rules', lambda: [])
-    monkeypatch.setattr(service, 'effective_model_code_or_default', lambda *_: 'synthetic-model')
-
-    class SyntheticClient:
-        async def complete(self, *_args, **_kwargs):
-            return json.dumps({'proposals': []})
-
-    monkeypatch.setattr(service, 'client_from_env', lambda **_kwargs: SyntheticClient())
-    with Session(engine) as db:
-        from app.plus.blockchain_supervision.models import BsTask
-        snapshot = reference_snapshots.get_reference_snapshot(db, db.get(BsTask, task_id))
-    for group in snapshot['ai_auto_groups']:
-        url = f'{base}/tasks/{task_id}/check/{group}/ai-advisory-batch'
-        status = client.get(url)
-        assert status.status_code == 200, status.text
-        if status.json()['counts']['not_started']:
-            response = client.post(url, json={'run_id': status.json()['run_id']})
-            assert response.status_code == 200, response.text
+    # Phase 3: AI completes the candidate findings; only /complete publishes them.
     with monkeypatch.context() as pending:
         pending.setattr(service, 'current_ai_advisory_pending', lambda *_: True)
         assert client.get(f'{base}/tasks/{task_id}/findings').json()['publication_status'] == 'preparing'
-    from app.plus.blockchain_supervision import background_ai_review
     with monkeypatch.context() as pending:
         pending.setattr(background_ai_review, 'job_status', lambda *_: {'state': 'not_started'})
         assert client.get(f'{base}/tasks/{task_id}/findings').json()['publication_status'] == 'preparing'
-    asyncio.run(background_ai_review._run_background(engine, task_id, 1, 'web', snapshot['review_run_id'],
-                                                     'synthetic-background-job', snapshot['ai_auto_groups'], False))
+    _run_synthetic_background(engine, task_id)
     published = client.get(f'{base}/tasks/{task_id}/findings').json()
     assert published['publication_status'] == 'ready'
     assert published['publication_generation_id'] == 'synthetic-supplement'
@@ -254,7 +272,8 @@ def test_uploaded_pdf_starts_and_runs_checks_with_unavailable_knowledge(tmp_path
     opinion_preview_during_candidate = client.get(f'{base}/tasks/{task_id}/opinion/preview-markdown?stage=draft')
     assert opinion_preview_during_candidate.status_code == 200, opinion_preview_during_candidate.text
     opinion_pdf_preview_during_candidate = client.get(f'{base}/tasks/{task_id}/opinion/preview?stage=draft')
-    assert opinion_pdf_preview_during_candidate.status_code == 200, opinion_pdf_preview_during_candidate.text
+    assert opinion_pdf_preview_during_candidate.status_code == 409, opinion_pdf_preview_during_candidate.text
+    assert opinion_pdf_preview_during_candidate.json()['detail']['code'] == 'draft_file_output_blocked'
     report_export_during_candidate = client.get(f'{base}/tasks/{task_id}/report/export?fmt=docx&stage=draft')
     assert report_export_during_candidate.status_code == 409
     opinion_export_during_candidate = client.get(f'{base}/tasks/{task_id}/opinion/export?fmt=docx&stage=draft')
@@ -269,6 +288,10 @@ def test_uploaded_pdf_starts_and_runs_checks_with_unavailable_knowledge(tmp_path
     completed = client.post(f'{base}/tasks/{task_id}/complete')
     assert completed.status_code == 200, json.dumps(completed.json(), ensure_ascii=True)
     assert completed.json()['state'] == 'done'
+    versions_after_close = client.get(f'{base}/tasks/{task_id}/versions').json()['versions']
+    repeated_close = client.post(f'{base}/tasks/{task_id}/complete')
+    assert repeated_close.status_code == 200, repeated_close.text
+    assert client.get(f'{base}/tasks/{task_id}/versions').json()['versions'] == versions_after_close
     assert client.get(f'{base}/tasks/{task_id}/supplement-plan').json()['supplement_plan']['status'] == 'completed'
     after_complete = client.get(f'{base}/tasks/{task_id}/findings').json()
     assert after_complete['publication_state'] == 'published'
@@ -309,6 +332,7 @@ def test_uploaded_pdf_starts_and_runs_checks_with_unavailable_knowledge(tmp_path
         assert ignored[0]['human_disposition']['code'] == 'ignored'
         assert ignored[0]['human_disposition']['note'] == 'synthetic ignored reason'
         assert all(ignored_id not in item['finding_ids'] for item in audit_report['business_document']['issues'])
+    # Phase 4: a failed replacement keeps the published baseline and original file.
     second = client.post(f'{base}/tasks/{task_id}/supplement-plan', json={
         'generation_id': 'second-supplement', 'category': 'general_contract',
         'item_ids': ['T15-01'],

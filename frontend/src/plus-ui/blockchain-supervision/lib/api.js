@@ -119,9 +119,10 @@ export async function pingBs({ signal } = {}) {
   return pingRequest
 }
 
-export async function createBsTask({ conversationId, title, scopeA1, scopeA3, projectName, contractSection, baselineDate }) {
+export async function createBsTask({ conversationId, title, scopeA1, scopeA3, projectName, contractSection, baselineDate, reviewMode = 'admission' }) {
   const body = {
     conversation_id: conversationId, title, scope_a1: scopeA1, scope_a3: scopeA3,
+    review_mode: reviewMode,
     // A-03（B1）标段锚点：可选三字段（未填写则留空，后端存 NULL）
     project_name: projectName || null,
     contract_section: contractSection || null,
@@ -139,6 +140,27 @@ export async function createBsTask({ conversationId, title, scopeA1, scopeA3, pr
 export async function getBsTask(taskId, { signal } = {}) {
   const r = await fetch(`${BASE}/tasks/${taskId}`, { credentials: 'include', signal })
   return _json(r, 'bs task')
+}
+
+export async function startBsRetrospective(taskId, relations) {
+  const r = await fetch(`${BASE}/tasks/${taskId}/retrospective/start`, {
+    method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ relations }),
+  })
+  return _json(r, '合同倒查')
+}
+
+export async function getBsRetrospective(taskId, { signal } = {}) {
+  const r = await fetch(`${BASE}/tasks/${taskId}/retrospective`, { credentials: 'include', signal })
+  return _json(r, '合同倒查状态')
+}
+
+export async function saveBsRetrospectiveContracts(taskId, relations) {
+  const r = await fetch(`${BASE}/tasks/${taskId}/retrospective/contracts`, {
+    method: 'PATCH', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ relations }),
+  })
+  return _json(r, '保存合同关系')
 }
 
 // 任务级计时与 Token 用量只读视图；shadow 阶段只展示真实用量，不扣余额。
@@ -546,6 +568,8 @@ export function bsEventsUrl(taskId, afterSeq) {
 // 该事件被 SSE **静默丢弃** —— 界面时间线少一段且不报错，属「护栏没人读」。
 // 现按后端 EVENT_LABELS 全量补录（顺序也按后端字典顺序，便于逐行对照）。
 export const BS_EVENT_TYPES = [
+  'retrospective.accepted', 'retrospective.input_frozen', 'retrospective.batch_started',
+  'retrospective.batch_completed', 'retrospective.completed', 'retrospective.failed',
   'material.page_text_refresh',
   'task.supplement_planned',
   'task.supplement_blocked',

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { buildReviewWorkbenchModel } from '../lib/reviewWorkbenchModel'
 import { isOpenTerm, reviewBucket } from '../lib/reviewDecision'
+import { countedStatusOf } from '../lib/statusDisplay'
 
 export function matchesReviewFilter(finding, filter) {
   if (filter === 'all') return true
@@ -9,7 +10,7 @@ export function matchesReviewFilter(finding, filter) {
   if (filter === 'processed') {
     return ['accepted', 'ignored'].includes(reviewBucket(finding))
   }
-  if (filter === 'undecidable') return finding?.status === 'undecidable'
+  if (filter === 'undecidable') return countedStatusOf(finding?.status) === 'undecidable'
   if (filter === 'hit') return finding?.status === 'hit'
   return finding?.status !== 'miss' && reviewBucket(finding) === filter
 }

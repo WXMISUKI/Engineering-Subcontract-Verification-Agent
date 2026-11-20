@@ -1,0 +1,713 @@
+{
+  "schema_version": "bs-qualification-scope.v1",
+  "generated_at": "2026-11-18",
+  "meta": {
+    "title": "资质等级与承包工程范围核对表（已核旧版五类；甲乙级原文待核）",
+    "source_note": "依据本地官方159号全文PDF的承包工程范围逐项核对；原件、物理页码及哈希见docs/plus/blockchain-supervision/evidence/资质官方原文-20261119/manifest.json；verified指所列原文核对，不是2026全类别效力认证。",
+    "discipline": "证书载明等级优先：证书写「二级」按旧版阈值核对，写「乙级」按新版阈值核对，不做跨版本换算；核发日期只用于提示等级与日期矛盾；等级或规模参数识别不了即待核实，不猜、不按最宽松档兜底。",
+    "coverage_note": "首批覆盖 qualification_matchers 中与公路专业承包、地基基础、桥梁隧道相关的 5 个类别；其余类别保持既有词表类别匹配口径，等级按待核实处理。",
+    "version_note": "改革方向、拟定等级与正式标准实施须分开；尚无本项目已核的统一甲乙级承包范围及实施日，不将2026-07-01作为已证实日期，不跨等级版本换算。"
+  },
+  "basis": [
+    {
+      "basis_id": "JS-2014-159",
+      "doc_no": "建市〔2014〕159号",
+      "doc_title": "建筑业企业资质标准",
+      "clause_ref": "资质类别与承包工程范围",
+      "effective_from": "2015-01-01",
+      "status": "official_original_archived",
+      "verified": true,
+      "source_url": "https://www.mohurd.gov.cn/file/old/2014/20141106/W020191022031714.pdf",
+      "source_file": "docs/plus/blockchain-supervision/evidence/资质官方原文-20261119/qualification-159-2014.pdf",
+      "source_sha256": "2d3dcf4484c604eb9e81a8308f32b81d19dea39318301380590b22d7a32ffc16",
+      "source_pages": [
+        9,
+        10,
+        87,
+        88,
+        107,
+        111,
+        142,
+        147
+      ],
+      "current_status_verification": "partial_not_all_amendments_verified"
+    },
+    {
+      "basis_id": "JS-REFORM-2026",
+      "doc_no": null,
+      "doc_title": "建筑业企业资质管理制度改革方案（施工资质压减为甲、乙级）",
+      "clause_ref": null,
+      "effective_from": null,
+      "status": "pending_basis",
+      "verified": false,
+      "note": "历史讨论所称2026统一实施日及甲乙级映射尚无已核正式标准支持；只保留待核登记，不能据此声明已经实施。"
+    }
+  ],
+  "level_patterns": [
+    {
+      "value": "一级",
+      "patterns": [
+        "一级",
+        "壹级"
+      ]
+    },
+    {
+      "value": "二级",
+      "patterns": [
+        "二级",
+        "贰级"
+      ]
+    },
+    {
+      "value": "三级",
+      "patterns": [
+        "三级",
+        "叁级"
+      ]
+    },
+    {
+      "value": "甲级",
+      "patterns": [
+        "甲级"
+      ]
+    },
+    {
+      "value": "乙级",
+      "patterns": [
+        "乙级"
+      ]
+    }
+  ],
+  "old_version_levels": [
+    "一级",
+    "二级",
+    "三级"
+  ],
+  "new_version_levels": [
+    "甲级",
+    "乙级"
+  ],
+  "pending_levels": [
+    "甲级",
+    "乙级"
+  ],
+  "pending_level_reason": "甲、乙级对应的正式承包工程范围及适用时间原文尚未核实，本次按待核实处理，不按旧版等级换算",
+  "reform_effective_from": null,
+  "quantity_patterns": {
+    "pit_depth_m": {
+      "label": "基坑开挖深度",
+      "unit": "m",
+      "patterns": [
+        "(?:基坑|基槽)(?:开挖)?深度[^0-9]{0,10}(\\d+(?:\\.\\d+)?)\\s*(?:米|m|M)"
+      ]
+    },
+    "single_pile_load_kn": {
+      "label": "单桩承受设计荷载",
+      "unit": "kN",
+      "patterns": [
+        "(?:单桩|单桩竖向承载力|单桩承载力)[^0-9]{0,12}(\\d+(?:\\.\\d+)?)\\s*(?:kN|KN|kn|千牛)"
+      ]
+    },
+    "rigid_composite_depth_m": {
+      "label": "刚性桩复合地基处理深度",
+      "unit": "m",
+      "patterns": [
+        "(?:刚性桩复合地基|复合地基)(?:处理)?深度[^0-9]{0,8}(\\d+(?:\\.\\d+)?)\\s*(?:米|m|M)"
+      ]
+    },
+    "ground_treatment_depth_m": {
+      "label": "其他地基处理深度",
+      "unit": "m",
+      "patterns": [
+        "(?:地基处理深度|处理深度|换填深度|预压深度)[^0-9]{0,6}(\\d+(?:\\.\\d+)?)\\s*(?:米|m|M)"
+      ]
+    },
+    "building_height_m": {
+      "label": "工业与民用建筑高度",
+      "unit": "m",
+      "patterns": [
+        "(?:建筑高度|建筑物高度|檐高|总高)[^0-9]{0,6}(\\d+(?:\\.\\d+)?)\\s*(?:米|m|M)"
+      ]
+    },
+    "structure_height_m": {
+      "label": "构筑物高度",
+      "unit": "m",
+      "patterns": [
+        "(?:构筑物高度|结构高度)[^0-9]{0,6}(\\d+(?:\\.\\d+)?)\\s*(?:米|m|M)"
+      ]
+    },
+    "single_span_m": {
+      "label": "桥梁单跨跨径",
+      "unit": "m",
+      "patterns": [
+        "(?:单跨|最大跨径|跨径|跨度)[^0-9]{0,8}(\\d+(?:\\.\\d+)?)\\s*(?:米|m|M)"
+      ]
+    },
+    "total_length_m": {
+      "label": "桥梁总长",
+      "unit": "m",
+      "patterns": [
+        "(?:桥梁总长|桥长|桥梁全长|全长|总长)[^0-9]{0,8}(\\d+(?:\\.\\d+)?)\\s*(?:米|m|M)"
+      ]
+    },
+    "tunnel_length_m": {
+      "label": "隧道单洞长度",
+      "unit": "m",
+      "patterns": [
+        "(?:隧道长度|单洞长度|洞长)[^0-9]{0,8}(\\d+(?:\\.\\d+)?)\\s*(?:米|m|M)"
+      ]
+    },
+    "tunnel_section_m2": {
+      "label": "隧道断面面积",
+      "unit": "平方米",
+      "patterns": [
+        "(?:隧道)?(?:开挖)?断面(?:面积)?[^0-9]{0,6}(\\d+(?:\\.\\d+)?)\\s*(?:平方米|平米|m²|m2|㎡)"
+      ]
+    }
+  },
+  "road_grade_patterns": [
+    {
+      "value": "高速公路",
+      "patterns": [
+        "高速公路"
+      ]
+    },
+    {
+      "value": "一级公路",
+      "patterns": [
+        "一级公路"
+      ]
+    },
+    {
+      "value": "二级公路",
+      "patterns": [
+        "二级公路"
+      ]
+    },
+    {
+      "value": "三级公路",
+      "patterns": [
+        "三级公路"
+      ]
+    },
+    {
+      "value": "四级公路",
+      "patterns": [
+        "四级公路"
+      ]
+    }
+  ],
+  "all_road_grades": [
+    "高速公路",
+    "一级公路",
+    "二级公路",
+    "三级公路",
+    "四级公路"
+  ],
+  "categories": [
+    {
+      "key": "地基基础工程",
+      "aliases": [
+        "地基基础",
+        "地基基础工程",
+        "桩基",
+        "基坑",
+        "地基处理",
+        "灌注桩"
+      ],
+      "matcher_categories": [
+        "桩基工程"
+      ],
+      "levels": {
+        "一级": {
+          "verified": true,
+          "unlimited": true,
+          "scope_text": "可承担各类地基基础工程的施工",
+          "basis_clause": "13.4.1 地基基础工程专业承包一级承包工程范围",
+          "checks": [],
+          "source_pages": [
+            87,
+            88
+          ],
+          "source_sha256": "2d3dcf4484c604eb9e81a8308f32b81d19dea39318301380590b22d7a32ffc16"
+        },
+        "二级": {
+          "verified": true,
+          "unlimited": false,
+          "scope_text": "可承担高度100米以下工业、民用建筑工程和高度120米以下构筑物的地基基础工程；刚性桩复合地基处理深度不超过24米、其他地基处理深度不超过10米；单桩承受设计荷载5000千牛以下的桩基础工程；开挖深度不超过15米的基坑围护工程",
+          "basis_clause": "13.4.2 地基基础工程专业承包二级承包工程范围",
+          "checks": [
+            {
+              "kind": "max",
+              "param": "pit_depth_m",
+              "value": 15,
+              "label": "基坑开挖深度",
+              "applies_to": [
+                "基坑",
+                "基槽",
+                "围护"
+              ]
+            },
+            {
+              "kind": "max",
+              "param": "single_pile_load_kn",
+              "value": 5000,
+              "label": "单桩承受设计荷载",
+              "applies_to": [
+                "桩",
+                "灌注桩"
+              ]
+            },
+            {
+              "kind": "max",
+              "param": "rigid_composite_depth_m",
+              "value": 24,
+              "label": "刚性桩复合地基处理深度",
+              "applies_to": [
+                "复合地基"
+              ]
+            },
+            {
+              "kind": "max",
+              "param": "ground_treatment_depth_m",
+              "value": 10,
+              "label": "其他地基处理深度",
+              "applies_to": [
+                "地基处理",
+                "换填",
+                "预压"
+              ]
+            },
+            {
+              "kind": "max",
+              "param": "building_height_m",
+              "value": 100,
+              "label": "工业与民用建筑高度",
+              "applies_to": [
+                "建筑",
+                "厂房",
+                "住宅",
+                "楼"
+              ]
+            },
+            {
+              "kind": "max",
+              "param": "structure_height_m",
+              "value": 120,
+              "label": "构筑物高度",
+              "applies_to": [
+                "构筑物"
+              ]
+            }
+          ],
+          "source_pages": [
+            87,
+            88
+          ],
+          "source_sha256": "2d3dcf4484c604eb9e81a8308f32b81d19dea39318301380590b22d7a32ffc16"
+        },
+        "三级": {
+          "verified": true,
+          "unlimited": false,
+          "scope_text": "可承担高度50米以下工业、民用建筑工程和高度70米以下构筑物的地基基础工程；深度不超过18米的刚性桩复合地基处理或深度不超过8米的其它地基处理工程；单桩承受设计荷载3000千牛以下的桩基础工程；开挖深度不超过12米的基坑围护工程",
+          "basis_clause": "13.4.3 地基基础工程专业承包三级承包工程范围",
+          "checks": [
+            {
+              "kind": "max",
+              "param": "pit_depth_m",
+              "value": 12,
+              "label": "基坑开挖深度",
+              "applies_to": [
+                "基坑",
+                "基槽",
+                "围护"
+              ]
+            },
+            {
+              "kind": "max",
+              "param": "single_pile_load_kn",
+              "value": 3000,
+              "label": "单桩承受设计荷载",
+              "applies_to": [
+                "桩",
+                "灌注桩"
+              ]
+            },
+            {
+              "kind": "max",
+              "param": "rigid_composite_depth_m",
+              "value": 18,
+              "label": "刚性桩复合地基处理深度",
+              "applies_to": [
+                "复合地基"
+              ]
+            },
+            {
+              "kind": "max",
+              "param": "ground_treatment_depth_m",
+              "value": 8,
+              "label": "其他地基处理深度",
+              "applies_to": [
+                "地基处理",
+                "换填",
+                "预压"
+              ]
+            },
+            {
+              "kind": "max",
+              "param": "building_height_m",
+              "value": 50,
+              "label": "工业与民用建筑高度",
+              "applies_to": [
+                "建筑",
+                "厂房",
+                "住宅",
+                "楼"
+              ]
+            },
+            {
+              "kind": "max",
+              "param": "structure_height_m",
+              "value": 70,
+              "label": "构筑物高度",
+              "applies_to": [
+                "构筑物"
+              ]
+            }
+          ],
+          "source_pages": [
+            87,
+            88
+          ],
+          "source_sha256": "2d3dcf4484c604eb9e81a8308f32b81d19dea39318301380590b22d7a32ffc16"
+        }
+      }
+    },
+    {
+      "key": "路基工程",
+      "aliases": [
+        "路基",
+        "公路路基",
+        "路基工程"
+      ],
+      "matcher_categories": [
+        "路基工程"
+      ],
+      "levels": {
+        "一级": {
+          "verified": true,
+          "unlimited": true,
+          "scope_text": "可承担各级公路的路基、中小桥涵、防护及排水、软基处理工程的施工。",
+          "basis_clause": "29.4.1 路基工程专业承包一级承包工程范围",
+          "checks": [],
+          "source_pages": [
+            147
+          ],
+          "source_sha256": "2d3dcf4484c604eb9e81a8308f32b81d19dea39318301380590b22d7a32ffc16"
+        },
+        "二级": {
+          "verified": true,
+          "unlimited": false,
+          "scope_text": "可承担一级标准以下公路的路基、中小桥涵、防护及排水、软基处理工程的施工。",
+          "basis_clause": "29.4.2 路基工程专业承包二级承包工程范围",
+          "checks": [
+            {
+              "kind": "grade_allowed",
+              "param": "road_grade",
+              "allowed": [
+                "一级公路",
+                "二级公路",
+                "三级公路",
+                "四级公路"
+              ],
+              "label": "可承担公路等级"
+            }
+          ],
+          "source_pages": [
+            147
+          ],
+          "source_sha256": "2d3dcf4484c604eb9e81a8308f32b81d19dea39318301380590b22d7a32ffc16"
+        },
+        "三级": {
+          "verified": true,
+          "unlimited": false,
+          "scope_text": "可承担二级标准以下公路的路基、中小桥涵、防护及排水、软基处理工程的施工。",
+          "basis_clause": "29.4.3 路基工程专业承包三级承包工程范围",
+          "checks": [
+            {
+              "kind": "grade_allowed",
+              "param": "road_grade",
+              "allowed": [
+                "二级公路",
+                "三级公路",
+                "四级公路"
+              ],
+              "label": "可承担公路等级"
+            }
+          ],
+          "source_pages": [
+            147
+          ],
+          "source_sha256": "2d3dcf4484c604eb9e81a8308f32b81d19dea39318301380590b22d7a32ffc16"
+        }
+      }
+    },
+    {
+      "key": "路面工程",
+      "aliases": [
+        "路面",
+        "公路路面",
+        "路面工程"
+      ],
+      "matcher_categories": [
+        "路面工程"
+      ],
+      "levels": {
+        "一级": {
+          "verified": true,
+          "unlimited": true,
+          "scope_text": "可承担各级公路路面工程的施工。",
+          "basis_clause": "28.4.1 路面工程专业承包一级承包工程范围",
+          "checks": [],
+          "source_pages": [
+            142
+          ],
+          "source_sha256": "2d3dcf4484c604eb9e81a8308f32b81d19dea39318301380590b22d7a32ffc16"
+        },
+        "二级": {
+          "verified": true,
+          "unlimited": false,
+          "scope_text": "可承担一级以下公路路面工程的施工。",
+          "basis_clause": "28.4.2 路面工程专业承包二级承包工程范围",
+          "checks": [
+            {
+              "kind": "grade_allowed",
+              "param": "road_grade",
+              "allowed": [
+                "一级公路",
+                "二级公路",
+                "三级公路",
+                "四级公路"
+              ],
+              "label": "可承担公路等级"
+            }
+          ],
+          "source_pages": [
+            142
+          ],
+          "source_sha256": "2d3dcf4484c604eb9e81a8308f32b81d19dea39318301380590b22d7a32ffc16"
+        },
+        "三级": {
+          "verified": true,
+          "unlimited": false,
+          "scope_text": "可承担二级以下公路路面工程的施工。",
+          "basis_clause": "28.4.3 路面工程专业承包三级承包工程范围",
+          "checks": [
+            {
+              "kind": "grade_allowed",
+              "param": "road_grade",
+              "allowed": [
+                "二级公路",
+                "三级公路",
+                "四级公路"
+              ],
+              "label": "可承担公路等级"
+            }
+          ],
+          "source_pages": [
+            142
+          ],
+          "source_sha256": "2d3dcf4484c604eb9e81a8308f32b81d19dea39318301380590b22d7a32ffc16"
+        }
+      }
+    },
+    {
+      "key": "桥梁工程",
+      "aliases": [
+        "桥梁",
+        "桥梁工程",
+        "墩柱",
+        "盖梁",
+        "梁板"
+      ],
+      "matcher_categories": [
+        "桥梁工程"
+      ],
+      "levels": {
+        "一级": {
+          "verified": true,
+          "unlimited": true,
+          "scope_text": "可承担各类桥梁工程的施工",
+          "basis_clause": "19.4.1 桥梁工程专业承包一级承包工程范围",
+          "checks": [],
+          "source_pages": [
+            107
+          ],
+          "source_sha256": "2d3dcf4484c604eb9e81a8308f32b81d19dea39318301380590b22d7a32ffc16"
+        },
+        "二级": {
+          "verified": true,
+          "unlimited": false,
+          "scope_text": "可承担单跨150米以下、单座桥梁总长1000米以下桥梁工程的施工",
+          "basis_clause": "19.4.2 桥梁工程专业承包二级承包工程范围",
+          "checks": [
+            {
+              "kind": "max",
+              "param": "single_span_m",
+              "value": 150,
+              "label": "单跨跨径",
+              "applies_to": [
+                "桥梁",
+                "桥",
+                "墩柱",
+                "盖梁",
+                "梁板"
+              ]
+            },
+            {
+              "kind": "max",
+              "param": "total_length_m",
+              "value": 1000,
+              "label": "单座桥梁总长",
+              "applies_to": [
+                "桥梁",
+                "桥"
+              ]
+            }
+          ],
+          "source_pages": [
+            107
+          ],
+          "source_sha256": "2d3dcf4484c604eb9e81a8308f32b81d19dea39318301380590b22d7a32ffc16"
+        },
+        "三级": {
+          "verified": true,
+          "unlimited": false,
+          "scope_text": "可承担单跨50米以下、单座桥梁总长120米以下桥梁工程的施工",
+          "basis_clause": "19.4.3 桥梁工程专业承包三级承包工程范围",
+          "checks": [
+            {
+              "kind": "max",
+              "param": "single_span_m",
+              "value": 50,
+              "label": "单跨跨径",
+              "applies_to": [
+                "桥梁",
+                "桥",
+                "墩柱",
+                "盖梁",
+                "梁板"
+              ]
+            },
+            {
+              "kind": "max",
+              "param": "total_length_m",
+              "value": 120,
+              "label": "单座桥梁总长",
+              "applies_to": [
+                "桥梁",
+                "桥"
+              ]
+            }
+          ],
+          "source_pages": [
+            107
+          ],
+          "source_sha256": "2d3dcf4484c604eb9e81a8308f32b81d19dea39318301380590b22d7a32ffc16"
+        }
+      }
+    },
+    {
+      "key": "隧道工程",
+      "aliases": [
+        "隧道",
+        "隧道工程"
+      ],
+      "matcher_categories": [
+        "隧道工程"
+      ],
+      "levels": {
+        "一级": {
+          "verified": true,
+          "unlimited": true,
+          "scope_text": "可承担各类隧道工程的施工",
+          "basis_clause": "20.4.1 隧道工程专业承包一级承包工程范围",
+          "checks": [],
+          "source_pages": [
+            111
+          ],
+          "source_sha256": "2d3dcf4484c604eb9e81a8308f32b81d19dea39318301380590b22d7a32ffc16"
+        },
+        "二级": {
+          "verified": true,
+          "unlimited": false,
+          "scope_text": "可承担断面60平方米以下且单洞长度1000米以下的隧道工程施工。",
+          "basis_clause": "20.4.2 隧道工程专业承包二级承包工程范围",
+          "checks": [
+            {
+              "kind": "max",
+              "param": "tunnel_section_m2",
+              "value": 60,
+              "label": "隧道断面面积",
+              "applies_to": [
+                "隧道"
+              ]
+            },
+            {
+              "kind": "max",
+              "param": "tunnel_length_m",
+              "value": 1000,
+              "label": "单洞长度",
+              "applies_to": [
+                "隧道"
+              ]
+            }
+          ],
+          "source_pages": [
+            111
+          ],
+          "source_sha256": "2d3dcf4484c604eb9e81a8308f32b81d19dea39318301380590b22d7a32ffc16"
+        },
+        "三级": {
+          "verified": true,
+          "unlimited": false,
+          "scope_text": "可承担断面40平方米以下且单洞长度500米以下的隧道工程施工。",
+          "basis_clause": "20.4.3 隧道工程专业承包三级承包工程范围",
+          "checks": [
+            {
+              "kind": "max",
+              "param": "tunnel_section_m2",
+              "value": 40,
+              "label": "隧道断面面积",
+              "applies_to": [
+                "隧道"
+              ]
+            },
+            {
+              "kind": "max",
+              "param": "tunnel_length_m",
+              "value": 500,
+              "label": "单洞长度",
+              "applies_to": [
+                "隧道"
+              ]
+            }
+          ],
+          "source_pages": [
+            111
+          ],
+          "source_sha256": "2d3dcf4484c604eb9e81a8308f32b81d19dea39318301380590b22d7a32ffc16"
+        }
+      }
+    }
+  ],
+  "numeric_boundary_rule": {
+    "basis_clause": "总则四（七）",
+    "quote": "本标准的“以上”、“以下”、“不少于”、“超过”、“不超过”均包含本数。",
+    "source_pages": [
+      9,
+      10
+    ],
+    "source_sha256": "2d3dcf4484c604eb9e81a8308f32b81d19dea39318301380590b22d7a32ffc16"
+  }
+}

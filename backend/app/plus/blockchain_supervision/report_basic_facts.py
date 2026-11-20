@@ -2,19 +2,43 @@
 
 import re
 import unicodedata
+from collections import Counter
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
 from types import SimpleNamespace
 
+from .a2_check import norm_company
+from .extract import party_scoped_pages
 from .parsing import material_page_readable
 
 
-_PARTY_LABELS = {
-    "general_contractor": re.compile(r"施工总承包单位[ \t]*[:：][ \t]*([^\n|；;]{2,100})"),
-    "employer": re.compile(r"(?:建设单位|业主)[ \t]*[:：][ \t]*([^\n|；;]{2,100})"),
-    "subcontractor": re.compile(r"(?:分包单位名称|分包单位)[ \t]*[:：][ \t]*([^\n|；;]{2,100})"),
+# 主体标签必须按材料角色解释：总包合同里的「发包人」是建设单位，分包合同里的
+# 「发包人」才是施工总承包单位；泛化的「乙方」不参与分包人判定。
+_ROLE_PARTY_LABELS = {
+    "general": {
+        "employer": {"发包人", "发包单位", "建设单位", "业主", "甲方"},
+        "general_contractor": {"承包人", "承包单位", "施工总承包单位", "总承包单位", "乙方"},
+    },
+    "sub": {
+        "general_contractor": {"发包人", "发包单位", "甲方"},
+        "subcontractor": {"分包人", "分包单位", "分包单位名称"},
+    },
+    "labor": {
+        "general_contractor": {"发包人", "发包单位", "甲方"},
+        "subcontractor": {"分包人", "分包单位", "分包单位名称"},
+    },
+    "packet": {
+        "general_contractor": {"施工总承包单位", "总承包单位"},
+        "employer": {"建设单位", "业主"},
+        "subcontractor": {"分包单位名称", "分包单位"},
+    },
 }
+_PARTY_LINE = re.compile(
+    r"(?P<label>施工总承包单位|总承包单位|发包单位|发包人|建设单位|业主|"
+    r"分包单位名称|分包单位|分包人|承包单位|承包人|甲方|乙方)"
+    r"(?:名称)?(?:[（(]全称[）)])?\s*[:：]\s*(?P<name>[^\n|；;：:]{2,100})"
+)
 _COMPANY_END = re.compile(r"^(.+?(?:有限责任公司|股份有限公司|有限公司|集团公司))")
 _REPORT_FORM = re.compile(r"(?:劳务|专业|工程)?分包报审表|分包单位认可表")
 _REPORT_RECIPIENT = re.compile(r"^致\s*[:：]\s*(.+)$")
@@ -24,6 +48,21 @@ _SECTION = re.compile(r"(主线施工\s*[0-9一二三四五六七八九十]+\s*�
 _AMOUNT = re.compile(r"(?:拟分包金额|分包金额)[ \t]*[:：][ \t]*([0-9]+(?:\.[0-9]+)?)[ \t]*(万元|元)")
 _AMOUNT_VALUE = re.compile(r"^([0-9]+(?:\.[0-9]+)?)[ \t]*(万元|元)$")
 _ROAD_RANGE = re.compile(r"[（(]([GS]\d+公路\s*[-－—至]\s*[GS]\d+公路)[）)]", re.I)
+_ITEM_NAME = re.compile(r"(?:分包工程名称|专业分包工程名称|劳务分包工程名称)\s*[:：]\s*([^\n|；;]{2,200})")
+_SCOPE_LABEL = re.compile(r"(?:分包工程承包范围和内容|分包工程范围和内容|分包工程内容)\s*[:：]\s*([^\n|；;]{2,300})")
+_TOTAL_PROJECT = re.compile(r"(?:总包工程名称|总承包工程名称)\s*[:：]\s*([^\n|；;]{2,200})")
+_CONTRACT_AMOUNT_INCL = re.compile(
+    r"(?<!不含增值税的)(?<!不含增值税)(?<!不含税的)(?<!不含税)"
+    r"签约合同价(?:款)?"
+    r"(?![（(]?\s*不含(?:增值)?税)"
+    r"(?:[（(]含税[）)])?\s*(?:为)?\s*[:：]?[^\d¥￥；;。\n]{0,120}[¥￥]?\s*"
+    r"([0-9][0-9,，]*(?:\.[0-9]+)?)\s*(万元|元)")
+_CONTRACT_AMOUNT_EXCL = re.compile(
+    r"(?:不含增值税的?签约合同价(?:款)?|不含税(?:的)?签约合同价(?:款)?)"
+    r"\s*(?:为)?\s*[:：]?[^\d¥￥；;。\n]{0,120}[¥￥]?\s*"
+    r"([0-9][0-9,，]*(?:\.[0-9]+)?)\s*(万元|元)")
+_TAX_RATE = re.compile(
+    r"(?:增值税)?税率(?:/征收率)?\s*[:：=＝]?\s*([0-9]+(?:\.[0-9]+)?)\s*[%％]")
 
 
 def _plain_text(text):
@@ -83,9 +122,10 @@ def _table_facts(text, base, found):
             quote = " | ".join(cells)
             for header, cell in zip(headers, cells):
                 if not cell: continue
-                if header in {"拟分包工程内容", "分包事项", "拟分包内容"}:
+                if header in {"拟分包工程内容", "分包事项", "拟分包内容", "分包工程名称"}:
                     found["subcontract_item_name"].append({**base, "value": cell, "quote": quote})
-                if header in {"拟分包范围", "分包范围"}:
+                if header in {"拟分包范围", "分包范围", "分包工程承包范围和内容",
+                              "分包工程范围和内容", "分包工程内容"}:
                     found["subcontract_scope"].append({**base, "value": cell, "quote": quote})
                 amount_header = re.fullmatch(r"(?:拟分包金额|分包金额)(?:\((万元|元)\))?", header)
                 total_header = re.fullmatch(r"(?:合价|合计金额)\((万元|元)\)", header)
@@ -223,27 +263,107 @@ def _amount_in_yuan(row):
     return value
 
 
+def _amount_text(value):
+    """金额文本保留合同精度，不输出浮点尾差。"""
+    try:
+        # 万元口径最多保留 6 位小数（元→万元换算），先定点再归一化，
+        # 避免 float 尾差（455.75987100000003）进入报告。
+        number = Decimal(str(value)).quantize(Decimal("0.000001")).normalize()
+    except InvalidOperation:
+        return str(value)
+    text = format(number, "f")
+    return text.rstrip("0").rstrip(".") if "." in text else text
+
+
 def merge_amount_facts(packet_amount, contract_amount):
     """Compare explicit amounts without replacing either source's precision."""
     if packet_amount.get("value") is not None and contract_amount.get("value") is not None:
         packet_value, contract_value = _amount_in_yuan(packet_amount), _amount_in_yuan(contract_amount)
-        if packet_value is not None and packet_value == contract_value:
+        same = (packet_value is not None and contract_value is not None
+                and packet_value.quantize(Decimal("0.01")) == contract_value.quantize(Decimal("0.01")))
+        if same:
+            # 报审表可能以「元」记账，合同以「万元」记账；相等时优先返回万元口径，
+            # 避免报告出现 4557598.71 元而丢失合同精度与含税说明。
+            if packet_amount.get("unit") == "万元":
+                return packet_amount
+            if contract_amount.get("unit") == "万元":
+                return {**contract_amount, "status": "matched",
+                        "value": _amount_text(contract_amount["value"]),
+                        "source": "contract+packet"}
             return packet_amount
         return {"status": "conflict", "value": None, "evidence": packet_amount.get("evidence") or [],
                 "contract_candidate": contract_amount}
     return packet_amount if packet_amount.get("status") in {"matched", "conflict"} else contract_amount
 
 
+def _clean_label_value(value):
+    """显式标签值只去掉边界标点，不改写正文。"""
+    return str(value or "").strip(" ：:;；，,。")
+
+
+def _company_core(name: str) -> str:
+    return re.sub(r"(?:有限责任公司|股份有限公司|集团有限公司|有限公司|集团公司)$",
+                  "", norm_company(name))
+
+
+def _majority_employer_resolution(evidence: list[dict]):
+    """建设单位名称多数一致且少数仅为 OCR 缺字时，按多数完整名确认。
+
+    只在「同一核心名称、短名是长名前缀、差异不超过 4 字、长名至少出现两处」
+    时生效；真正的不同公司仍保留冲突。
+    """
+    values = []
+    for item in evidence:
+        value = item.get("company_display") or item.get("company") or item.get("value")
+        if value:
+            values.append(str(value))
+    counts = Counter(norm_company(value) for value in values)
+    if len(counts) < 2:
+        return None
+    dominant, count = counts.most_common(1)[0]
+    if count < 2:
+        return None
+    core = _company_core(dominant)
+    for other in counts:
+        if other == dominant:
+            continue
+        other_core = _company_core(other)
+        if not (other_core and core.startswith(other_core)
+                and 0 < len(core) - len(other_core) <= 4):
+            return None
+    display = next((value for value in values if norm_company(value) == dominant), dominant)
+    return {"status": "matched", "company": dominant, "company_display": display,
+            "source": "majority_evidence",
+            "resolution_note": "多页一致证据（%d 处）" % count,
+            "evidence": evidence}
+
+
+def _amount_wan_text(row):
+    """金额统一换算为万元文本；无效行返回 None，不猜补单位。"""
+    value = _amount_in_yuan(row)
+    if value is None:
+        return None
+    text = format(value / Decimal(10000), "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
+
+
 def extract_report_basic_facts(materials):
     """只从可读的明确标签和清单标题生成可回指候选。"""
     found = {"general_contractor": [], "employer": [], "subcontractor": [], "subcontract_scope": [],
              "project_name": [], "contract_section": [], "subcontract_amount": [],
-             "subcontract_item_name": [], "submitted_date": []}
+             "subcontract_item_name": [], "submitted_date": [], "total_project_name": [],
+             "subcontract_amount_excl_tax": [], "subcontract_tax_rate": []}
     recipient_candidates = []
     scope_titles = []
     for material in materials or []:
         if getattr(material, "parse_state", None) != "done":
             continue
+        material_role = getattr(material, "role", None)
+        # 附属/补充协议常反转甲乙方；主体标签只取主合同页，金额/范围仍按全文读取。
+        party_pages = ({number for number, _text in party_scoped_pages(material)}
+                       if material_role in {"general", "sub", "labor"} else None)
         for page in getattr(material, "pages_json", None) or []:
             if not isinstance(page, dict):
                 continue
@@ -302,11 +422,47 @@ def extract_report_basic_facts(materials):
                         section = re.sub(r"\s+", "", section_match.group(1))
                         found["contract_section"].append({**base, "value": section,
                                                            "quote": line})
-                for key, pattern in _PARTY_LABELS.items():
-                    match = pattern.search(line)
-                    company = _COMPANY_END.match(match.group(1).strip()) if match else None
-                    if company:
-                        found[key].append({**base, "value": company.group(1), "quote": match.group(0)})
+                if material_role in _ROLE_PARTY_LABELS and (party_pages is None or number in party_pages):
+                    labels = _ROLE_PARTY_LABELS.get(material_role) or {}
+                    for match in _PARTY_LINE.finditer(line):
+                        key = next((role for role, words in labels.items()
+                                    if match.group("label") in words), None)
+                        company = _COMPANY_END.match(match.group("name").strip()) if key else None
+                        if company:
+                            found[key].append({**base, "value": company.group(1), "quote": match.group(0)})
+                if material_role in {"sub", "labor"}:
+                    item = _ITEM_NAME.search(line)
+                    if item:
+                        found["subcontract_item_name"].append(
+                            {**base, "value": _clean_label_value(item.group(1)),
+                             "quote": item.group(0)})
+                    total = _TOTAL_PROJECT.search(line)
+                    if total:
+                        found["total_project_name"].append(
+                            {**base, "value": _clean_label_value(total.group(1)),
+                             "quote": total.group(0)})
+                    scope = _SCOPE_LABEL.search(line)
+                    if scope:
+                        found["subcontract_scope"].append(
+                            {**base, "value": _clean_label_value(scope.group(1)),
+                             "quote": scope.group(0)})
+                    amount_incl = _CONTRACT_AMOUNT_INCL.search(line)
+                    if amount_incl:
+                        found["subcontract_amount"].append(
+                            {**base, "value": amount_incl.group(1).replace(",", "").replace("，", ""),
+                             "unit": amount_incl.group(2), "quote": amount_incl.group(0),
+                             "tax_basis": "含税"})
+                    amount_excl = _CONTRACT_AMOUNT_EXCL.search(line)
+                    if amount_excl:
+                        found["subcontract_amount_excl_tax"].append(
+                            {**base, "value": amount_excl.group(1).replace(",", "").replace("，", ""),
+                             "unit": amount_excl.group(2), "quote": amount_excl.group(0),
+                             "tax_basis": "不含税"})
+                    tax_rate = _TAX_RATE.search(line)
+                    if tax_rate:
+                        found["subcontract_tax_rate"].append(
+                            {**base, "value": tax_rate.group(1), "unit": "%",
+                             "quote": tax_rate.group(0)})
                 match = _TITLE.fullmatch(line)
                 if match:
                     prefix = lines[index - 1] if index and _PROJECT.fullmatch(lines[index - 1]) else ""
@@ -326,14 +482,24 @@ def extract_report_basic_facts(materials):
         if len(normalized) == 1 and len(ranges) <= 1:
             result["project_name"] = {"status": "matched", "value": max(projects, key=lambda row: len(row["value"]))["value"],
                                       "evidence": projects}
-    amounts = found["subcontract_amount"]
-    if amounts:
-        values_in_yuan = {_amount_in_yuan(row) for row in amounts}
-        if len(values_in_yuan) > 1:
-            result["subcontract_amount"].update(status="conflict", value=None)
+    for key in ("subcontract_amount", "subcontract_amount_excl_tax"):
+        rows = found[key]
+        if not rows:
+            continue
+        values = {value for value in (_amount_in_yuan(row) for row in rows) if value is not None}
+        if len(values) > 1:
+            result[key].update(status="conflict", value=None, unit=None)
+        elif len(values) == 1:
+            result[key].update(status="matched", value=_amount_wan_text(rows[0]), unit="万元",
+                               tax_basis=rows[0].get("tax_basis"))
+    rates = found["subcontract_tax_rate"]
+    if rates:
+        values = {_canonical(row["value"]) for row in rates}
+        if len(values) > 1:
+            result["subcontract_tax_rate"].update(status="conflict", value=None, unit=None)
         else:
-            result["subcontract_amount"].update(status="matched", value=amounts[0]["value"],
-                                                 unit=amounts[0]["unit"])
+            result["subcontract_tax_rate"].update(
+                status="matched", value=rates[0]["value"], unit="%")
     return result
 
 
@@ -349,24 +515,32 @@ def merge_party_facts(contract_evidence, packet_facts):
         contract_status = contract.get("status")
         packet_status = packet.get("status")
         contract_name = contract.get("company") if contract_status == "matched" else None
+        contract_display = (contract.get("company_display") or contract_name) if contract_status == "matched" else None
         packet_name = packet.get("value") if packet_status == "matched" else None
         contract_candidate = contract.get("candidate_company")
         evidence = list(contract.get("evidence") or []) + list(packet.get("evidence") or [])
         if contract_status == "conflict" or packet_status == "conflict" or (
                 contract_name and packet_name
-                and re.sub(r"\s+", "", contract_name) != re.sub(r"\s+", "", packet_name)) or (
+                and norm_company(contract_name) != norm_company(packet_name)) or (
                 contract_candidate and packet_name
-                and re.sub(r"\s+", "", contract_candidate) != re.sub(r"\s+", "", packet_name)):
-            output[role] = {"status": "conflict", "company": None, "evidence": evidence}
-        elif packet_name and (not contract_name or contract_name == packet_name):
-            output[role] = {"status": "matched", "company": packet_name, "evidence": evidence}
+                and norm_company(contract_candidate) != norm_company(packet_name)):
+            resolved = _majority_employer_resolution(evidence) if role == "employer" else None
+            output[role] = resolved or {"status": "conflict", "company": None, "evidence": evidence}
+        elif packet_name and (not contract_name or norm_company(contract_name) == norm_company(packet_name)):
+            output[role] = {"status": "matched", "company": packet_name,
+                            "company_display": packet_name, "evidence": evidence}
         elif contract_name:
-            output[role] = {"status": "matched", "company": contract_name, "evidence": evidence}
+            output[role] = {"status": "matched", "company": contract_name,
+                            "company_display": contract_display, "evidence": evidence}
         elif contract_candidate:
             output[role] = {"status": "unresolved", "company": None,
-                            "candidate_company": contract_candidate, "evidence": evidence}
+                            "candidate_company": contract_candidate,
+                            "candidate_company_display": (contract.get("candidate_company_display")
+                                                          or contract_candidate),
+                            "evidence": evidence}
         elif packet_name:
-            output[role] = {"status": "matched", "company": packet_name, "evidence": evidence}
+            output[role] = {"status": "matched", "company": packet_name,
+                            "company_display": packet_name, "evidence": evidence}
         else:
             output[role] = {"status": "unresolved", "company": None, "evidence": evidence}
     recipients = packet_facts.get("employer_recipient_candidates") or []

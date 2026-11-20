@@ -11,11 +11,30 @@
 //
 // 口径来源：docs/plus/blockchain-supervision/design/100-刀C规格与实现契约-v1.md §2。
 
-/** 三态码（顺序即界面呈现顺序）。 */
+/** 计数三态码（顺序即界面呈现顺序）。扩展状态不改变计数口径。 */
 export const STATUS_CODES = ['hit', 'miss', 'undecidable']
 
-/** 三态 → 对外中文词（镜像自后端 models.STATUS_LABELS）。 */
-export const STATUS_WORD = { hit: '不符合', miss: '符合', undecidable: '无法核实' }
+/** 三态 + 扩展状态 → 对外中文词（镜像自后端 models.STATUS_LABELS）。 */
+export const STATUS_WORD = {
+  hit: '不符合',
+  miss: '符合',
+  undecidable: '无法核实',
+  not_included: '缺项',
+  not_applicable: '不适用',
+}
+
+/**
+ * 扩展状态 → 计数三态（镜像自后端 models._STATUS_TO_COUNTED）。
+ * - not_included（缺项）折回 undecidable：需人工/补正，不能当作符合；
+ * - not_applicable（不适用）折回 miss：本维度不适用，不构成待处理。
+ * 只影响前端计数与筛选口径，不改变 finding.status 本身，也不覆盖后端 status_label。
+ */
+export const COUNTED_STATUS = { not_included: 'undecidable', not_applicable: 'miss' }
+
+/** 取计数三态；未知状态原样返回（历史快照兼容）。 */
+export function countedStatusOf(status) {
+  return COUNTED_STATUS[status] || status
+}
 
 /** 兜底条款（open_term=true）的展示词：只登记，不构成结论。 */
 export const OPEN_TERM_WORD = '仅登记'
@@ -66,9 +85,9 @@ export function statusWordOf(status) {
 }
 
 /**
- * 机器三态 → 用户主路径两类结果。
- * - miss → passed（通过）
- * - hit / undecidable → pending（待处理）
+ * 机器三态 → 用户主路径两类结果（扩展状态先按 COUNTED_STATUS 折叠）。
+ * - miss / not_applicable → passed（通过）
+ * - hit / undecidable / not_included → pending（待处理）
  * - open_term / 未知状态 → null（不构成可处置结果）
  * @param {object|string|null|undefined} findingOrStatus
  * @returns {'passed'|'pending'|null}
@@ -78,7 +97,8 @@ export function userOutcomeOf(findingOrStatus) {
     if (findingOrStatus.open_term === true) return null
     return userOutcomeOf(findingOrStatus.status)
   }
-  if (findingOrStatus === 'miss') return 'passed'
-  if (findingOrStatus === 'hit' || findingOrStatus === 'undecidable') return 'pending'
+  const status = countedStatusOf(findingOrStatus)
+  if (status === 'miss') return 'passed'
+  if (status === 'hit' || status === 'undecidable') return 'pending'
   return null
 }

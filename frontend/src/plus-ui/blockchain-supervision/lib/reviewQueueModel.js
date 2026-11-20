@@ -1,4 +1,5 @@
 import { isManualPrompt, isMaterialOnly, isOpenTerm, reviewBucket } from './reviewDecision'
+import { countedStatusOf } from './statusDisplay'
 
 export const REVIEW_QUEUE_SECTIONS = [
   { key: 'pending', label: '待处理' },
@@ -14,11 +15,15 @@ export function classifyReviewItem(item) {
   if (isOpenTerm(item) || isMaterialOnly(item)) return null
   const bucket = reviewBucket(item)
   if (bucket === 'accepted' || bucket === 'ignored') return 'processed'
-  if (item?.status === 'undecidable') return isManualPrompt(item) ? 'manual_prompt' : 'undecidable'
-  if (item?.status === 'hit') return 'hit'
+  // 缺项折回「无法核实」桶（与后端计数口径一致）；行内展示仍用后端 status_label「缺项」。
+  const status = countedStatusOf(item?.status)
+  if (status === 'undecidable') return isManualPrompt(item) ? 'manual_prompt' : 'undecidable'
+  if (status === 'hit') return 'hit'
   return null
 }
 
+// 报告门禁口径保持后端原义：只有「待人工处置的无法核实」阻断；
+// 缺项（not_included）属于条件处置，不在此折叠，避免把可生成报告的场景误拦。
 export function blocksReportReview(item) {
   return !isOpenTerm(item) && !isManualPrompt(item) && item?.status === 'undecidable' && reviewBucket(item) === 'pending'
     && (item.reportReviewBlocking ?? item.report_review_blocking) !== false
@@ -28,7 +33,7 @@ export function reviewQueueCounts(groups) {
   const items = flattenGroups(groups).filter((item) => classifyReviewItem(item))
   return {
     total: items.length,
-    undecidable: items.filter((item) => item.status === 'undecidable' && !isManualPrompt(item)
+    undecidable: items.filter((item) => countedStatusOf(item.status) === 'undecidable' && !isManualPrompt(item)
       && reviewBucket(item) === 'pending').length,
     manualPrompt: items.filter((item) => isManualPrompt(item) && reviewBucket(item) === 'pending').length,
     hit: items.filter((item) => item.status === 'hit' && reviewBucket(item) === 'pending').length,
@@ -40,7 +45,7 @@ export function reviewQueueCounts(groups) {
 export function buildReviewQueueSections(groups, filter = 'pending') {
   const issueItems = flattenGroups(groups).filter((item) => classifyReviewItem(item))
   const pendingItems = issueItems.filter((item) => reviewBucket(item) === 'pending')
-  const undecidableItems = pendingItems.filter((item) => item.status === 'undecidable' && !isManualPrompt(item))
+  const undecidableItems = pendingItems.filter((item) => countedStatusOf(item.status) === 'undecidable' && !isManualPrompt(item))
   const processedItems = issueItems.filter((item) => ['accepted', 'ignored'].includes(reviewBucket(item)))
   if (filter === 'pending') return pendingItems.length ? [{ key: 'pending', label: '待处理', items: pendingItems }] : []
   if (filter === 'undecidable') return undecidableItems.length ? [{ key: 'undecidable', label: '无法核实', items: undecidableItems }] : []

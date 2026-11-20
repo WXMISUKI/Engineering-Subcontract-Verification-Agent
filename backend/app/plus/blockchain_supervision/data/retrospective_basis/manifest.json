@@ -1,0 +1,90 @@
+{
+  "version": "2026-11-19.1",
+  "scope": "单合同倒查历史依据选段；不扩充准入规则",
+  "documents": [
+    {
+      "doc_id": "SC-724-2019-RETRO",
+      "doc_title": "保障农民工工资支付条例",
+      "doc_no": "国务院令第724号",
+      "issuer": "国务院",
+      "document_role": "full_text",
+      "authority_level": "administrative_regulation",
+      "strength": "A",
+      "effective_from": "2020-05-01",
+      "effective_to": null,
+      "human_verified": false,
+      "content_format": "official_html",
+      "citation_mode": "clause",
+      "source_url": "https://www.gov.cn/gongbao/content/2020/content_5469641.htm",
+      "source_file": "wages.html",
+      "source_sha256": "162a6691906a2c80c110366b20bc00b31af9074765b6932411010d1923ef1c12",
+      "effective_source_quote": "自2020年5月1日起施行",
+      "verification": "official_text_exact_match",
+      "verification_note": "机器对照官方公报原文及公布的施行日期；未冒充人工校对。仅登记所列条款，不宣称已穷尽后续修订、2026现行效力或项目全部适用条件。"
+    },
+    {
+      "doc_id": "SC-393-2003-RETRO",
+      "doc_title": "建设工程安全生产管理条例",
+      "doc_no": "国务院令第393号",
+      "issuer": "国务院",
+      "document_role": "full_text",
+      "authority_level": "administrative_regulation",
+      "strength": "A",
+      "effective_from": "2004-02-01",
+      "effective_to": null,
+      "human_verified": false,
+      "content_format": "official_html",
+      "citation_mode": "clause",
+      "source_url": "https://www.gov.cn/gongbao/content/2004/content_63050.htm",
+      "source_file": "safety.html",
+      "source_sha256": "ca1a67bdc2e176eca3f42405388f23bcd8ed90b029130a4039cad250765de959",
+      "effective_source_quote": "自2004年2月1日起施行",
+      "verification": "official_text_exact_match",
+      "verification_note": "机器对照官方公报原文及公布的施行日期；未冒充人工校对。仅登记所列条款，不宣称已穷尽后续修订、2026现行效力或项目全部适用条件。"
+    }
+  ],
+  "clauses": [
+    {
+      "doc_id": "SC-724-2019-RETRO",
+      "clause_id": "SC-724-2019-RETRO#24",
+      "marker": "第二十四条",
+      "text": "第二十四条　建设单位应当向施工单位提供工程款支付担保。\n建设单位与施工总承包单位依法订立书面工程施工合同，应当约定工程款计量周期、工程款进度结算办法以及人工费用拨付周期，并按照保障农民工工资按时足额支付的要求约定人工费用。人工费用拨付周期不得超过1个月。\n建设单位与施工总承包单位应当将工程施工合同保存备查。",
+      "human_verified": false
+    },
+    {
+      "doc_id": "SC-724-2019-RETRO",
+      "clause_id": "SC-724-2019-RETRO#26",
+      "marker": "第二十六条",
+      "text": "第二十六条　施工总承包单位应当按照有关规定开设农民工工资专用账户，专项用于支付该工程建设项目农民工工资。\n开设、使用农民工工资专用账户有关资料应当由施工总承包单位妥善保存备查。",
+      "human_verified": false
+    },
+    {
+      "doc_id": "SC-724-2019-RETRO",
+      "clause_id": "SC-724-2019-RETRO#30",
+      "marker": "第三十条",
+      "text": "第三十条　分包单位对所招用农民工的实名制管理和工资支付负直接责任。\n施工总承包单位对分包单位劳动用工和工资发放等情况进行监督。\n分包单位拖欠农民工工资的，由施工总承包单位先行清偿，再依法进行追偿。\n工程建设项目转包，拖欠农民工工资的，由施工总承包单位先行清偿，再依法进行追偿。",
+      "human_verified": false
+    },
+    {
+      "doc_id": "SC-724-2019-RETRO",
+      "clause_id": "SC-724-2019-RETRO#31",
+      "marker": "第三十一条",
+      "text": "第三十一条　工程建设领域推行分包单位农民工工资委托施工总承包单位代发制度。\n分包单位应当按月考核农民工工作量并编制工资支付表，经农民工本人签字确认后，与当月工程进度等情况一并交施工总承包单位。\n施工总承包单位根据分包单位编制的工资支付表，通过农民工工资专用账户直接将工资支付到农民工本人的银行账户，并向分包单位提供代发工资凭证。\n用于支付农民工工资的银行账户所绑定的农民工本人社会保障卡或者银行卡，用人单位或者其他人员不得以任何理由扣押或者变相扣押。",
+      "human_verified": false
+    },
+    {
+      "doc_id": "SC-724-2019-RETRO",
+      "clause_id": "SC-724-2019-RETRO#35",
+      "marker": "第三十五条",
+      "text": "第三十五条　建设单位与施工总承包单位或者承包单位与分包单位因工程数量、质量、造价等产生争议的，建设单位不得因争议不按照本条例第二十四条的规定拨付工程款中的人工费用，施工总承包单位也不得因争议不按照规定代发工资。",
+      "human_verified": false
+    },
+    {
+      "doc_id": "SC-393-2003-RETRO",
+      "clause_id": "SC-393-2003-RETRO#24",
+      "marker": "第二十四条",
+      "text": "第二十四条　建设工程实行施工总承包的，由总承包单位对施工现场的安全生产负总责。\n总承包单位应当自行完成建设工程主体结构的施工。\n总承包单位依法将建设工程分包给其他单位的，分包合同中应当明确各自的安全生产方面的权利、义务。总承包单位和分包单位对分包工程的安全生产承担连带责任。\n分包单位应当服从总承包单位的安全生产管理，分包单位不服从管理导致生产安全事故的，由分包单位承担主要责任。",
+      "human_verified": false
+    }
+  ]
+}

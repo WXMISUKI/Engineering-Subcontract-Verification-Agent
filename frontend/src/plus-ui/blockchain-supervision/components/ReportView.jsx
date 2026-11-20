@@ -1,3 +1,5 @@
+import RetrospectiveReportView from './RetrospectiveReportView'
+import { ReportFrame } from './ReportFrame'
 import { ArrowLeft, Download, FileText, LoaderCircle } from 'lucide-react'
 import ReferenceSnapshot from './ReferenceSnapshot'
 import ReportTemplateV13 from './ReportTemplateV13'
@@ -5,7 +7,7 @@ import ReportTemplateV14 from './ReportTemplateV14'
 import ReportWorksheetV14 from './ReportWorksheetV14'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { countOf, statusLabelOf } from '../lib/statusDisplay'
+import { countedStatusOf, countOf, statusLabelOf } from '../lib/statusDisplay'
 import { normalizeReportReadiness } from '../lib/reportReadinessModel'
 
 // 应用内草稿披露读取/执行缺口；正式输出资格由当前任务 DTO 确认。
@@ -20,7 +22,7 @@ function issueItems(sections) {
   // 兜底条款（open_term）只登记、不构成结论：放进「不符合项清单」会让人去补一份并不存在
   // 的材料（BS-P1-11）。它们由 openTermItems 单独呈现。
   return sections.flatMap((section) => (section.items || [])
-    .filter((item) => !item.open_term && (item.status === 'hit' || item.status === 'undecidable'))
+    .filter((item) => !item.open_term && ['hit', 'undecidable'].includes(countedStatusOf(item.status)))
     .map((item) => ({ ...item, category: item.category || section.title })))
 }
 
@@ -268,7 +270,11 @@ function ReportCoverageBlockingPanel({ blocking, onRefresh, refreshing }) {
   )
 }
 
-export default function ReportView({
+export default function ReportView(props) {
+  return props.reviewMode === 'contract_retrospective' ? <RetrospectiveReportView {...props} /> : <AdmissionReportView {...props} />
+}
+
+function AdmissionReportView({
   templateId = 'legacy',
   onTemplateChange,
   report,
@@ -332,7 +338,7 @@ export default function ReportView({
     : '完成复核后本轮结果收口并生成历史版本；此后报告与结论为只读。'
 
   return (
-    <div className={`flex h-full min-h-0 flex-col ${prototypeMode ? 'p-0' : 'px-8 py-6'}`}>
+    <ReportFrame prototypeMode={prototypeMode} toolbar={<>
       {onTemplateChange && <div className="mb-3 flex shrink-0 flex-wrap items-center gap-3 rounded border border-[#E5E5E5] bg-white px-4 py-3 text-xs">
         <label htmlFor="report-template-select" className="font-medium text-[#374151]">报告模板</label>
         <select id="report-template-select" value={templateId} onChange={(event) => onTemplateChange(event.target.value)} className="min-h-9 rounded border border-[#D1D5DB] bg-white px-2 text-[#374151]">
@@ -386,7 +392,7 @@ export default function ReportView({
           </>}
         </div>
       </header>}
-      <main className={`min-h-0 flex-1 ${prototypeMode ? 'overflow-visible py-0' : 'overflow-y-auto py-4'}`}>
+      </>}>
         {prototypeMode && onComplete && <div className="mb-3 flex justify-end">
           <button type="button" data-testid="report-close-task" onClick={onComplete}
             disabled={completing || completeDisabled || !readiness.task_close_ready} title={completeTitle}
@@ -638,7 +644,6 @@ export default function ReportView({
             </>}
           </>
         )}
-      </main>
-    </div>
+    </ReportFrame>
   )
 }

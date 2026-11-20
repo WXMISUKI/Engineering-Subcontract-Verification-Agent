@@ -5,11 +5,13 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from .models import counted_status
+
 
 SUMMARY_SECTION_KINDS = frozenset({
     "completeness", "signature_chain", "qualification_match", "negative_list",
     "transfer_scope", "illegal_subcontract", "a1_dependency", "person_consistency",
-    "cert_validity", "internal_records",
+    "personnel_adequacy", "cert_validity", "internal_records",
 })
 QUALIFICATION_KINDS = frozenset({
     "qualification_match", "negative_list", "transfer_scope", "illegal_subcontract", "a1_dependency",
@@ -91,7 +93,12 @@ def _contractor_summary(report: dict[str, Any]) -> dict[str, Any]:
     return {
         "role": "general_contractor", "status": status,
         "company": row.get("company") if status == "matched" else None,
+        "company_display": ((row.get("company_display") or row.get("company"))
+                            if status == "matched" else None),
         "candidate_company": row.get("candidate_company") if status == "unresolved" else None,
+        "candidate_company_display": ((row.get("candidate_company_display")
+                                       or row.get("candidate_company"))
+                                      if status == "unresolved" else None),
         "reason_code": row.get("reason_code"), "label": labels[status],
         "evidence": [_copy(item) for item in row.get("evidence") or [] if isinstance(item, dict)],
     }
@@ -144,12 +151,12 @@ def build_qualification_summary(report: dict[str, Any]) -> dict[str, Any]:
             continue
         kind = section["kind"]
         for raw in section.get("items") or []:
-            if not isinstance(raw, dict) or raw.get("status") not in counts:
+            if not isinstance(raw, dict) or counted_status(raw.get("status")) not in counts:
                 continue
             audit_items += 1
             if kind not in SUMMARY_SECTION_KINDS:
                 continue
-            status = raw["status"]
+            status = counted_status(raw["status"])
             noise_reason = _noise_reason(raw) if status in {"hit", "undecidable"} else None
             if noise_reason is not None:
                 noise_ref = {

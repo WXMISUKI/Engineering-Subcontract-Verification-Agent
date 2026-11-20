@@ -150,6 +150,9 @@ def ensure_standalone_schema(engine) -> dict:
         "completed_at": "DATETIME NULL",
         "elapsed_seconds": "DOUBLE NULL",
     })
+    _add_columns(engine, "bs_task_event", {
+        "created_at_utc_offset_minutes": "INTEGER NULL",
+    })
     _add_columns(engine, "agents", {
         "name": "VARCHAR(100) NOT NULL DEFAULT '工程分包审查智能体'",
         "description": "TEXT NULL",

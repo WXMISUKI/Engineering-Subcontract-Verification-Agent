@@ -140,6 +140,58 @@ def test_contract_and_packet_amounts_are_compared_in_the_same_unit():
     assert merge_amount_facts(packet, {**contract, "unit": None})["status"] == "conflict"
 
 
+def test_equal_amounts_with_float_precision_prefer_contract_wan_and_tax_basis():
+    packet = {"status": "matched", "value": "4557598.71", "unit": "元",
+              "evidence": [{"page": 2, "value": "4557598.71", "unit": "元"}]}
+    contract = {"status": "hit", "value": 455.75987100000003, "unit": "万元",
+                "tax_basis": "含税", "source": "分包合同.pdf"}
+    merged = merge_amount_facts(packet, contract)
+    assert merged["status"] == "matched"
+    assert merged["value"] == "455.759871"
+    assert merged["unit"] == "万元"
+    assert merged["tax_basis"] == "含税"
+
+
+def test_scope_limitations_do_not_claim_general_contract_missing_when_it_exists():
+    from app.plus.blockchain_supervision.report_template_v13 import _scope_limitations
+    lines = _scope_limitations({
+        "scope_limitations": [],
+        "scope_statements": [
+            "总包合同承包人与分包合同发包人不一致（总包合同：甲建设公司；分包合同：乙建设公司），"
+            "合同链条需人工核对。",
+            "本次未核查分包金额占比、工程量占比（当前未启用）。",
+        ],
+    }, [])
+    text = "\n".join(lines)
+    assert "未上传总包合同" not in text
+    assert "合同链条需人工核对" in text
+
+
+def test_employer_majority_resolves_ocr_missing_segment():
+    contract = {"status": "conflict", "company": None, "evidence": [
+        {"company": "上海公路投资建设发展有限公司",
+         "company_display": "上海公路投资建设发展有限公司"},
+        {"company": "上海公路投资建设发展有限公司",
+         "company_display": "上海公路投资建设发展有限公司"},
+        {"company": "上海公路投资建设有限公司",
+         "company_display": "上海公路投资建设有限公司"},
+    ]}
+    merged = merge_party_facts({"employer": contract}, {})
+    assert merged["employer"]["status"] == "matched"
+    assert merged["employer"]["company_display"] == "上海公路投资建设发展有限公司"
+    assert merged["employer"]["source"] == "majority_evidence"
+
+
+def test_employer_majority_keeps_genuinely_different_companies_in_conflict():
+    contract = {"status": "conflict", "company": None, "evidence": [
+        {"company": "上海公路投资建设发展有限公司"},
+        {"company": "上海公路投资建设发展有限公司"},
+        {"company": "江苏交通建设有限公司"},
+    ]}
+    merged = merge_party_facts({"employer": contract}, {})
+    assert merged["employer"]["status"] == "conflict"
+
+
 def test_general_contract_amount_is_not_used_as_subcontract_amount():
     item = material("分包金额：4173.0485万元")
     item.role = "general"
