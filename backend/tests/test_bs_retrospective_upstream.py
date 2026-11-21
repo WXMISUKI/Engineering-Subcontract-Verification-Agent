@@ -5,7 +5,7 @@ import pytest
 
 from app.plus.blockchain_supervision.retrospective_sources import analysis_batches
 from app.plus.blockchain_supervision.retrospective_upstream_contracts import (
-    TOPICS, bind_extraction, bind_relationship, validate_upstream_candidate,
+    TOPICS, bind_extraction, bind_refs, bind_relationship, validate_upstream_candidate,
 )
 
 
@@ -52,6 +52,39 @@ def test_extraction_cannot_borrow_the_other_contract():
             'obligation_holder': 'sub', 'transmission': 'pass_through', 'conditions': '', 'exceptions': '',
             'priority': '', 'evidence': [candidate()['evidence'][1]]}]}, analysis_batches(sources()[:1])[0], sources())
     assert rejected['state'] == 'failed' and not rejected['terms']
+
+
+@pytest.mark.parametrize('reference', ['full_page', 'owner_name', 'direct_signatory', 'same_entity'])
+def test_labor_employer_fact_keeps_direct_signatory_separate_from_recital_owner(reference):
+    from app.plus.blockchain_supervision.retrospective_upstream_contracts import bind_selected_extraction
+
+    src = sources()[1:]
+    src[0]['role'] = 'labor'
+    owner, signatory = '沿江工程建设中心', '沿江路桥集团有限公司'
+    if reference == 'same_entity':
+        owner = signatory
+    signing_line = f'工程承包人（专业或专项工程承（分）包人）：{signatory}'
+    recital = f'鉴于{owner}（发包人全称，以下简称“发包人”）与工程承包人已经签订施工总承包合同。'
+    text = f'{signing_line}\n劳务合作人：桥梁劳务有限公司。\n{recital}'
+    src[0]['pages'][0]['text'] = text
+    quote, value = {
+        'full_page': (text, owner),
+        'owner_name': (owner, owner),
+        'direct_signatory': (signing_line, signatory),
+        'same_entity': (text, signatory),
+    }[reference]
+    batch = analysis_batches(src)[0]
+    raw = {'checked_topics': list(TOPICS), 'facts': [
+        {'field': 'employer', 'value': value, 'evidence_ids': ['R001']},
+    ], 'terms': [], 'skipped_evidence': []}
+    bound = bind_selected_extraction(raw, batch, src, {'R001': ref(2, quote)})
+    if reference in {'full_page', 'owner_name'}:
+        assert bound['state'] == 'partial'
+        assert not bound['facts']
+        assert bound['rejected'][0]['kind'] == 'facts'
+    else:
+        assert bound['state'] == 'completed'
+        assert bound['facts'][0]['value'] == signatory
 
 
 def test_invalid_summary_quote_does_not_discard_valid_identity_or_become_evidence():
@@ -133,6 +166,36 @@ def test_transport_short_fact_value_is_rejected_individually_and_valid_fact_surv
     assert len(result['facts']) == 1 and len(result['rejected']) == 1
 
 
+@pytest.mark.parametrize('wrong_source', ['another_id', 'prior_context'])
+def test_term_copied_from_another_source_cannot_use_a_valid_unrelated_id(wrong_source):
+    from app.plus.blockchain_supervision.retrospective_upstream import extraction_catalog
+    from app.plus.blockchain_supervision.retrospective_upstream_contracts import bind_selected_extraction
+
+    src = sources()[:1]
+    validation = '承包人应按规定设置试块标准养护室并承担现场试块送检费用'
+    payment = '承包人应将运输及现场协调费用均计入对应工程量清单综合单价'
+    test_text = '1.1 试验检测\n' + validation + '。\n1.2 计价说明\n' + payment + '。'
+    src[0]['pages'][0]['text'] = test_text
+    batch = analysis_batches(src)[0]
+    catalog = extraction_catalog(batch)
+    [target_id, payment_id] = catalog
+    if wrong_source == 'prior_context':
+        batch = {**batch, 'parts': batch['parts'][:1], 'context': batch['parts'][1:]}
+        catalog.pop(payment_id)
+    item = {'topic': 'quality', 'statement': '施工单位负责设置试块养护室', 'obligation_holder': 'general',
+            'transmission': 'self_perform', 'conditions': '', 'exceptions': '', 'priority': '',
+            'evidence_ids': [target_id]}
+    valid = item if wrong_source == 'prior_context' else {
+        **item, 'statement': '运输费与协调费计入单价', 'evidence_ids': [payment_id]}
+    result = bind_selected_extraction({
+        'checked_topics': list(TOPICS), 'facts': [], 'terms': [{**item, 'statement': payment}, valid],
+        'skipped_evidence': [],
+    }, batch, src, catalog)
+    assert result['state'] == 'partial'
+    assert [row['statement'] for row in result['terms']] == [valid['statement']]
+    assert [row['code'] for row in result['rejected']] == ['wrong_term_evidence']
+
+
 def test_transport_short_skip_reason_is_rejected_and_marks_partial():
     from app.plus.blockchain_supervision.retrospective_upstream import extraction_catalog
     from app.plus.blockchain_supervision.retrospective_upstream_contracts import bind_selected_extraction
@@ -155,6 +218,19 @@ def test_extraction_catalog_preserves_each_substantive_original_fragment():
     refs = list(extraction_catalog(batch).values())
     assert ''.join(row['quote'] for row in refs) == src[0]['pages'][0]['text']
     assert len(refs) > 1
+
+
+def test_extraction_catalog_omits_heading_with_footer_but_preserves_price_terms():
+    from app.plus.blockchain_supervision.retrospective_upstream import extraction_catalog
+
+    src = sources()[:1]
+    title_with_footer = '第四条 合同价款\n\n1'
+    price_term = '第四条 合同价款\n\n1. 合同价款为人民币100万元。'
+    src[0]['pages'][0]['text'] = title_with_footer
+    assert not extraction_catalog(analysis_batches(src)[0])
+    src[0]['pages'][0]['text'] = price_term
+    entries = extraction_catalog(analysis_batches(src)[0])
+    assert ''.join(row['quote'] for row in entries.values()) == price_term
 
 
 def test_extraction_catalog_separates_numbered_obligations_without_changing_text():
@@ -185,6 +261,32 @@ def test_unaccounted_or_rejected_evidence_is_not_completed_coverage():
     raw['skipped_evidence'] = [{'evidence_id': key, 'reason': '本片段无独立的身份或义务'}]
     result = bind_selected_extraction(raw, batch, src, catalog)
     assert result['state'] == 'completed' and not result['unaccounted_evidence_ids']
+
+
+@pytest.mark.parametrize(('quote', 'incomplete'), [
+    ('1.1.24 基准日期：直接分包工程以分包合同签订日前第 28 天的日期为基准日期。', True),
+    ('1.1.25 日：合同中按天计算时间的，开始当天不计入，从次日开始计算，'
+     '期限最后一天的截止时间为当天24:00时。', True),
+    ('1.1.17 施工场地：是指用于分包工程施工的场所。', False),
+])
+def test_numbered_contract_timing_rules_cannot_disappear_as_definitions(quote, incomplete):
+    from app.plus.blockchain_supervision.retrospective_upstream import extraction_catalog
+    from app.plus.blockchain_supervision.retrospective_upstream_contracts import bind_selected_extraction
+
+    src = sources()[:1]
+    src[0]['pages'][0]['text'] = quote
+    batch = analysis_batches(src)[0]
+    catalog = extraction_catalog(batch)
+    [evidence_id] = catalog
+    result = bind_selected_extraction({
+        'checked_topics': list(TOPICS), 'facts': [], 'terms': [],
+        'skipped_evidence': [{'evidence_id': evidence_id, 'reason': '仅为定义，无实质义务。'}],
+    }, batch, src, catalog)
+    if incomplete:
+        assert result['state'] == 'partial'
+        assert result['unaccounted_evidence_ids'] == result['skipped_contract_timing_ids'] == [evidence_id]
+    else:
+        assert result['state'] == 'completed' and not result['unaccounted_evidence_ids']
 
 
 @pytest.mark.parametrize('fault', ['unknown', 'duplicate', 'referenced'])
@@ -219,12 +321,40 @@ def test_extraction_output_limit_does_not_claim_all_obligations_extracted():
     assert result['state'] == 'partial' and '上限' in result['limitations'][0]
 
 
+@pytest.mark.parametrize('same_page', [True, False])
+def test_relationship_cannot_transfer_a_party_role_to_another_occurrence(same_page):
+    src = sources()
+    exact_ref = ref(2, '发包人：建工公司。')
+    wrong_quote = '附件中的供应商：建工公司。'
+    if same_page:
+        src[1]['pages'][0]['text'] += '\n' + wrong_quote
+    else:
+        src[1]['pages'].append({'page': 2, 'text': wrong_quote, 'readable': True})
+    wrong_ref = {**ref(2, wrong_quote), 'page': 1 if same_page else 2}
+    facts = [
+        {'field': 'contractor', 'value': '建工公司', 'evidence': bind_refs([ref(1, '承包人：建工公司。')], src)},
+        {'field': 'employer', 'value': '建工公司', 'evidence': bind_refs([exact_ref], src)},
+    ]
+    checks = [
+        {'dimension': 'project', 'state': 'uncertain', 'reason': '本场景暂不核对项目。', 'evidence': []},
+        {'dimension': 'scope', 'state': 'uncertain', 'reason': '本场景暂不核对范围。', 'evidence': []},
+        {'dimension': 'parties', 'state': 'matched', 'reason': '总包承包人与分包发包人名称一致。',
+         'evidence': [ref(1, '承包人：建工公司。'), exact_ref]},
+    ]
+    valid = bind_relationship({'checks': checks}, src, facts)
+    assert valid['checks'][2]['state'] == 'matched'
+    checks[2]['evidence'][1] = wrong_ref
+    with pytest.raises(ValueError, match='对应维度的身份事实'):
+        bind_relationship({'checks': checks}, src, facts)
+
+
 def test_relationship_requires_all_dimensions_and_both_sides():
+    src = sources()
     dims = {'project': ('project_name', 'project_name', '嘉松工程'),
             'parties': ('contractor', 'employer', '建工公司'), 'scope': ('scope', 'scope', '桥梁吊装')}
-    facts = [{'field': field, 'value': value, 'evidence': [{'role': role}]}
+    facts = [{'field': field, 'value': value, 'evidence': bind_refs([ref(mid, value)], src)}
              for left, right, value in dims.values()
-             for field, role in [(left, 'general'), (right, 'sub')]]
+             for field, mid in [(left, 1), (right, 2)]]
     checks = [{'dimension': dim, 'state': 'matched', 'reason': '同一项目主体及施工范围相衔接。',
                'evidence': [ref(1, value), ref(2, value)]} for dim, (_, _, value) in dims.items()]
     assert bind_relationship({'checks': checks}, sources(), facts)['state'] == 'matched'
@@ -245,9 +375,9 @@ def test_scope_containment_accepts_distinct_original_ranges_without_admission_do
     dims = [('project', 'project_name', 'project_name', '嘉松工程', '嘉松工程'),
             ('parties', 'contractor', 'employer', '建工公司', '建工公司'),
             ('scope', 'scope', 'scope', '桥梁及附属工程', '桥梁预制构件安装')]
-    facts = [{'field': field, 'value': value, 'evidence': [{'role': role}]}
+    facts = [{'field': field, 'value': value, 'evidence': bind_refs([ref(mid, value)], src)}
              for _, left, right, parent, child in dims
-             for field, value, role in [(left, parent, 'general'), (right, child, 'sub')]]
+             for field, value, mid in [(left, parent, 1), (right, child, 2)]]
     checks = [{'dimension': dim, 'state': 'matched', 'reason': '双侧工程内容支持子项包含。',
                'evidence': [ref(1, parent), ref(2, child)]}
               for dim, _, _, parent, child in dims]
@@ -287,12 +417,29 @@ def test_upstream_finding_binds_both_roles_without_a_fake_statute():
     assert not row['basis'] and row['finding_id']
 
 
+def test_comparison_budget_recalls_specific_terms_for_each_upstream_obligation():
+    from app.plus.blockchain_supervision.retrospective_upstream import comparison_candidates
+
+    def term(key, statement):
+        return {'term_id': key, 'topic': 'quality', 'statement': statement}
+
+    upstream = [term('u1', '核查预制梁混凝土取样检测'), term('u2', '焊缝超声无损检测责任')]
+    sub = [term(f'noise-{i}', '常规质量检查，整改后提交验收') for i in range(15)] + [
+        term('late-a', '预制梁混凝土取样检测由乙方组织'),
+        term('late-b', '焊缝超声无损检测由委托机构实施'),
+    ]
+    selected, complete = comparison_candidates(sub, upstream, budget=175)
+    assert {row['term_id'] for row in selected} == {'late-a', 'late-b'}
+    assert not complete
+
+
 class UpstreamClient:
     supports_json_schema = True
 
-    def __init__(self, *, mismatch=False, uncertain=False, no_risk=False):
+    def __init__(self, *, mismatch=False, uncertain=False, no_risk=False, subcontract_employer='建工公司'):
         self.calls = []
         self.mismatch, self.uncertain, self.no_risk = mismatch, uncertain, no_risk
+        self.subcontract_employer = subcontract_employer
 
     async def complete(self, messages, on_usage=None, response_schema=None):
         assert response_schema and response_schema['additionalProperties'] is False
@@ -304,9 +451,10 @@ class UpstreamClient:
         if phase == 'upstream_extract':
             general = payload['role'] == 'general'
             mid = 1 if general else 2
+            party = '建工公司' if general else self.subcontract_employer
             value = {'checked_topics': list(TOPICS), 'facts': [
                 {'field': 'project_name', 'value': '嘉松工程', 'evidence': [ref(mid, '嘉松工程')]},
-                {'field': 'contractor' if general else 'employer', 'value': '建工公司', 'evidence': [ref(mid, '建工公司')]},
+                {'field': 'contractor' if general else 'employer', 'value': party, 'evidence': [ref(mid, party)]},
                 {'field': 'scope', 'value': '桥梁吊装', 'evidence': [ref(mid, '桥梁吊装')]},
             ], 'terms': [{'topic': 'quality', 'statement': '工程检测的责任与费用约定',
                 'obligation_holder': 'employer' if general else 'sub',
@@ -316,9 +464,15 @@ class UpstreamClient:
         elif phase == 'upstream_relationship':
             value = {'checks': [{'dimension': dim,
                 'state': 'mismatch' if self.mismatch else 'uncertain' if self.uncertain else 'matched',
-                'reason': '双侧身份事实及范围已分别对照。', 'evidence': [ref(1, text), ref(2, text)]}
+                'reason': '双侧身份事实及范围已分别对照。',
+                'evidence': [ref(1, text), ref(2, self.subcontract_employer if dim == 'parties' else text)]}
                 for dim, text in [('project', '嘉松工程'), ('parties', '建工公司'), ('scope', '桥梁吊装')]]}
         elif phase == 'upstream_compare':
+            checks = response_schema['properties']['checks']
+            expected_ids = [term['term_id'] for term in payload['upstream_terms']]
+            assert checks['minItems'] == checks['maxItems'] == len(expected_ids)
+            assert [item['allOf'][1]['properties']['term_id']['const']
+                    for item in checks['prefixItems']] == expected_ids
             value = {'checks': [{'term_id': term['term_id'], 'state': 'aligned' if self.no_risk else 'risk',
                 'reason': candidate()['message'], 'applicability': candidate()['applicability'],
                 'conditions': candidate()['conditions'], 'evidence': candidate()['evidence']}
@@ -365,6 +519,20 @@ def test_wrong_or_unknown_relationship_never_enters_normal_comparison(state):
     result = asyncio.run(compare(sources(), {}, client=client))
     assert result['relationship']['state'] == state
     assert not result['findings'] and not result['checks']
+    assert all(payload.get('analysis_type') != 'upstream_compare' for payload in client.calls)
+
+
+def test_confirmed_party_difference_is_a_finding_with_both_role_specific_originals():
+    from app.plus.blockchain_supervision.retrospective_upstream import compare
+    src = sources()
+    src[1]['pages'][0]['text'] = src[1]['pages'][0]['text'].replace('发包人：建工公司', '发包人：另一公司')
+    client = UpstreamClient(mismatch=True, subcontract_employer='另一公司')
+    result = asyncio.run(compare(src, {}, client=client))
+    finding, = result['findings']
+    assert '总包合同的承包人' in finding['message'] and '建工公司' in finding['message']
+    assert '分包合同的发包方' in finding['message'] and '另一公司' in finding['message']
+    assert '授权' in finding['message']
+    assert [(ref['file_name'], ref['page']) for ref in finding['evidence']] == [('总包.pdf', 1), ('分包.pdf', 1)]
     assert all(payload.get('analysis_type') != 'upstream_compare' for payload in client.calls)
 
 
@@ -565,7 +733,7 @@ def test_real_runtime_persists_dual_evidence_and_same_report_exports(tmp_path, m
     result = http.get(base + '/retrospective').json()
     report = result['report']
     assert report, result
-    assert report['identity']['upstream_version'] == 'bs.contract-upstream.v8'
+    assert report['identity']['upstream_version'] == 'bs.contract-upstream.v15'
     assert report['upstream']['state'] == 'completed'
     assert {row['kind'] for row in report['rows']} == {'internal_ambiguity', 'upstream_risk'}
     row = next(row for row in report['rows'] if row['kind'] == 'upstream_risk')

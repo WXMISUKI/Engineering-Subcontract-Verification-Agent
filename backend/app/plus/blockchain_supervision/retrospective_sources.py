@@ -48,19 +48,47 @@ def infer_project_name(sources):
     return next(iter(values)) if len(values) == 1 else None
 
 
-def freeze_material(material, *, file_sha256=None) -> dict:
+def _repeated_empty_markdown_rows(lines):
+    nonempty = [line.strip() for line in lines if line.strip()]
+    empty_rows = sum(bool(re.fullmatch(r'\|[ |\t]*\|', line)) for line in nonempty)
+    return empty_rows >= 20 and empty_rows * 5 >= len(nonempty) * 4
+
+
+def freeze_material(material, *, file_sha256=None, recheck_cached_quality=False) -> dict:
     pages = []
+    repeated, empty_tables = set(), set()
     for page in material.pages_json or []:
         number = page.get("page")
         if type(number) is int and number > 0:
-            pages.append({"page": number, "text": str(page.get("text") or ""),
-                          "readable": parsing.material_page_readable(material, number),
+            text = str(page.get("text") or "")
+            readable = parsing.material_page_readable(material, number)
+            if recheck_cached_quality and readable:
+                # 原页可读确认不能恢复已退化的识别正文。
+                lines = text.splitlines()
+                if parsing.repetitive_numbered_headings(lines):
+                    repeated.add(number)
+                    readable = False
+                if _repeated_empty_markdown_rows(lines):
+                    empty_tables.add(number)
+                    readable = False
+            pages.append({"page": number, "text": text,
+                          "readable": readable,
                           "source_kind": page.get("source_kind") or "unknown"})
     numbers = [row["page"] for row in pages]
     if len(numbers) != len(set(numbers)):
         raise ValueError("材料出现重复物理页码，不能形成可靠倒查输入")
     pages.sort(key=lambda row: row["page"])
     coverage = parsing.reading_coverage(material)
+    suspect = repeated | empty_tables
+    if suspect:
+        coverage.update(reading_complete=False, degraded=True,
+                        read_pages=sorted(set(coverage["read_pages"]) - suspect),
+                        suspect_pages=sorted(set(coverage["suspect_pages"]) | suspect),
+                        unread_pages=sorted(set(coverage["unread_pages"]) | suspect))
+    if repeated:
+        coverage["repetitive_heading_pages"] = sorted(repeated)
+    if empty_tables:
+        coverage["repeated_empty_table_pages"] = sorted(empty_tables)
     # 文件页数来自PDF解析元数据；旧文本记录有最大页码时也不掩盖缺页。
     total = max(getattr(material, "pages", 0) or 0, coverage.get("total_pages") or 0,
                 max(numbers, default=0))
@@ -130,7 +158,7 @@ def _tail(parts, budget):
     return output
 
 
-def original_citation(ref: dict, sources: list[dict]) -> dict | None:
+def original_citation(ref: dict, sources: list[dict], *, bounds: tuple[int, int] | None = None) -> dict | None:
     """只忽略空白做匹配，并返回来源中的原始字节文本和位置；不替换错字/数字。"""
     mid, number, quote = (ref.get(key) for key in ("material_id", "page", "quote"))
     if type(mid) is not int or type(number) is not int or not isinstance(quote, str):
@@ -145,7 +173,10 @@ def original_citation(ref: dict, sources: list[dict]) -> dict | None:
             if page["page"] != number or not page["readable"]:
                 continue
             text = page["text"]
-            positions = [index for index, char in enumerate(text) if not char.isspace()]
+            lower, upper = bounds if bounds is not None else (0, len(text))
+            if not 0 <= lower < upper <= len(text):
+                return None
+            positions = [index for index in range(lower, upper) if not text[index].isspace()]
             compact = "".join(text[index] for index in positions)
             at = compact.find(needle)
             if at < 0:
@@ -166,9 +197,12 @@ def reading_limitations(sources: list[dict]) -> list[str]:
     limitations = []
     for source in sources:
         readable = {row["page"] for row in source["pages"] if row["readable"] and row["text"].strip()}
-        blanks = set(source["reading_coverage"].get("blank_pages") or [])
+        coverage = source["reading_coverage"]
+        blanks = set(coverage.get("blank_pages") or [])
         gaps = sorted(set(range(1, source["total_pages"] + 1)) - readable - blanks)
-        if gaps or not readable or not source["reading_coverage"].get("reading_complete"):
+        only_blank = (bool(blanks) and set(coverage.get("unread_pages") or []) == blanks
+                      and not coverage.get("suspect_pages") and not coverage.get("over_limit_pages"))
+        if gaps or not readable or not (coverage.get("reading_complete") or only_blank):
             suffix = "第" + "、".join(map(str, gaps)) + "页" if gaps else "部分页面"
             limitations.append(f"《{source['file_name']}》{suffix}未取得可靠正文，本次不据此判断条款遗漏或合同全部合规。")
     return limitations
@@ -230,17 +264,51 @@ def _historical_basis(root=None) -> list[dict]:
     return rows
 
 
+_CONTRACT_SIGNING_SECTION = re.compile(
+    r"(?m)^[ \t#|$]*(?:\\text[ \t]*\{[ \t]*)?"
+    r"(?:第[一二三四五六七八九十\d]+部分[ \t、.：:]*)?"
+    r"(?:(?P<agreement>(?:专业分包|劳务分包|分包)?合同协议书)"
+    r"|(?P<terms>通用合同条款|专用合同条款)"
+    r"|(?P<annex>合同附件|(?:施工)?安全生产(?:合同|协议书)|廉政(?:合同|协议书)"
+    r"|治安防范、消防安全责任书(?:[（(]分包[）)])?|文明施工管理协议书|规范用工协议书))"
+    r"[ \t|$}]*\r?$"
+)
+_CONTRACT_SIGNING_FIELD = re.compile(
+    r"(?m)(?:^|[|。！？；;])[ \t]*(?:(?:本?(?:专业分包|劳务分包|劳务合作|分包)?合同|本协议"
+    r"|甲方|乙方|分包人|分包发包方)[ \t]*)?"
+    r"(?:签订日期|签约日期|签署日期|签订时间)\s*[:：]?\s*"
+    r"(20\d{2})\s*[年./／－-]\s*(\d{1,2})\s*[月./／－-]\s*(\d{1,2})(?!\d)\s*日?"
+)
+
+
+def _main_contract_text(source):
+    pages = [(page["text"], list(_CONTRACT_SIGNING_SECTION.finditer(page["text"])))
+             for page in source["pages"] if page["readable"]]
+    has_agreement = any(header.lastgroup == "agreement" for _, headers in pages for header in headers)
+    in_main = not has_agreement
+    for text, headers in pages:
+        start = 0
+        for header in headers:
+            if header.lastgroup == "terms" and not has_agreement:
+                continue
+            if in_main:
+                yield text[start:header.start()]
+            in_main = header.lastgroup == "agreement"
+            start = header.end()
+        if in_main:
+            yield text[start:]
+
+
 def infer_contract_date(sources) -> tuple[str | None, list[str]]:
-    """仅接受明确日期标签；冲突不选首值，不把开工日当签约日。"""
+    """在主分包协议范围内接受明确签约字段，遇到日期冲突时保留未知。"""
     from datetime import date
+
     values = set()
     for source in sources:
-        if source.get("relation", "main") != "main":
+        if source.get("role") not in {"sub", "labor"} or source.get("relation", "main") != "main":
             continue
-        for page in source["pages"]:
-            if not page["readable"]:
-                continue
-            for match in re.finditer(r"(?:签订日期|签约日期|签署日期|合同签订时间)\s*[:：]?\s*(20\d{2})[年./-]\s*(\d{1,2})[月./-]\s*(\d{1,2})日?", page["text"]):
+        for text in _main_contract_text(source):
+            for match in _CONTRACT_SIGNING_FIELD.finditer(text):
                 try:
                     values.add(date(*map(int, match.groups())).isoformat())
                 except ValueError:

@@ -24,7 +24,7 @@ def test_task_mode_defaults_and_is_restored_by_api(tmp_path):
     admission = client.post(base, json={"conversation_id": conversation_id, "title": "准入",
                                        "scope_a1": True})
     assert admission.status_code == 200
-    assert admission.json()["section"]["baseline_date"] is not None
+    assert admission.json()["section"]["baseline_date"] is None
     assert client.get(f"{base}/{task_id}").json()["review_mode"] == "contract_retrospective"
     modes = {row["task_id"]: row["review_mode"] for row in client.get(base, params={"conversation_id": conversation_id}).json()["tasks"]}
     assert modes == {old_id: "admission", task_id: "contract_retrospective",

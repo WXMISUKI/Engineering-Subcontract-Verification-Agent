@@ -7,7 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 SCHEMA_VERSION = "bs.contract-retrospective.v2"
-PROMPT_VERSION = "bs.contract-retrospective-prompt.v16"
+PROMPT_VERSION = "bs.contract-retrospective-prompt.v26"
 RUN_KEY = "retrospective_run_id"
 JOB_GROUP = "contract_retrospective"
 COLUMNS = ["项目名称", "总包/分包", "合同文件", "合同条款位置", "合同相关摘录",
@@ -122,7 +122,7 @@ class BasisCheck(ContractModel):
     clause_id: str
     state: Literal['checked', 'not_applicable', 'not_observed', 'pending']
     reason: str = Field(min_length=1, max_length=1800)
-    evidence: list[Citation] = Field(max_length=6)
+    evidence_ids: list[str] = Field(max_length=6)
 
 
 class CoverageResponse(BatchResponse):
@@ -146,6 +146,17 @@ def strict_response_schema(model):
                 normalize(value)
     normalize(schema)
     return schema
+
+
+def fixed_response_sequence(item_schema, key, values):
+    """供应商响应按已知编号逐项返回，缺项仍由服务端校验。"""
+    return {
+        'type': 'array', 'minItems': len(values), 'maxItems': len(values),
+        'prefixItems': [
+            {'allOf': [item_schema, {'properties': {key: {'const': value}}}]}
+            for value in values
+        ],
+    }
 
 
 class RunIdentity(ContractModel):

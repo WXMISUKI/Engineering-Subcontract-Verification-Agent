@@ -1,4 +1,4 @@
-"""双合同门槛的HTTP回归；独立SQLite与模拟模型，不触发付费调用。"""
+"""倒查合同受理的 HTTP 回归；独立 SQLite 与模拟模型。"""
 import asyncio
 
 import pytest
@@ -31,9 +31,9 @@ def setup(tmp_path, monkeypatch, roles):
     return http, engine, task_id, ids, client
 
 
-@pytest.mark.parametrize('roles,missing', [([], '总包'), (['sub'], '总包'), (['general'], '分包'),
-                                         (['sub', 'sub'], '总包'), (['general', 'general'], '分包')])
-def test_missing_side_cannot_be_bypassed_and_does_not_create_job(tmp_path, monkeypatch, roles, missing):
+@pytest.mark.parametrize('roles,missing', [([], '分包'), (['general'], '分包'),
+                                         (['sub', 'sub'], '一份分包合同正文'), (['general', 'general'], '分包')])
+def test_missing_or_ambiguous_subcontract_does_not_create_job(tmp_path, monkeypatch, roles, missing):
     http, engine, tid, _, model = setup(tmp_path, monkeypatch, roles)
     base = f'/api/plus/blockchain-supervision/tasks/{tid}'
     validation = http.get(base).json()['validation']

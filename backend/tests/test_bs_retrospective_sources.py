@@ -40,10 +40,46 @@ def test_unread_and_suspect_page_is_not_usable_or_silently_omitted():
     assert {part["page"] for batch in analysis_batches([source]) for part in batch["parts"]} == {1, 3}
 
 
+def test_confirmed_blank_is_accounted_for_but_never_used_as_contract_evidence():
+    source = freeze_material(material(["分包合同的质量验收约定。", ""], degradations=[
+        {"kind": "parse_incomplete", "total_pages": 2, "read_pages": [1],
+         "unread_pages": [2], "ocr_blank_pages": [2]}]))
+    assert not reading_limitations([source])
+    assert {part["page"] for batch in analysis_batches([source]) for part in batch["parts"]} == {1}
+    source["reading_coverage"]["suspect_pages"] = [2]
+    assert reading_limitations([source])
+
+
 def test_dates_are_not_guessed_from_project_schedule_or_conflicting_labels():
     source = freeze_material(material(["开工日期：2023年1月1日\n签订日期：2023年12月22日"]))
     assert infer_contract_date([source]) == ("2023-12-22", [])
     source = freeze_material(material(["签订日期：2023年12月22日", "签署日期：2024年1月2日"]))
+    assert infer_contract_date([source])[0] is None
+
+
+def test_signing_date_uses_main_agreement_before_attached_contracts():
+    main_heading = r'$\text { 第一部分 合同协议书 }$'
+    before_agreement = '签订日期：2022年5月22日\n' + main_heading
+    terms = '# 第二部分 通用合同条款\n本节约定合同具体条件。'
+    attachment = '治安防范、消防安全责任书（分包）\n签订日期：2022年5月22日'
+    main_date = '| 签订日期：2023 年 5 月 22 日 | 签订日期：2023 年 5 月 22 日 |'
+    source = freeze_material(material([before_agreement, main_date, terms, attachment]))
+    assert infer_contract_date([source]) == ('2023-05-22', [])
+
+    source = freeze_material(material([main_heading, terms, attachment]))
+    assert infer_contract_date([source])[0] is None
+
+    source = freeze_material(material([main_heading, main_date, '签署日期：2023年6月1日', terms, attachment]))
+    assert infer_contract_date([source])[0] is None
+
+
+def test_signing_date_rejects_other_contract_labels_inside_the_main_agreement():
+    text = ('总包合同签订日期：2023年5月13日\n'
+            '劳动合同签约日期：2024年8月13日\n'
+            '| 本分包合同签订日期：2023 年 12 月 22 日 |')
+    source = freeze_material(material([text]))
+    assert infer_contract_date([source]) == ('2023-12-22', [])
+    source = freeze_material(material([text.split('|')[0]]))
     assert infer_contract_date([source])[0] is None
 
 

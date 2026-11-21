@@ -110,6 +110,23 @@ def test_match_requires_observed_exact_text_only_whitespace_is_ignored():
     assert check('发包人承担责任。') == 'differs'
 
 
+@pytest.mark.parametrize(('quote', 'clause', 'observed', 'state'), [
+    ('承包范围：构件安装。', '1.3', '1.3\n承包范围：构件安装。', 'matches'),
+    ('承包范围：构件安装。', '1.3', '1.4 承包范围：构件安装。', 'differs'),
+    ('承包范围：构件安装。', '', '1.3 承包范围：构件安装。', 'differs'),
+    ('承包范围：构件安装。', '1.3', '1.3 承包范围：不含构件安装。', 'differs'),
+    ('沉降观测由分包人负责。', '3.7', '3.7 沉陷观测由分包人负责。', 'differs'),
+    ('1.3 元/吨。', '1.3', '元/吨。', 'differs'),
+    ('元/吨。', '1.3', '1.3 元/吨。', 'differs'),
+    ('万元支付给分包人。', '1.3', '1.3 万元支付给分包人。', 'differs'),
+])
+def test_only_matching_scope_heading_prefix_can_be_extra_in_page_observation(quote, clause, observed, state):
+    check, = visual.validate_page({'checks': [{'reference_id': 'V001', 'readable': True,
+        'observed_quote': observed, 'reason': '原页读取。'}]}, {'V001': {'quote': quote, 'clause': clause}})
+    assert check['state'] == state
+    assert check['observed_quote'] == observed
+
+
 @pytest.mark.parametrize(('expected', 'observed', 'state'), [
     ('1.3 承包范围: 构件安装', '1.3 承包范围：构件安装', 'matches'),
     ('费用：由分包人承担', '费用:由发包人承担', 'differs'),

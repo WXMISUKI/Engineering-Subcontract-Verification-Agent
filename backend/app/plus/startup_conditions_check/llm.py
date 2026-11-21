@@ -22,6 +22,12 @@ def require_model():
         _required_model.reset(token)
 
 
+class StructuredOutputTruncated(RuntimeError):
+    def __init__(self, request_id=None):
+        super().__init__('模型输出达到长度限制，响应被截断')
+        self.request_id = request_id
+
+
 class OpenAICompatibleClient:
     def __init__(self, base_url, api_key, model, enable_thinking=False, prompt_cache_key=None, timeout=None,
                  max_retries=None, provider='legacy', json_output=False):
@@ -76,8 +82,12 @@ class OpenAICompatibleClient:
                 model=self.model, messages=messages, stream=False, temperature=0.2, **options)
             if on_usage is not None:
                 on_usage(response.usage.model_dump() if response.usage is not None else {})
-            if response_schema is not None and (not response.choices or response.choices[0].finish_reason != 'stop'):
-                raise RuntimeError('结构化响应未完整结束，不能作为完成结果')
+            if response_schema is not None:
+                finish_reason = response.choices[0].finish_reason if response.choices else None
+                if finish_reason == 'length':
+                    raise StructuredOutputTruncated(getattr(response, '_request_id', None))
+                if finish_reason != 'stop':
+                    raise RuntimeError('结构化响应未完整结束，不能作为完成结果')
             if self.provider == 'moma' and (not response.choices or response.choices[0].finish_reason != 'stop'
                                              or not (response.choices[0].message.content or '').strip()):
                 raise RuntimeError('模型响应为空或未完整结束，需人工核实')

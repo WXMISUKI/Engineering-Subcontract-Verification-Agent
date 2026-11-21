@@ -5,6 +5,7 @@ from datetime import date
 from . import knowledge_runs
 from .retrospective_analysis import _words
 from .retrospective_coverage import plan
+from .rules import SHANGHAI_COMPARISON_DOC_ID
 
 
 _BASELINE_UNSET = object()
@@ -17,10 +18,9 @@ def retrieve(db, task, sources, basis, *, contract_date=None, baseline_date=_BAS
     if baseline_date is None:
         return {'status': 'local_only', 'references': [], 'queries': [],
                 'limitations': ['未取得核查基准日；本次不按当前日期筛选在线规则，仅使用已冻结的本地规范原文。']}
-    from datetime import date
     as_of = baseline_date if isinstance(baseline_date, date) else date.fromisoformat(baseline_date)
     try:
-        package = knowledge_runs.load_reference_package(as_of=as_of)
+        package = knowledge_runs.load_reference_package(as_of=as_of, compare_shanghai=True)
     except (OSError, ValueError, KeyError):
         return {'status': 'unavailable', 'references': [], 'queries': [],
                 'limitations': ['在线知识库映射不可用；本次使用已冻结的本地规范原文进行对照。']}
@@ -38,6 +38,10 @@ def retrieve(db, task, sources, basis, *, contract_date=None, baseline_date=_BAS
                       if source['clause_id'] == row['clause_id']), None)
         source = deepcopy(exact) if exact else {
             key: template[key] for key in ('doc_id', 'kb_id', 'knowledge_id', 'original_sha256')}
+        if exact is None and template.get('temporal_notice'):
+            source['temporal_notice'] = template['temporal_notice']
+        if row['doc_id'] == SHANGHAI_COMPARISON_DOC_ID:
+            source['retrospective_shanghai_lookup'] = True
         source.update(clause_id=row['clause_id'],
                       query_text=f"{row['document'].get('doc_title', row['doc_id'])} 合同条款 {terms}",
                       physical_page=row.get('page_start'), human_verified=False)
@@ -51,9 +55,19 @@ def retrieve(db, task, sources, basis, *, contract_date=None, baseline_date=_BAS
     except Exception:
         return {'status': 'unavailable', 'references': [], 'queries': [],
                 'limitations': ['在线知识检索未完成；本次保留已冻结的本地规范原文对照结果。']}
-    available = {row['clause_id'] for row in basis}
-    refs = [ref for ref in result['references'] if ref['clause_id'] in available]
-    return {'status': result['status'], 'references': refs, 'queries': result['queries'],
-            'authorized_scope': result['authorized_scope'],
-            'limitations': ([] if result['status'] == 'ok' else [
-                '部分在线依据未取得同版本可核验原文；相关条款使用已冻结的本地规范，在线召回不代表规范全部覆盖。'])}
+    planned_by_id = {source['clause_id']: source for source in planned}
+    refs = []
+    for ref in result['references']:
+        source = planned_by_id.get(ref['clause_id'])
+        if source is not None:
+            notice = source.get('temporal_notice')
+            refs.append({**ref, 'temporal_notice': notice} if notice else ref)
+    verified_ids = {ref['clause_id'] for ref in refs}
+    queries = [{**query, 'reference_verified': query.get('clause_id') in verified_ids}
+               for query in result['queries']]
+    limitations = []
+    if len(verified_ids) < len(planned_by_id):
+        limitations.append(f'本次在线查询计划包含 {len(planned_by_id)} 条依据，其中 {len(verified_ids)} 条取得'
+                           '同版本可核验原文。其余使用已冻结的本地规范原文。')
+    return {'status': result['status'], 'references': refs, 'queries': queries,
+            'authorized_scope': result['authorized_scope'], 'limitations': limitations}

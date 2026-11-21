@@ -1,4 +1,5 @@
 """上下游比较契约；总包是合同证据，不是法规范。"""
+import re
 from typing import Literal
 
 from pydantic import Field
@@ -6,7 +7,12 @@ from pydantic import Field
 from .retrospective_contracts import (ALL_REPORT_DIMENSION_IDS, Citation, ContractModel, KINDS)
 from .retrospective_sources import digest, original_citation
 
-VERSION = 'bs.contract-upstream.v8'
+VERSION = 'bs.contract-upstream.v15'
+LABOR_UPSTREAM_OWNER_SUFFIX = re.compile(
+    r'[（(]发包人全称[^（）()]{0,36}[）)]与工程承包人(?:已经|已)?签订施工总承包合同')
+CONTRACT_TIMING_RULE = re.compile(
+    r'基准日期[：:][^。；;]{0,180}(?:截止日|签订日|签署日)前第?[0-9０-９]+天'
+    r'|按天计算时间(?:的)?[，,](?:开始当天|开始日)不计入[，,]从次日开始计算')
 TOPICS = ('scope', 'price', 'payment', 'schedule', 'quality', 'safety',
           'environment', 'wages', 'insurance', 'equipment', 'priority')
 
@@ -132,6 +138,23 @@ def bind_refs(refs, sources, *, allowed_ids=None):
     return result
 
 
+def _profile_reference_supports(item, ref, sources):
+    value = ''.join(item.value.split())
+    quote = ''.join(ref['quote'].split())
+    if not value or value not in quote:
+        return False
+    if item.field != 'employer' or ref['role'] != 'labor':
+        return True
+    # 劳务合同序言的「发包人全称」可能指与工程承包人签订总包合同的上游业主。
+    # 只核对所引名称后紧邻的原文，即使模型仅引用了名称也保留这层区分。
+    page = next(page for source in sources if source['material_id'] == ref['material_id']
+                for page in source['pages'] if page['page'] == ref['page'])
+    following = ''.join(page['text'][ref['end']:ref['end'] + 160].split())
+    context = quote + following
+    return any(not LABOR_UPSTREAM_OWNER_SUFFIX.match(context, occurrence.end())
+               for occurrence in re.finditer(re.escape(value), quote))
+
+
 def bind_extraction(raw, batch, sources):
     if not isinstance(raw, dict) or any(not isinstance(raw.get(key), list) or len(raw[key]) > limit
                                        for key, limit in [('facts', 24), ('terms', 60)]):
@@ -140,7 +163,6 @@ def bind_extraction(raw, batch, sources):
     if set(parsed.checked_topics) != set(TOPICS):
         raise ValueError('条款提取主题执行字段缺失或重复')
     # 提取只引用当前批次正文，不能把其他文件或跨批相关片段冒充已读取范围。
-    compact = lambda value: ''.join(value.split())
     def local_refs(values):
         refs = bind_refs(values, sources)
         for ref in refs:
@@ -156,8 +178,8 @@ def bind_extraction(raw, batch, sources):
             try:
                 item = schema.model_validate(value)
                 refs = local_refs(item.evidence)
-                if kind == 'facts' and not any(compact(item.value) in compact(ref['quote']) for ref in refs):
-                    raise ValueError('身份字段不是所引原文中的值')
+                if kind == 'facts' and not any(_profile_reference_supports(item, ref, sources) for ref in refs):
+                    raise ValueError('所引原文无法支持对应的身份字段或合同角色')
                 row = {**item.model_dump(), 'evidence': refs}
                 if kind == 'terms':
                     row['term_id'] = digest(row)[:24]
@@ -179,6 +201,8 @@ def bind_selected_extraction(raw, batch, sources, catalog):
         raise ValueError('条款提取主题执行字段缺失或重复')
     result = {'facts': [], 'terms': [], 'rejected': []}
     referenced = set()
+    original_text = {key: re.sub(r'[\W_]+', '', ref['quote']) for key, ref in catalog.items()}
+    prior_text = [re.sub(r'[\W_]+', '', part['text']) for part in batch.get('context', [])]
     for kind, schema in [('facts', SelectedProfileFact), ('terms', SelectedContractTerm)]:
         for index, value in enumerate(raw[kind]):
             try:
@@ -186,6 +210,15 @@ def bind_selected_extraction(raw, batch, sources, catalog):
                 ids = item.pop('evidence_ids')
                 if len(ids) != len(set(ids)) or any(key not in catalog for key in ids):
                     raise ValueError('证据编号重复或不属于本批正文')
+                if kind == 'terms':
+                    statement = re.sub(r'[\W_]+', '', item['statement'])
+                    # 只有一段较长表述确实来自别处时才拒绝。释义仍由后续语义核查处理。
+                    if (len(statement) >= 24 and not any(statement in original_text[key] for key in ids)
+                            and (any(statement in text for text in original_text.values())
+                                 or any(statement in text for text in prior_text))):
+                        result['rejected'].append({'kind': kind, 'index': index, 'error_type': 'ValueError',
+                                                   'code': 'wrong_term_evidence'})
+                        continue
                 item['evidence'] = [dict(catalog[key]) for key in ids]
                 bound = bind_extraction({'checked_topics': parsed.checked_topics,
                     'facts': [item] if kind == 'facts' else [],
@@ -200,29 +233,51 @@ def bind_selected_extraction(raw, batch, sources, catalog):
     claimed = {key for kind in ('facts', 'terms') for row in raw[kind]
                if isinstance(row, dict) and isinstance(row.get('evidence_ids'), list)
                for key in row['evidence_ids'] if isinstance(key, str)}
-    skipped, skipped_rows, invalid_skipped = [], [], 0
-    for index, row in enumerate(raw.get('skipped_evidence', [])):
+    skipped, skipped_rows, invalid_skipped = set(), [], 0
+    skipped_timing = set()
+    for row in raw.get('skipped_evidence', []):
         try:
             strict_row = SkippedEvidence.model_validate(row)
         except (ValueError, TypeError, KeyError):
             invalid_skipped += 1
             continue
-        if strict_row.evidence_id not in catalog or strict_row.evidence_id in claimed or strict_row.evidence_id in skipped:
+        key = strict_row.evidence_id
+        if key not in catalog or key in claimed or key in skipped or key in skipped_timing:
             invalid_skipped += 1
             continue
-        skipped.append(strict_row.evidence_id)
+        if CONTRACT_TIMING_RULE.search(''.join(catalog[key]['quote'].split())):
+            skipped_timing.add(key)
+            continue
+        skipped.add(key)
         skipped_rows.append(strict_row.model_dump())
     result['skipped_evidence'] = skipped_rows
-    result['unaccounted_evidence_ids'] = sorted(set(catalog) - referenced - set(skipped))
+    result['unaccounted_evidence_ids'] = sorted(set(catalog) - referenced - skipped)
     if result['unaccounted_evidence_ids'] or invalid_skipped:
         result['state'] = 'partial'
         result.setdefault('limitations', []).append('部分原文片段未能可靠归入提取或略过记录，不能确认已完整核对。')
         if invalid_skipped:
             result['rejected_skipped_count'] = invalid_skipped
+    if skipped_timing:
+        result['skipped_contract_timing_ids'] = sorted(skipped_timing)
+        result.setdefault('limitations', []).append('合同日期或期限计算约定被略过，仍需提取。')
     if len(raw['facts']) == 24 or len(raw['terms']) == 60:
         result['state'] = 'partial'
         result.setdefault('limitations', []).append('单批提取达到输出项数上限，尚不能确认所有约定已提取。')
     return result
+
+
+def reference_supports_fact(ref, fact):
+    """同一物理页的重叠原文必须实际包含该字段值。"""
+    identity = (ref['material_id'], ref['page'])
+    value = ''.join(fact['value'].split())
+    for original in fact['evidence']:
+        if (original['material_id'], original['page']) != identity:
+            continue
+        start = max(ref['start'], original['start'])
+        end = min(ref['end'], original['end'])
+        if start < end and value in ''.join(ref['quote'][start - ref['start']:end - ref['start']].split()):
+            return True
+    return False
 
 
 def bind_relationship(raw, sources, facts):
@@ -243,7 +298,7 @@ def bind_relationship(raw, sources, facts):
                     ('general' if ref['role'] == 'general' else 'sub') == side for ref in fact['evidence'])]
                 if check.dimension == 'parties':
                     eligible = [fact for fact in eligible if fact['field'] == ('contractor' if side == 'general' else 'employer')]
-                if not any(''.join(fact['value'].split()) in ''.join(ref['quote'].split())
+                if not any(reference_supports_fact(ref, fact)
                            for fact in eligible for ref in refs
                            if ('general' if ref['role'] == 'general' else 'sub') == side):
                     raise ValueError('关系判断没有引用对应维度的身份事实')

@@ -118,12 +118,6 @@ const AUTO_CHECK_GROUPS = new Set(Object.values(AUTO_CHECK_GROUP))
 const ACCEPT = '.pdf,application/pdf,.zip,application/zip'
 
 // 时间线时间戳：ISO → 「09-22 15:20」（分钟精度足够，秒位是噪音）
-function todayInChina() {
-  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date())
-  const part = (type) => parts.find((item) => item.type === type)?.value
-  return `${part('year')}-${part('month')}-${part('day')}`
-}
-
 function timelineTime(iso) {
   return formatEventTime(iso, { date: true })
 }
@@ -691,17 +685,8 @@ export default function BlockchainSupervisionWorkbench({ conversationId, onExitP
     reachedIndex = 0, onStageSelect, onRequestEdit, onExit, onReset, resetting = false, onTaskCreated, onStarted, onError }) {
   const [detail, setDetail] = useState(null)           // getBsTask 返回
   const [detailError, setDetailError] = useState('')
-  // 准入默认北京时间当天；倒查留空以从分包合同提取签订日。
-  const [section, setSection] = useState(() => ({ projectName: '', contractSection: '',
-    baselineDate: reviewMode === 'contract_retrospective' ? '' : todayInChina() }))
+  const [section, setSection] = useState({ projectName: '', contractSection: '', baselineDate: '' })
   const baselineManualRef = useRef(false)
-  useEffect(() => {
-    if (taskId || baselineManualRef.current) return
-    setSection((current) => ({
-      ...current,
-      baselineDate: reviewMode === 'contract_retrospective' ? '' : todayInChina(),
-    }))
-  }, [reviewMode, taskId])
   const [uploadsInFlight, setUploadsInFlight] = useState(0)
   const [confirmModal, setConfirmModal] = useState(null) // validation payload
   const [submitting, setSubmitting] = useState(false)
@@ -799,7 +784,7 @@ export default function BlockchainSupervisionWorkbench({ conversationId, onExitP
           d.section.project_name.replace(/\s+/g, '') !== d.section_suggestions.contract_section.derived_from_project.replace(/\s+/g, '')
             ? '' : d.section_suggestions?.contract_section?.value || ''),
         baselineDate: d.state === 'setup' && !readOnly && !baselineManualRef.current
-          ? (reviewMode === 'contract_retrospective' ? '' : todayInChina())
+          ? ''
           : (d.section.baseline_date || ''),
       })
       // T10-C C3：只有**真正的核查态**才进工作台。`preparing`（资料包准备中）必须留在
@@ -874,11 +859,10 @@ export default function BlockchainSupervisionWorkbench({ conversationId, onExitP
   const changeSection = useCallback((key, value) => {
     if (key === 'baselineDate') {
       baselineManualRef.current = !!value
-      if (!value && reviewMode !== 'contract_retrospective') value = todayInChina()
     }
     setSection((prev) => ({ ...prev, [key]: value }))
     if (taskId) patchBsSection(taskId, { [key]: key === 'baselineDate' && !baselineManualRef.current ? null : value }).catch((e) => onError(e.message))
-  }, [taskId, onError, reviewMode])
+  }, [taskId, onError])
 
   // 上传（含替换）后等解析收口的共用节奏：前 5 轮 600ms，之后 2s 退避，
   // 总预算 180s（对齐 OCR 实测上限）；预算耗尽静默退出，不带病进核查。

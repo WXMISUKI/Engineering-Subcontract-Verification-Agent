@@ -51,7 +51,7 @@ async def _guard_retrospective_write(request: Request, db: Session = Depends(get
     if not review_mode.is_retrospective(task):
         return
     suffix = match[2] or ""
-    if suffix == "/retrospective/start" or (not suffix and request.method == "DELETE"):
+    if suffix in {"/retrospective/start", "/retrospective/resume"} or (not suffix and request.method == "DELETE"):
         return
     setup_write = suffix in {"/materials/upload", "/section", "/retrospective/contracts", "/general-source-sets"} or (
         request.method == "DELETE" and re.fullmatch(r"/materials/\d+", suffix)) or bool(
@@ -1262,6 +1262,19 @@ async def start_retrospective(task_id: int, body: RetrospectiveStart,
         raise HTTPException(status_code=409, detail=message) from exc
 
 
+@router.post("/tasks/{task_id}/retrospective/resume", status_code=202)
+async def resume_retrospective(task_id: int, db: Session = Depends(get_db), user=Depends(get_current_any_user)):
+    task = _get_task(db, task_id, user)
+    try:
+        return retrospective_runtime.resume(db, task, user)
+    except PermissionError as exc:
+        db.rollback()
+        raise HTTPException(status_code=404, detail="任务不存在或无访问权限") from exc
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @router.get("/tasks/{task_id}/retrospective")
 def get_retrospective(task_id: int, db: Session = Depends(get_db), user=Depends(get_current_any_user)):
     task = _get_task(db, task_id, user)
@@ -1925,7 +1938,8 @@ def list_findings(task_id: int, kind: str = None,
                           and not service.report_output_readiness(db, task).get("ok") else "ready")
     publication_generation_id = (publication.get("published_generation_id")
                                  or publication.get("candidate_generation_id"))
-    return {**_findings_payload(db, findings, as_of=task.baseline_date, negative_coverage=negative_coverage, timeout_ids=timeout_ids),
+    return {**_findings_payload(db, findings, as_of=task.baseline_date, negative_coverage=negative_coverage,
+                                timeout_ids=timeout_ids, compare_shanghai=rules.admission_comparison_enabled(task)),
             "publication_status": publication_status,
             "publication_state": publication.get("state"),
             "publication_generation_id": publication_generation_id,
@@ -2029,13 +2043,14 @@ def get_todo(task_id: int, db: Session = Depends(get_db), user=Depends(get_curre
     }
 
 
-def _findings_payload(db: Session, findings: list, *, as_of=None, negative_coverage=None, timeout_ids=None) -> dict:
+def _findings_payload(db: Session, findings: list, *, as_of=None, negative_coverage=None, timeout_ids=None,
+                      compare_shanghai=False) -> dict:
     """结论列表统一出口（刀D，设计 104 §3）。
 
     依据条款视图一次解析、整批复用：`basis_lookup()` 要读三份 JSON，逐条调用会把
     一次列表请求变成 N 次读盘；且依据库是只读数据，同一响应内必须同源。
     """
-    basis_map = rules.configured_basis_lookup(as_of=as_of)
+    basis_map = rules.configured_basis_lookup(as_of=as_of, compare_shanghai=compare_shanghai)
     subject_ids = {f.subject_id for f in findings if getattr(f, "subject_id", None) is not None}
     subjects_by_id = ({subject.id: subject for subject in db.query(BsSubject)
                        .filter(BsSubject.id.in_(subject_ids)).all()} if subject_ids else {})

@@ -24,7 +24,7 @@ def inputs():
 
 
 def test_review_checklist_covers_nine_dimensions_with_contract_evidence_boundaries():
-    assert PROMPT_VERSION == 'bs.contract-retrospective-prompt.v16'
+    assert PROMPT_VERSION == 'bs.contract-retrospective-prompt.v26'
     assert list(REVIEW_CHECKLIST) == [
         'scope_and_qualification', 'procedure_and_subcontracting', 'key_staffing',
         'equipment_and_lifting', 'hazardous_work_and_plans', 'contract_terms_and_upstream',
@@ -197,6 +197,8 @@ async def test_failed_model_is_not_presented_as_zero_risk():
     assert result["execution_status"] == "failed"
     assert result["coverage"]["batches_completed"] == 0
     assert "未发现" not in result["summary"]
+    assert result["coverage"]["batches"][0]["failure"] == {
+        "phase": "contract_request", "error_type": "TimeoutError"}
 
 
 @pytest.mark.asyncio
@@ -211,6 +213,8 @@ async def test_keyword_or_malformed_topic_acknowledgement_is_not_normalized_to_c
     assert result['execution_status'] == 'failed'
     assert result['coverage']['batches_completed'] == 0
     assert result['coverage']['batches'][0]['topics'] == []
+    assert result['coverage']['batches'][0]['failure'] == {
+        'phase': 'contract_response_fields', 'error_type': 'ValueError'}
 
 
 @pytest.mark.asyncio
@@ -256,6 +260,24 @@ async def test_automatic_review_corrects_explanation_but_preserves_evidence_and_
     assert kept[0]['evidence'] == row['evidence']
     assert kept[0]['finding_id'] == row['finding_id']
     assert decisions[0]['original_message'] == row['message']
+
+
+@pytest.mark.asyncio
+async def test_review_rejects_unsupported_rewrite_without_failing_the_batch():
+    sources, identity, candidate = inputs()
+    row = validate_candidate(candidate, sources, [], identity)
+    invalid = '已违法。合同应当作废，不能用于工程分包。'
+
+    class Reviewer:
+        async def complete(self, *args, **kwargs):
+            return json.dumps({'decisions': [{'finding_id': row['finding_id'], 'keep': True,
+                                             'reason': '模型给出的原判断。', 'message': invalid}]})
+
+    kept, [audit] = await review_candidates([row], sources, identity, client=Reviewer())
+    assert not kept and not audit['keep']
+    assert audit['proposed_message'] == invalid
+    assert audit['original_reason'] == '模型给出的原判断。'
+    assert row['message'] == candidate['message']
 
 
 @pytest.mark.asyncio
@@ -320,6 +342,40 @@ def test_current_conditional_scope_risk_does_not_claim_historical_violation():
     assert checked['kind'] == 'conditional_risk' and checked['time_scope'] == 'current'
     assert checked['basis'][0]['scope_context'].startswith('以下主体和关键性工作不得进行施工分包')
 
+    price_quote = '本合同采用固定单价，按实际完成工程量结算。'
+    sources[0]['pages'].append({'page': 2, 'text': price_quote, 'readable': True})
+    finding['evidence'] = [{'material_id': 1, 'page': 2, 'quote': price_quote}]
+    with pytest.raises(ValueError, match='梁类负面清单提示须引用'):
+        validate_candidate(finding, sources, basis, identity)
+
+
+@pytest.mark.asyncio
+async def test_final_bridge_scope_explanation_keeps_the_bound_conditions_and_exception():
+    from app.plus.blockchain_supervision.retrospective_analysis import BRIDGE_INSTALLATION_BASIS
+    from app.plus.blockchain_supervision.retrospective_sources import freeze_basis
+
+    sources, identity, candidate = inputs()
+    quote = '分包工程范围包括预制箱梁安装。'
+    sources[0]['pages'][0]['text'] = quote
+    basis = [ref for ref in freeze_basis() if ref['clause_id'] in BRIDGE_INSTALLATION_BASIS]
+    candidate.update(kind='conditional_risk', time_scope='current', message='若符合负面清单条件，可能存在分包风险。',
+                     conditions='符合桥梁负面清单要求', applicability='合同约定箱梁安装',
+                     evidence=[{'material_id': 1, 'page': 1, 'quote': quote}],
+                     basis=[{'clause_id': ref['clause_id'], 'quote': ref['text']} for ref in basis])
+    row = validate_candidate(candidate, sources, basis, identity)
+
+    class Reviewer:
+        async def complete(self, *args, **kwargs):
+            return json.dumps({'decisions': [{'finding_id': row['finding_id'], 'keep': True,
+                'reason': '合同载明箱梁安装。', 'message': '该规范于2026年施行，盾构施工也存在风险。'}]})
+
+    [kept], [audit] = await review_candidates([row], sources, identity, client=Reviewer(), final=True)
+    assert kept['evidence'] == row['evidence']
+    assert '2026' not in kept['message'] and '盾构' not in kept['message']
+    assert '单体自重达到或超过200吨' in kept['conditions']
+    assert '外购梁预制、运输除外' in kept['message']
+    assert audit['message_source'] == 'bound_basis_conditions'
+
 
 @pytest.mark.asyncio
 async def test_final_conditional_explanation_uses_returned_conditional_reason():
@@ -344,7 +400,6 @@ async def test_final_conditional_explanation_uses_returned_conditional_reason():
     assert decisions[0]['message_source'] == 'returned_reason'
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(('text', 'first_quote', 'second_quote', 'guidance'), [
     ('第42页：水电费按以下第 1 种方式计取：\n1、按施工现场安装水电表每月实际发生数为准；\n'
      '分包人使用承包人水电的，在中期支付时扣除。\n\n'
@@ -362,7 +417,7 @@ async def test_final_conditional_explanation_uses_returned_conditional_reason():
      '检验费用已包含在签约合同价内',
      '已计入签约合同价'),
 ])
-async def test_final_review_rejects_known_false_internal_conflict_patterns(
+def test_candidate_validation_rejects_known_false_internal_conflict_patterns(
         text, first_quote, second_quote, guidance):
     source = freeze_material(SimpleNamespace(id=1, file_name='分包合同.pdf', role='sub', pages=1,
         parse_state='done', degradations_json=[], pages_json=[{'page': 1, 'text': text}]))
@@ -372,26 +427,10 @@ async def test_final_review_rejects_known_false_internal_conflict_patterns(
         'message': '两项合同约定相互冲突，执行口径不明确。', 'evidence': [
             {'material_id': 1, 'page': 1, 'quote': first_quote},
             {'material_id': 1, 'page': 1, 'quote': second_quote}], 'basis': []}
-    if guidance in {'可以并存', '已计入签约合同价'}:
-        expected = '可并行职责' if guidance == '可以并存' else '责任与计价并行约定'
-        with pytest.raises(ValueError, match=expected):
-            validate_candidate(finding, [source], [], identity)
-        return
-    row = validate_candidate(finding, [source], [], identity)
-
-    class Reviewer:
-        async def complete(self, messages, **kwargs):
-            assert guidance in messages[0]['content']
-            payload = json.loads(messages[1]['content'])
-            assert payload['full_evidence_pages'] == [
-                {'material_id': 1, 'page': 1, 'text': text}]
-            return json.dumps({'decisions': [{'finding_id': row['finding_id'], 'keep': False,
-                'reason': '完整合同上下文表明两项约定可以同时成立。', 'message': ''}]})
-
-    kept, decisions = await review_candidates([row], [source], identity,
-                                               client=Reviewer(), final=True)
-    assert kept == []
-    assert len(decisions) == 1 and decisions[0]['keep'] is False
+    exclusions = {'第二种列示方案是未选替代项': '未选备选方式', '可以并存': '可并行职责',
+                  '已计入签约合同价': '责任与计价并行约定'}
+    with pytest.raises(ValueError, match=exclusions[guidance]):
+        validate_candidate(finding, [source], [], identity)
 
 
 def test_complementary_project_and_subcontract_method_statements_are_rejected_pre_review():
@@ -433,6 +472,47 @@ def test_different_inspection_cost_payers_are_not_hidden_by_fee_inclusion_rule()
     assert checked['kind'] == 'internal_ambiguity'
 
 
+@pytest.mark.parametrize('neighbor', [
+    '3.4.1 工程项目应由甲方编制施工组织设计，乙方必须严格按施工组织设计的要求施工。\n'
+    '3.4.2 工程项目由乙方按甲方的要求自行编制施工组织设计。\n',
+    '8.2.4 检验费用由分包人承担。\n9.1 检验费用已包含在签约合同价内。\n',
+])
+def test_unrelated_compatible_clauses_cannot_hide_cited_conflict_on_same_page(neighbor):
+    sources, identity, finding = inputs()
+    first = '同一批设备测试的独立检测费用由分包人承担'
+    second = '同一批设备测试的独立检测费用由发包人承担'
+    sources[0]['pages'][0]['text'] = neighbor + f'10.1 {first}。\n10.2 {second}。'
+    finding.update(kind='internal_ambiguity', time_scope='contract_text',
+        message='同一批设备的独立检测费用由谁承担存在两项相反约定。', evidence=[
+            {'material_id': 1, 'page': 1, 'quote': first},
+            {'material_id': 1, 'page': 1, 'quote': second}])
+    checked = validate_candidate(finding, sources, [], identity)
+    assert [ref['quote'] for ref in checked['evidence']] == [first, second]
+
+
+@pytest.mark.parametrize('alternative_inside_list', [True, False])
+def test_explicit_water_charge_selection_only_excludes_the_listed_alternative(alternative_inside_list):
+    sources, identity, finding = inputs()
+    selection = '水电费按以下第 1 种方式计取'
+    alternative = '由施工当月各现场施工单位按工程量进行分摊'
+    text = f'{selection}：\n1、按实测水电表计费。\n2、'
+    if alternative_inside_list:
+        text += alternative + '。'
+        quote = '2、' + alternative
+    else:
+        text += '采用固定费用。\n9.2 补充约定：水电费' + alternative + '。'
+        quote = '水电费' + alternative
+    sources[0]['pages'][0]['text'] = text
+    finding.update(message='水电费约定了两种方式，执行口径存在疑问。', evidence=[
+        {'material_id': 1, 'page': 1, 'quote': selection},
+        {'material_id': 1, 'page': 1, 'quote': quote}])
+    if alternative_inside_list:
+        with pytest.raises(ValueError, match='未选备选方式'):
+            validate_candidate(finding, sources, [], identity)
+    else:
+        assert validate_candidate(finding, sources, [], identity)['kind'] == 'internal_ambiguity'
+
+
 def test_2024_rule_cannot_define_nonconformity_for_2023_signing():
     sources, identity, finding = inputs()
     rule = {"clause_id": "LAW#1", "text": "合同应当约定工期延长的费用责任。", "human_verified": True,
@@ -445,6 +525,23 @@ def test_2024_rule_cannot_define_nonconformity_for_2023_signing():
     assert validate_candidate(finding, sources, [rule], identity)["time_scope"] == "current"
 
 
+def test_upstream_appropriation_duty_does_not_require_a_subcontract_payment_cycle():
+    from app.plus.blockchain_supervision.retrospective_sources import freeze_basis
+
+    sources, identity, finding = inputs()
+    paragraph = "施工期间内应保持人工费代发的连续性。"
+    sources[0]["pages"][0]["text"] = paragraph
+    rule = next(row for row in freeze_basis() if row["clause_id"] == "SC-724-2019-RETRO#24")
+    finding.update(kind="conditional_risk", time_scope="historical",
+                   message="若双方未约定人工费用拨付周期，可能影响代发。",
+                   conditions="人工费用拨付周期未约定",
+                   applicability="本专业分包合同约定代发",
+                   evidence=[{"material_id": 1, "page": 1, "quote": paragraph}],
+                   basis=[{"clause_id": rule["clause_id"], "quote": "人工费用拨付周期不得超过1个月。"}])
+    with pytest.raises(ValueError, match="建设单位与施工总承包单位"):
+        validate_candidate(finding, sources, [rule], identity)
+
+
 def test_single_continuous_contrast_is_segmented_without_changing_source_text():
     sources, identity, finding = inputs()
     text = '12.1 工期延长超过十二个月单价另行协商；工期延长单价不作调整。'
@@ -454,6 +551,68 @@ def test_single_continuous_contrast_is_segmented_without_changing_source_text():
     assert ''.join(row['quote'] for row in checked['evidence']) == text
     assert checked['evidence'][0]['end'] == checked['evidence'][1]['start']
     assert len(finding['evidence']) == 1  # 原始模型产物不改写。
+
+
+@pytest.mark.parametrize('issue', ['missing_selection', 'amendment', 'selected_terms'])
+def test_wrapped_water_charge_options_exclude_only_the_unselected_block(issue):
+    sources, identity, finding = inputs()
+    options = ('水电费按以下第 1 种方式计取：\n\n'
+               '1、按施工现场安装水电表每月实际发生数为准；分包人使用承包人水电的，在中期支付时\n\n'
+               '扣除，水费和电费按使用数量结合损耗计\n\n算。\n\n'
+               '2、由施工当月各现场施工单位按工程量进行分摊，分包工程量以综合单价或（人\n\n'
+               '工+材料+设备）为计算依据。')
+    if issue == 'selected_terms':
+        options = options.replace('扣除，水费和电费', '扣除，但同笔费用不得从中期支付中扣除。水费和电费')
+    amendment = '另行约定：同一工程水电费按各施工单位工程量分摊。'
+    sources[0]['pages'][0]['text'] = options + '\n\n' + amendment
+    quote = options + '\n\n' + amendment if issue == 'amendment' else options
+    finding['message'] = ('所选第一种方式对同笔费用能否从中期支付中扣除有相反约定。'
+                          if issue == 'selected_terms' else '条款未指明本合同应执行哪一种方式。')
+    finding['evidence'] = [{'material_id': 1, 'page': 1, 'quote': quote}]
+    if issue != 'missing_selection':
+        assert validate_candidate(finding, sources, [], identity)['kind'] == 'internal_ambiguity'
+    else:
+        with pytest.raises(ValueError, match='未选备选方式'):
+            validate_candidate(finding, sources, [], identity)
+
+
+@pytest.mark.parametrize('different_role', [False, True])
+def test_full_plan_clauses_preserve_verifiable_role_conflicts(different_role):
+    sources, identity, finding = inputs()
+    first = ('3.4.1 工程项目应由甲方编制施工组织设计, 制订有针对性的环境保护、职业健康安全技术措施, '
+             '乙方必须严格按施工组织设计的要求施工;')
+    second = ('3.4.2 工程项目由乙方按甲方的要求自行编制施工组织设计, 制订有针对性的环境保护、职业健康安全技术措施, '
+              '乙方必须严格按施工组织设计的要求施工。')
+    if different_role:
+        second = second.replace('按甲方的要求自行', '独立')
+    sources[0]['pages'][0]['text'] = first + '\n\n' + second
+    finding['evidence'] = [{'material_id': 1, 'page': 1, 'quote': quote} for quote in [first, second]]
+    if different_role:
+        assert validate_candidate(finding, sources, [], identity)['kind'] == 'internal_ambiguity'
+    else:
+        with pytest.raises(ValueError, match='可并行职责'):
+            validate_candidate(finding, sources, [], identity)
+
+
+@pytest.mark.parametrize('different_payer', [False, True])
+def test_full_inspection_clauses_across_pages_preserve_explicit_payer_conflicts(different_payer):
+    sources, identity, finding = inputs()
+    first = ('8.2.4 分包人承包人采购的材料在使用前，分包人应按承包人代表的要求进行检验或试验，'
+             '不合格的不得使用，因检验或试验发生的全部费用由分包人承担；')
+    second = ('9.1 材料和工程设备的试验和检验\n\n'
+              '承包人和分包人供应的材料和工程设备使用前，法律规定必须进行检验或试验的，'
+              '由分包人负责检验或试验，检验费用已包含在签约合同价内，检验或试验不合格的不得使用。')
+    if different_payer:
+        second = second.replace('已包含在签约合同价内', '由承包人另行承担')
+    sources[0]['pages'][0]['text'] = first
+    sources[0]['pages'].append({'page': 2, 'text': second, 'readable': True})
+    finding['evidence'] = [
+        {'material_id': 1, 'page': page, 'quote': quote} for page, quote in [(1, first), (2, second)]]
+    if different_payer:
+        assert validate_candidate(finding, sources, [], identity)['kind'] == 'internal_ambiguity'
+    else:
+        with pytest.raises(ValueError, match='责任与计价并行约定'):
+            validate_candidate(finding, sources, [], identity)
 
 
 @pytest.mark.asyncio

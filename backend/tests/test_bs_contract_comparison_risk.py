@@ -100,3 +100,63 @@ def test_new_start_and_rerun_freeze_semantic_version_without_rewriting_history(d
     assert db_session.get(BsReviewVersion, history.id).snapshot_json == frozen
     archived = db_session.query(BsReviewVersion).filter_by(task_id=task.id, trigger="rerun").one()
     assert archived.snapshot_json["task"]["options_snapshot"]["semantic_review_version"] == 1
+
+
+def test_admission_start_and_rerun_use_subcontract_date_and_preserve_previous_snapshot(db_session, monkeypatch):
+    from datetime import date
+    from app.plus.blockchain_supervision.models import BsMaterial, BsReviewVersion
+
+    task = service.create_task(db_session, conversation_id=102, title="准入签约日",
+                               scope_a1=False, scope_a3=True, created_by=1)
+    monkeypatch.setattr(service, "validate_task_materials", lambda *_: {
+        "hard_ok": True, "parsing_pending": False, "composition": {}, "soft_gaps": []})
+    monkeypatch.setattr(service, "_subject_start_gate", lambda *_: ([], None))
+    monkeypatch.setattr(service, "initialize_reference_review", lambda *_, **kw: {})
+    general = BsMaterial(task_id=task.id, file_name="总包.pdf", role="general",
+                         pages=1, parse_state="done", pages_json=[{"page": 1, "text": "签订日期：2020年1月2日"}])
+    sub = BsMaterial(task_id=task.id, file_name="分包.pdf", role="sub",
+                     pages=2, parse_state="done", pages_json=[
+                         {"page": 1, "text": "合同协议书\n签订日期：2023年12月22日"},
+                         {"page": 2, "text": "治安防范、消防安全责任书（分包）\n签订日期：2022年1月2日"},
+                     ])
+    db_session.add_all([general, sub])
+    db_session.commit()
+    assert service.start_review(db_session, task)["ok"]
+    assert task.baseline_date == date(2023, 12, 22)
+    assert task.options_snapshot_json["baseline_date_basis"] == "subcontract_signing_date"
+
+    sub.pages_json = [
+        {"page": 1, "text": "合同协议书\n签订日期：2023年12月22日。签署日期：2024年1月2日。"},
+        sub.pages_json[1],
+    ]
+    db_session.commit()
+    assert service.rerun_task(db_session, task)["ok"]
+    assert task.baseline_date is None
+    assert task.options_snapshot_json["baseline_date_basis"] == "unknown"
+    previous = db_session.query(BsReviewVersion).filter_by(task_id=task.id, trigger="rerun").one()
+    assert previous.snapshot_json["task"]["options_snapshot"]["baseline_date_basis"] == "subcontract_signing_date"
+
+
+def test_admission_keeps_shanghai_evidence_without_treating_early_comparison_as_historical_failure(db_session):
+    from datetime import date
+    from app.plus.blockchain_supervision import knowledge_runs, reporting, rules
+    from app.plus.blockchain_supervision.models import BsFinding
+
+    task = service.create_task(db_session, conversation_id=102, title="准入细则对照",
+                               scope_a1=True, scope_a3=False, created_by=1, baseline_date=date(2023, 12, 22))
+    task.options_snapshot_json = {**task.options_snapshot_json, "baseline_date_basis": "manual"}
+    package = knowledge_runs.load_reference_package(as_of=task.baseline_date, compare_shanghai=True)
+    source = next(row for row in package["sources"] if row["doc_id"] == "SHJT-2026-8")
+    doc, _ = knowledge_runs._clause(source, as_of=task.baseline_date)
+    assert doc["doc_id"] == "SHJT-2026-8"
+    assert "T15-01" not in rules.basis_lookup(as_of=task.baseline_date)
+    finding = BsFinding(task_id=task.id, item_id="T15-01", kind="transfer_scope",
+                        status="hit", message="合同载明将承包的全部工程交由另一单位。", source="核查规则")
+    service._replace_findings(db_session, task, [finding])
+    assert finding.status == "undecidable"
+    assert finding.finding_semantics == "manual_prompt"
+    assert not reporting.report_gate_blocking(finding)
+    report = reporting.build_report(db_session, task)
+    item = next(row for section in report["sections"] for row in section["items"] if row["item_id"] == "T15-01")
+    assert "核查基准日早于细则施行日" in item["message"]
+    assert item["decision_trace"]["temporal_basis"]["doc_id"] == "SHJT-2026-8"

@@ -1,4 +1,5 @@
 import fitz
+import pytest
 from io import BytesIO
 from docx import Document
 from docx.table import Table
@@ -7,6 +8,7 @@ from docx.text.paragraph import Paragraph
 from app.plus.blockchain_supervision import report_template_render
 from app.plus.blockchain_supervision.retrospective_contracts import REPORT_DIMENSIONS, report_dimension_id
 from app.plus.blockchain_supervision.retrospective_report import build_report
+from app.plus.blockchain_supervision.retrospective_sources import original_citation
 
 
 def _report():
@@ -56,6 +58,133 @@ def test_retrospective_report_has_eight_stable_columns_and_widths():
     table = next(block for block in report["template_document"]["blocks"] if block["type"] == "table")
     assert len(table["headers"]) == 8
     assert abs(sum(table["widths"]) - 1) < 1e-9
+
+
+def test_report_exports_use_manual_baseline_separately_from_actual_signing_date():
+    raw = _report()
+    raw['identity'].update(contract_date='2023-12-22', baseline_date='2024-01-01', baseline_date_source='manual')
+    report = build_report(raw, project_name='测试项目', sources=[])
+    overview = report['template_document']['blocks'][1]['text']
+    assert '合同签订日期：2023-12-22' in overview
+    assert '人工选定的核查基准日为2024-01-01' in overview
+    word = Document(BytesIO(report_template_render.word_bytes(report, 'digest', '2026-11-19')))
+    assert any(overview in p.text for p in word.paragraphs)
+    with fitz.open(stream=report_template_render.pdf_bytes(report, 'digest', '2026-11-19'), filetype='pdf') as pdf:
+        assert overview in ''.join(''.join(page.get_text().split()) for page in pdf)
+
+
+@pytest.mark.parametrize(('baseline', 'source', 'notice'), [
+    ('2023-12-22', 'subcontract_signing_date', '核查基准日采用上述分包合同签订日'),
+    (None, 'unknown', '核查基准日尚未确定'),
+])
+def test_overview_explains_signing_based_or_unknown_baseline(baseline, source, notice):
+    raw = _report()
+    raw['identity'].update(contract_date=baseline, baseline_date=baseline, baseline_date_source=source)
+    report = build_report(raw, project_name='测试项目', sources=[])
+    assert notice in report['template_document']['blocks'][1]['text']
+
+
+def test_upstream_scope_names_unconfirmed_party_and_locates_counterpart():
+    raw = _report()
+    raw['upstream'] = {'state': 'partial',
+        'relationship': {'state': 'uncertain', 'checks': [
+            {'dimension': 'project', 'state': 'matched'},
+            {'dimension': 'parties', 'state': 'uncertain', 'reason': '模型内部字段提示'},
+            {'dimension': 'scope', 'state': 'matched'},
+        ]},
+        'facts': [{'field': 'employer', 'value': '沪上施工公司', 'evidence': [
+            {'material_id': 2, 'page': 2, 'quote': '发包方：沪上施工公司。'},
+        ]}]}
+    sources = [
+        {'material_id': 1, 'file_name': '总包合同.pdf', 'role': 'general', 'total_pages': 1,
+         'pages': [{'page': 1, 'readable': True, 'text': '项目名称：测试工程。'}],
+         'reading_coverage': {'reading_complete': True}},
+        {'material_id': 2, 'file_name': '分包合同.pdf', 'role': 'sub', 'total_pages': 2,
+         'pages': [{'page': 1, 'readable': True, 'text': '项目名称：测试工程。'},
+                   {'page': 2, 'readable': True, 'text': '发包方：沪上施工公司。'}],
+         'reading_coverage': {'reading_complete': True}},
+    ]
+    report = build_report(raw, project_name='测试项目', sources=sources)
+    overview = report['template_document']['blocks'][1]['text']
+    assert '总包承包人尚未核实' in overview
+    assert '分包发包方原文见《分包合同.pdf》PDF第2页' in overview
+    assert '本次未开展总分包条款比对' in overview
+    assert '分包合同按其文本和纳入范围的依据核查' in overview
+    assert '模型内部字段提示' not in overview
+    assert report['scope_note'] in overview
+    assert len(report['rows']) == 0
+    word = Document(BytesIO(report_template_render.word_bytes(report, 'digest', '2026-11-19')))
+    assert any(overview in p.text for p in word.paragraphs)
+    with fitz.open(stream=report_template_render.pdf_bytes(report, 'digest', '2026-11-19'), filetype='pdf') as pdf:
+        assert overview in ''.join(''.join(page.get_text().split()) for page in pdf)
+
+
+def test_matched_contracts_without_extracted_upstream_terms_disclose_comparison_scope():
+    raw = _report()
+    raw['upstream'] = {'state': 'partial', 'relationship': {'state': 'matched', 'checks': []},
+                      'coverage': {'terms_total': 0, 'comparison_batches': []}}
+    report = build_report(raw, project_name='测试项目', sources=[])
+    overview = report['template_document']['blocks'][1]['text']
+    assert '未取得可用于比对的总包条款' in overview
+    assert '本次未开展总分包条款比对' in overview
+
+
+@pytest.mark.parametrize(('field', 'label', 'first', 'second'), [
+    ('project_name', '项目', '高架道路新建工程', '滨河桥梁改建工程'),
+    ('contract_section', '标段', 'C01标段', 'C03标段'),
+])
+def test_report_scope_explains_confirmed_project_mismatch_with_original_pages(field, label, first, second):
+    raw = _report()
+    sources, facts = [], []
+    for mid, (side, role, value) in enumerate([('总包', 'general', first), ('分包', 'labor', second)], 1):
+        file = f'{side}合同.pdf'
+        quote = f'{label}：{value}'
+        source = {'material_id': mid, 'file_name': file, 'role': role, 'total_pages': mid,
+                  'pages': [{'page': mid, 'readable': True, 'text': quote}],
+                  'reading_coverage': {'reading_complete': False}}
+        sources.append(source)
+        citation = original_citation({'material_id': mid, 'page': mid, 'quote': quote}, [source])
+        facts.append({'field': field, 'value': value, 'evidence': [{**citation, 'role': role}]})
+    raw['upstream'] = {'state': 'mismatch', 'facts': facts,
+        'relationship': {'state': 'mismatch', 'checks': [
+            {'dimension': 'project', 'state': 'mismatch', 'evidence': [fact['evidence'][0] for fact in facts]},
+            {'dimension': 'parties', 'state': 'matched'}, {'dimension': 'scope', 'state': 'matched'},
+        ]}}
+    report = build_report(raw, project_name=None, sources=sources)
+    scope = report['scope_note']
+    assert f'{label}不一致' in scope
+    assert f'总包{label}为「{first}」（《总包合同.pdf》PDF第1页）' in scope
+    assert f'分包{label}为「{second}」（《分包合同.pdf》PDF第2页）' in scope
+    assert '本次未开展总分包条款比对' in scope
+    assert '项目或标段对应关系待核实' not in scope
+
+
+@pytest.mark.parametrize(('baseline', 'notice'), [
+    ('2023-12-22', '核查基准日早于细则施行日，具体适用性请人工判别'),
+    (None, '核查基准日尚未确定，具体适用性请人工判别'),
+    ('2026-08-08', None),
+])
+def test_shanghai_comparison_finding_keeps_evidence_and_explains_temporal_limit(baseline, notice):
+    raw = _report()
+    raw['identity']['baseline_date'] = baseline
+    raw['findings'] = [{
+        'finding_id': 'f-shanghai', 'kind': 'conditional_risk', 'kind_label': '条件性风险',
+        'time_scope': 'current', 'message': '合同所载的审批责任与依据要求存在差异。',
+        'evidence': [{'material_id': 1, 'page': 2, 'file_name': '分包.pdf',
+                      'quote': '审批责任原文。', 'clause': '2.1'}],
+        'basis': [{'doc_id': 'SHJT-2026-8', 'marker': '第十二条', 'quote': '依据原文。',
+                   'document': {'doc_title': '上海市公路工程施工分包管理实施细则',
+                                'effective_from': '2026-08-08'}}],
+    }]
+    report = build_report(raw, project_name='测试项目', sources=[])
+    row, = report['rows']
+    texts = [block['text'] for block in report['template_document']['blocks'] if 'text' in block]
+    if notice:
+        assert notice in row['cells'][5]
+        assert any(notice in text for text in texts)
+    else:
+        assert '具体适用性请人工判别' not in row['cells'][5]
+    assert row['evidence'] == raw['findings'][0]['evidence']
 
 
 def test_report_groups_only_findings_and_keeps_detail_table_as_final_appendix():

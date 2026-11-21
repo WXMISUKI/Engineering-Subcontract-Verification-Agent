@@ -200,7 +200,33 @@ def _document_is_effective(document: dict, as_of: date) -> bool:
     return True
 
 
-def load_basis_clauses(as_of=None) -> dict:
+SHANGHAI_COMPARISON_DOC_ID = "SHJT-2026-8"
+
+
+def admission_comparison_enabled(task) -> bool:
+    return (getattr(task, "options_snapshot_json", None) or {}).get("baseline_date_basis") in {
+        "manual", "subcontract_signing_date", "unknown",
+    }
+
+
+def shanghai_comparison_notice(document, as_of) -> str:
+    if document.get("doc_id") != SHANGHAI_COMPARISON_DOC_ID:
+        return ""
+    start = _as_of_date(document.get("effective_from"))
+    end = _as_of_date(document.get("effective_to"))
+    moment = _as_of_date(as_of)
+    if start and moment is None:
+        return f"细则施行日为 {start}，核查基准日尚未确定，具体适用性请人工判别。"
+    if start and moment and moment < start:
+        return (f"核查基准日为 {moment}，细则施行日为 {start}。"
+                "核查基准日早于细则施行日，具体适用性请人工判别。")
+    if end and moment and moment > end:
+        return (f"核查基准日为 {moment}，细则有效期至 {end}。"
+                "核查基准日晚于细则有效期，具体适用性请人工判别。")
+    return ""
+
+
+def load_basis_clauses(as_of=None, *, compare_shanghai=False) -> dict:
     """依据条款库（条款原文 + 跨页页范围 + 校对状态）。
 
     由 `backend/scripts/ingest_basis_clauses.py` 从依据原文生成。`human_verified=false`
@@ -212,7 +238,8 @@ def load_basis_clauses(as_of=None) -> dict:
     if effective_date is None:
         return library
     active_docs = [doc for doc in library.get("docs") or []
-                   if _document_is_effective(doc, effective_date)]
+                   if _document_is_effective(doc, effective_date)
+                   or (compare_shanghai and doc.get("doc_id") == SHANGHAI_COMPARISON_DOC_ID)]
     active_doc_ids = {doc.get("doc_id") for doc in active_docs}
 
     def keep(node: dict) -> dict | None:
@@ -264,12 +291,12 @@ def _basis_view(node: dict, doc: dict, parent: dict) -> dict:
     }
 
 
-def basis_lookup(as_of=None) -> dict:
+def basis_lookup(as_of=None, *, compare_shanghai=False) -> dict:
     """一次性解析全部条目 → {条目 ID: 依据条款视图}（单次读盘，供意见书批量引用）。
 
     坐标在条款库中找不到的一律不入表：意见书宁愿不显示依据，也不能引用到错误位置。
     """
-    library = load_basis_clauses(as_of=as_of)
+    library = load_basis_clauses(as_of=as_of, compare_shanghai=compare_shanghai)
     docs = {d["doc_id"]: d for d in library.get("docs") or []}
     by_clause_id = {}
     for clause in library.get("clauses") or []:
@@ -280,18 +307,20 @@ def basis_lookup(as_of=None) -> dict:
     for item_id, coord in (load_basis_index().get("items") or {}).items():
         view = by_clause_id.get(coord["clause_id"])
         if view:
-            out[item_id] = view
+            notice = (shanghai_comparison_notice(docs.get(view["doc_id"], {}), as_of)
+                      if compare_shanghai else "")
+            out[item_id] = {**view, "temporal_notice": notice} if notice else view
     return out
 
 
-def configured_basis_lookup(as_of=None) -> dict:
+def configured_basis_lookup(as_of=None, *, compare_shanghai=False) -> dict:
     """返回面向 finding 展示的依据投影。
 
     固定依据索引仍由 :func:`basis_lookup` 单独维护；这里仅补充业务规则卡片、
     签字链和证照有效期等配置型规则，明确标记 ``source_kind=configured_rule``，
     不把它们伪装成法规或业主原文。
     """
-    out = dict(basis_lookup(as_of=as_of))
+    out = dict(basis_lookup(as_of=as_of, compare_shanghai=compare_shanghai))
     from .cards import resolve_rule_cards
 
     for card in resolve_rule_cards(as_of=as_of):

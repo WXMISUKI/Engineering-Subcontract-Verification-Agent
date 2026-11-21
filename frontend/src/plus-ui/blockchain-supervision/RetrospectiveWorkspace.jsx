@@ -1,7 +1,7 @@
 import { useBsEventStream } from './hooks/useBsEventStream'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { associateBsGeneralSourceSet, createBsTask, deleteBsMaterial, downloadBsReport, getBsRetrospective, getBsTask,
-  patchBsSection, removeBsGeneralSourceSetMember, saveBlob, saveBsRetrospectiveContracts, setBsMaterialRole,
+  patchBsSection, removeBsGeneralSourceSetMember, resumeBsRetrospective, saveBlob, saveBsRetrospectiveContracts, setBsMaterialRole,
   startBsRetrospective, uploadBsMaterial } from './lib/api'
 import PrototypeUploadPage from './prototype/PrototypeUploadPage'
 import PrototypeV3Shell from './prototype/PrototypeV3Shell'
@@ -33,8 +33,7 @@ export default function RetrospectiveWorkspace({ conversationId, taskId, onTaskC
   }, [scope])
 
   useEffect(() => {
-    setTask(null); setStatus(null); setError(''); setReadError('')
-    if (taskId == null) { setTask(null); setStatus(null); return undefined }
+    if (taskId == null) return undefined
     let dead = false
     let timer
     const controller = new AbortController()
@@ -53,7 +52,7 @@ export default function RetrospectiveWorkspace({ conversationId, taskId, onTaskC
   }, [conversationId, taskId, retry])
 
   useEffect(() => {
-    setView(null)
+    setTask(null); setStatus(null); setView(null); setError(''); setReadError('')
     setSection({ baselineDate: '' }); sectionDirty.current = false; setUploadRole('general')
   }, [conversationId, taskId])
 
@@ -124,6 +123,20 @@ export default function RetrospectiveWorkspace({ conversationId, taskId, onTaskC
     finally { mutation.current = false; setBusy(false) }
   }
 
+  const resume = async () => {
+    if (mutation.current || !status?.can_resume) return
+    mutation.current = true; setBusy(true); setError('')
+    try {
+      const result = await resumeBsRetrospective(taskId)
+      if (activeScope.current === scope) { setView('run'); setStatus(result) }
+    } catch (exc) {
+      if (activeScope.current === scope) setError(exc.message)
+    } finally {
+      mutation.current = false; setBusy(false)
+      setRetry((value) => value + 1)
+    }
+  }
+
   const changeRelation = (materialId, relation) => changeInput(() => saveBsRetrospectiveContracts(taskId,
     [...relations.filter((row) => row.material_id !== materialId), ...(relation ? [{ material_id: materialId, relation }] : [])]))
   const changeSection = (key, value) => {
@@ -138,7 +151,7 @@ export default function RetrospectiveWorkspace({ conversationId, taskId, onTaskC
     if (await changeInput(() => patchBsSection(taskId, section))) sectionDirty.current = false
   }
   const uploadTask = buildPrototypeTask(task || { state: 'setup', materials: [] })
-  if (!validation) uploadTask.validation = { hard_ok: false, hard_gaps: ['请上传总包合同与分包合同'] }
+  if (!validation) uploadTask.validation = { hard_ok: false, hard_gaps: ['请上传分包合同'] }
   uploadTask.section = { ...uploadTask.section, ...section,
     baselineDate: section.baselineDate ?? (task?.baseline_date_source === 'manual' ? task?.baseline_date : '') }
 
@@ -173,7 +186,7 @@ export default function RetrospectiveWorkspace({ conversationId, taskId, onTaskC
         onRemove={(id) => changeInput(() => deleteBsMaterial(taskId, id))}
         onReplace={(id, file) => upload([file], id)} onStart={start} />
     </>}
-    {stage === 'run' && <div className="min-h-0 flex-1 overflow-auto p-6"><CheckRunView reviewMode="contract_retrospective" retrospective={status || {}} events={events} onRefresh={() => setRetry((value) => value + 1)} onOpenReport={() => setView('report')}/></div>}
+    {stage === 'run' && <div className="min-h-0 flex-1 overflow-auto p-6"><CheckRunView reviewMode="contract_retrospective" retrospective={status || {}} events={events} onRefresh={() => setRetry((value) => value + 1)} onResume={resume} resuming={busy} onOpenReport={() => setView('report')}/></div>}
     {stage === 'report' && report && <ReportView reviewMode="contract_retrospective" report={report} materials={task?.materials || []} exporting={busy ? 'busy' : null} onExport={(_, fmt) => download(fmt)} onBack={() => setView('run')}/>}
   </section></PrototypeV3Shell>
 }

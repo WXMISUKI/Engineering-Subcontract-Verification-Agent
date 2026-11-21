@@ -150,6 +150,13 @@ export async function startBsRetrospective(taskId, relations) {
   return _json(r, '合同倒查')
 }
 
+export async function resumeBsRetrospective(taskId) {
+  const r = await fetch(`${BASE}/tasks/${taskId}/retrospective/resume`, {
+    method: 'POST', credentials: 'include',
+  })
+  return _json(r, '重新核查')
+}
+
 export async function getBsRetrospective(taskId, { signal } = {}) {
   const r = await fetch(`${BASE}/tasks/${taskId}/retrospective`, { credentials: 'include', signal })
   return _json(r, '合同倒查状态')
@@ -569,7 +576,7 @@ export function bsEventsUrl(taskId, afterSeq) {
 // 现按后端 EVENT_LABELS 全量补录（顺序也按后端字典顺序，便于逐行对照）。
 export const BS_EVENT_TYPES = [
   'retrospective.accepted', 'retrospective.input_frozen', 'retrospective.batch_started',
-  'retrospective.batch_completed', 'retrospective.completed', 'retrospective.failed',
+  'retrospective.batch_completed', 'retrospective.completed', 'retrospective.failed', 'retrospective.resumed',
   'material.page_text_refresh',
   'task.supplement_planned',
   'task.supplement_blocked',

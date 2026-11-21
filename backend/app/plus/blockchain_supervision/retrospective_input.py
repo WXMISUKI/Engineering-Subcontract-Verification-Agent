@@ -2,7 +2,8 @@
 from .models import BsMaterial
 
 RELATIONS_KEY = "retrospective_contract_relations"
-INPUT_VERSION = "bs.retrospective.dual-contract.v1"
+INPUT_VERSION = "bs.retrospective.contract-input.v2"
+MANIFEST_INPUT_VERSIONS = {INPUT_VERSION, "bs.retrospective.dual-contract.v1"}
 ROLES = {"general", "sub", "labor"}
 RELATIONS = {"main", "attachment", "supplement"}
 
@@ -18,9 +19,8 @@ def readiness(db, task, *, relations=None):
     groups = {"general": [m for m in active if m.role == "general"],
               "sub": [m for m in active if m.role in {"sub", "labor"}]}
     gaps = []
-    for key, label in (("general", "总包"), ("sub", "分包")):
-        if not groups[key]:
-            gaps.append(f"请上传{label}合同PDF")
+    if not groups["sub"]:
+        gaps.append("请上传分包合同PDF")
     if any(m.role not in ROLES or not m.file_name.lower().endswith(".pdf") for m in active):
         gaps.append("倒查仅接收总包、专业分包或劳务分包合同PDF，不要求准入资料")
     pending = any(m.parse_state in {"uploading", "parsing"} for m in rows)

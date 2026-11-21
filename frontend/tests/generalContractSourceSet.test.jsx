@@ -107,6 +107,6 @@ it('keeps source-set controls read-only after setup has ended', () => {
 
 it('keeps the admission date help and packet upload category', () => {
   renderSourceSetPage({ materials: [] })
-  expect(screen.getAllByText('以该日期有效的规则版本核查').length).toBeGreaterThan(0)
+  expect(screen.getAllByText(/未选择时采用主分包合同签订日。上海细则继续参与对照/).length).toBeGreaterThan(0)
   expect(screen.getByTestId('upload-category').textContent).toContain('报审资料包')
 })

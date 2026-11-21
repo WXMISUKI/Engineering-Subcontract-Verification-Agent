@@ -9,7 +9,7 @@ def test_retrospective_events_only_expose_progress_not_frozen_text_or_model_resu
            "index": 2, "total": 8, "batch_id": "b2", "state": "failed",
            "result": {"findings": ["private finding"]}, "sources": ["private text"],
            "model_identity": {"provider": "private"}, "reason": "private failure"}
-    for kind in ["accepted", "input_frozen", "batch_started", "batch_completed", "completed", "failed"]:
+    for kind in ["accepted", "input_frozen", "batch_started", "batch_completed", "completed", "failed", "resumed"]:
         dto = service.event_dto(SimpleNamespace(event_type=f"retrospective.{kind}", payload_json=raw,
             sequence=4, stage="check", created_at=datetime(2026, 11, 19)))
         assert dto["run_id"] == "r1"
@@ -17,3 +17,11 @@ def test_retrospective_events_only_expose_progress_not_frozen_text_or_model_resu
         assert "private" not in str(dto)
         assert dto["payload"]["state"] == "failed"
         assert dto["message"] == "2/8批"
+
+
+def test_retrospective_failure_timeline_shows_the_application_message():
+    dto = service.event_dto(SimpleNamespace(event_type="retrospective.failed",
+        payload_json={"run_id": "r1", "reason": "internal", "public_message": "第2批未通过结果校验。"},
+        sequence=4, stage="check", created_at=datetime(2026, 11, 19)))
+    assert dto["message"] == "第2批未通过结果校验。"
+    assert "internal" not in str(dto)

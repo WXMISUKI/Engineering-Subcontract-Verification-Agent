@@ -13,7 +13,7 @@ from .retrospective_contracts import ContractModel, strict_response_schema, summ
 from .retrospective_sources import digest
 from .semantic_review import request_json
 
-VERSION = 'bs.contract-citation-visual.v3'
+VERSION = 'bs.contract-citation-visual.v4'
 DPI = 180
 
 
@@ -45,15 +45,28 @@ def _norm(text):
     return re.sub(r'\s+', '', text).replace('：', ':')
 
 
+def _matches_original_quote(observed, reference):
+    quote = _norm(reference['quote'])
+    if _norm(observed) == quote:
+        return True
+    # 承包范围标题的编号已经单独绑定为条款号。只允许原页观察多读这个
+    # 已知编号，不去掉引文本身的数字，也不把句首金额当作条款编号。
+    clause = reference.get('clause') or ''
+    if not quote.startswith('承包范围:') or not re.fullmatch(r'[0-9]+(?:\.[0-9]+)+', clause):
+        return False
+    parts = observed.split(maxsplit=1)
+    return len(parts) == 2 and parts[0] == clause and _norm(parts[1]) == quote
+
+
 def validate_page(raw, references):
     checks = PageResponse.model_validate(raw).model_dump()['checks']
     ids = [row['reference_id'] for row in checks]
     if len(ids) != len(set(ids)) or set(ids) != set(references):
         raise ValueError('原页核对缺失、重复或新增引用编号')
     for row in checks:
-        quote = references[row['reference_id']]['quote']
+        reference = references[row['reference_id']]
         row['state'] = ('unreadable' if not row['readable'] or not row['observed_quote'].strip() else
-                        'matches' if _norm(row['observed_quote']) == _norm(quote) else 'differs')
+                        'matches' if _matches_original_quote(row['observed_quote'], reference) else 'differs')
     return checks
 
 

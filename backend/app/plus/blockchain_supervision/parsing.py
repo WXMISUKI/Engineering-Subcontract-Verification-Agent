@@ -785,22 +785,26 @@ def _ocr_quality_suspect(text: str) -> bool:
         for line in lines)
     if empty_rows >= 20 and empty_rows * 2 > len(lines):
         return True
-    # 真实合同页曾连续生成数百个编号，正文却反复为同一短标题。
-    # 保留原始产物，但不能把编号递增的退化输出当作可读事实。
+    if repetitive_numbered_headings(lines):
+        return True
+    line, repeats = Counter(lines).most_common(1)[0]
+    return repeats >= 10 and repeats / len(lines) >= 0.8 and 0 < _body_char_count(line) <= 12
+
+
+def repetitive_numbered_headings(lines) -> bool:
+    """同一短标题随大量不同编号重复出现，是已观察到的合同 OCR 退化。"""
     numbered = []
-    for value in lines:
-        match = re.match(r"^\s*(?:#{1,6}\s*)?(\d+(?:[.．]\d+){1,})[.．、]?\s+(.+?)\s*$", value)
+    for line in lines:
+        match = re.match(r"^\s*(?:#{1,6}\s*)?(\d+(?:[.．]\d+){1,})[.．、]?\s+(.+?)\s*$", line)
         if match:
             title = re.sub(r"\s+", "", match.group(2))
             if 2 <= len(title) <= 24:
                 numbered.append((match.group(1), title))
-    if numbered:
-        title, count = Counter(title for _, title in numbered).most_common(1)[0]
-        distinct_numbers = {number for number, value in numbered if value == title}
-        if len(distinct_numbers) >= 20 and count * 2 >= len(numbered):
-            return True
-    line, repeats = Counter(lines).most_common(1)[0]
-    return repeats >= 10 and repeats / len(lines) >= 0.8 and 0 < _body_char_count(line) <= 12
+    if not numbered:
+        return False
+    title, count = Counter(title for _, title in numbered).most_common(1)[0]
+    distinct_numbers = {number for number, value in numbered if value == title}
+    return len(distinct_numbers) >= 20 and count * 2 >= len(numbered)
 
 
 def _ocr_sparse_signature(text: str) -> bool:

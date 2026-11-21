@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
@@ -19,6 +20,7 @@ import uuid
 from sqlalchemy.orm import Session
 
 from ...models.models import KnowledgeBaseBinding, KnowledgeRef
+from ...services.knowledge.binding_service import authorized_file_scope
 from ...services.knowledge.context import OWNER_SR_CONVERSATION
 from ...services.knowledge.factory import ProviderConnection, acquire_provider_backend
 from ...services.knowledge.fulltext import document_from_report, reconstruct_text_chunks
@@ -30,7 +32,8 @@ from .negative_reference import match_negative_fragments
 from .text_overlap_reference import match_text_parts
 from .knowledge import query_subcontract_knowledge, resolve_agent_id, resolve_task_route
 from .models import BsFinding, BsMaterial, BsSubject, BsTask, BsTaskEvent
-from .rules import load_basis_clauses, load_basis_index, load_negative_list, load_report_checklist
+from .rules import (admission_comparison_enabled, load_basis_clauses, load_basis_index,
+                    load_negative_list, load_report_checklist, shanghai_comparison_notice)
 from .reference_snapshots import (CHECK_GROUPS, GROUP_POINTERS, LEGACY_POINTER,
                                   REVIEW_POINTER, RUN_EVENT, reference_run_expired)
 
@@ -46,6 +49,14 @@ class ReferenceRunSuperseded(Exception):
 
 class ReferenceBasisUnavailable(ValueError):
     """已登记参考的文件、条款或附件项无法解析。"""
+
+
+@dataclass
+class _ReferenceReads:
+    """当前引用组的临时读结果，每次取用时仍需确认授权。"""
+
+    documents: dict = field(default_factory=dict)
+    fingerprints: dict = field(default_factory=dict)
 
 
 def _digest(value) -> str:
@@ -102,7 +113,7 @@ def material_fingerprint(db: Session, task: BsTask, *, options_snapshot: dict | 
                              "options": options}})
 
 
-def load_reference_package(as_of=None) -> dict:
+def load_reference_package(as_of=None, *, compare_shanghai=False) -> dict:
     package = json.loads((_DATA_DIR / "reference_package.json").read_text(encoding="utf-8"))
     mapping_path = os.environ.get('BS_REFERENCE_MAPPING_FILE', '').strip()
     if not mapping_path:
@@ -166,14 +177,19 @@ def load_reference_package(as_of=None) -> dict:
             for key in ("local_illegal_rule", "expected_context", "separate_prefix"):
                 source.pop(key, None)
             package["sources"].append(source)
-    if as_of is None:
+    if as_of is None and not compare_shanghai:
         return package
-    library = (load_basis_clauses(as_of=as_of)
-               if as_of is not None else load_basis_clauses())
-    active_doc_ids = {doc.get("doc_id") for doc in library.get("docs") or []}
-    return {**package, "sources": [source for source in package.get("sources") or []
-                                    if source.get("doc_id") in active_doc_ids],
-            "as_of": as_of.isoformat() if hasattr(as_of, "isoformat") else str(as_of)}
+    library = load_basis_clauses(as_of=as_of, compare_shanghai=compare_shanghai)
+    documents = {doc["doc_id"]: doc for doc in library.get("docs") or []}
+    sources = []
+    for source in package.get("sources") or []:
+        document = documents.get(source.get("doc_id"))
+        if document is None and as_of is not None:
+            continue
+        notice = shanghai_comparison_notice(document or {}, as_of) if compare_shanghai else ""
+        sources.append({**source, "temporal_notice": notice} if notice else source)
+    return {**package, "sources": sources,
+            "as_of": as_of.isoformat() if hasattr(as_of, "isoformat") else str(as_of) if as_of else None}
 
 
 def group_pointer(task: BsTask, group_id: str = "a1") -> str | None:
@@ -225,7 +241,7 @@ def finding_fingerprint(findings: list[BsFinding]) -> str:
 
 
 def prepare_reference_run(db: Session, task: BsTask, *, group_id: str = "a1") -> dict:
-    package = load_reference_package(as_of=task.baseline_date)
+    package = load_reference_package(as_of=task.baseline_date, compare_shanghai=admission_comparison_enabled(task))
     sources = [s for s in package["sources"] if s["kind"] in CHECK_GROUPS[group_id]["kinds"]]
     unresolved = []
     if any("subject_types" in s for s in sources):
@@ -307,7 +323,7 @@ def assert_reference_run_current(db: Session, task: BsTask, run: dict, *, active
 
 
 def _clause(source: dict, *, as_of=None) -> tuple[dict, dict]:
-    library = load_basis_clauses(as_of=as_of)
+    library = load_basis_clauses(as_of=as_of, compare_shanghai=bool(source.get("temporal_notice")))
     doc = next((d for d in library["docs"] if d["doc_id"] == source["doc_id"]), None)
     if doc is None:
         raise ReferenceBasisUnavailable("参考文件未登记或不适用于基准日")
@@ -481,32 +497,29 @@ def _excerpt(text: str, expected: str) -> str | None:
     return text[positions[start]:positions[start + len(needle) - 1] + 1]
 
 
-def _verify_authorized_original(db: Session, task: BsTask, row: dict, source: dict, deadline: float) -> bool:
+def _verify_authorized_original(db: Session, task: BsTask, row: dict, source: dict, deadline: float,
+                                reads: _ReferenceReads | None = None) -> bool:
     """只读核验同库同文件原件；读取前后重新授权，不持久化原件。"""
-    remaining = deadline - time.monotonic()
-    if remaining <= 0:
-        return False
-    reference = KnowledgeRef(owner_type=OWNER_SR_CONVERSATION, owner_key=str(task.conversation_id),
-        provider_id=row.get("provider_id"), kb_id=source["kb_id"], knowledge_id=source["knowledge_id"])
-    user = SimpleNamespace(id=task.created_by, user_type=task.created_by_type)
     try:
-        provider = authorized_reference_provider(db, reference, user)
-        if provider is None:
+        connection = _cross_page_connection(db, task, row, source)
+        remaining = deadline - time.monotonic()
+        if connection is None or remaining <= 0:
             return False
-        connection = (provider.id, provider.base_url, provider.secret_ref, provider.tenant_ref)
-        data = read_authorized_reference_original(db, reference, user,
-            max_bytes=REFERENCE_ORIGINAL_MAX_BYTES, timeout_seconds=min(2.0, remaining / 2))
-        if time.monotonic() > deadline or hashlib.sha256(data).hexdigest() != source["original_sha256"].lower():
+        expected = source["original_sha256"].lower()
+        key = (connection, row["binding_id"], source["kb_id"], source["knowledge_id"])
+        if reads is not None and key in reads.fingerprints:
+            return reads.fingerprints[key] == expected
+        reference = KnowledgeRef(owner_type=OWNER_SR_CONVERSATION, owner_key=str(task.conversation_id),
+            provider_id=row["provider_id"], kb_id=source["kb_id"], knowledge_id=source["knowledge_id"])
+        user = SimpleNamespace(id=task.created_by, user_type=task.created_by_type)
+        data = read_authorized_reference_original(db, reference, user, max_bytes=REFERENCE_ORIGINAL_MAX_BYTES,
+                                                  timeout_seconds=min(2.0, remaining / 2))
+        fingerprint = hashlib.sha256(data).hexdigest()
+        if _cross_page_connection(db, task, row, source) != connection or time.monotonic() > deadline:
             return False
-        with Session(bind=db.get_bind()) as fresh:
-            current_task = fresh.get(BsTask, task.id)
-            if (current_task is None or current_task.conversation_id != task.conversation_id
-                    or current_task.created_by != task.created_by
-                    or current_task.created_by_type != task.created_by_type):
-                return False
-            current = authorized_reference_provider(fresh, reference, user)
-            return time.monotonic() <= deadline and current is not None and connection == (
-                current.id, current.base_url, current.secret_ref, current.tenant_ref)
+        if reads is not None:
+            reads.fingerprints[key] = fingerprint
+        return fingerprint == expected
     except Exception:
         return False
 
@@ -523,6 +536,9 @@ def _cross_page_connection(db: Session, task: BsTask, scope: dict, source: dict)
         if (binding is None or not binding.is_enabled or not binding.allow_query
                 or binding.provider_id != scope.get("provider_id") or binding.external_kb_id != source["kb_id"]):
             return None
+        selected = authorized_file_scope(binding.selected_knowledge_ids)
+        if selected is not None and source["knowledge_id"] not in selected:
+            return None
         reference = KnowledgeRef(owner_type=OWNER_SR_CONVERSATION, owner_key=str(task.conversation_id),
             provider_id=scope["provider_id"], kb_id=source["kb_id"], knowledge_id=source["knowledge_id"])
         provider = authorized_reference_provider(fresh, reference,
@@ -533,22 +549,42 @@ def _cross_page_connection(db: Session, task: BsTask, scope: dict, source: dict)
                                   provider.secret_ref, provider.tenant_ref, str(provider.updated_at or ""))
 
 
+def _fetch_authorized_document(db, task, scope, source, deadline, reads):
+    connection = _cross_page_connection(db, task, scope, source)
+    remaining = deadline - time.monotonic()
+    if connection is None or remaining <= 0:
+        return None, None
+    key = (connection, scope["binding_id"], source["kb_id"], source["knowledge_id"])
+    if reads is not None and key in reads.documents:
+        return connection, reads.documents[key]
+    with acquire_provider_backend(connection, timeout_seconds=remaining) as backend:
+        report = backend.fetch_document_text_reported(source["knowledge_id"], kb_id=source["kb_id"], max_chars=None)
+    if _cross_page_connection(db, task, scope, source) != connection or time.monotonic() > deadline:
+        return None, None
+    chunks = report.get("chunks")
+    if (report.get("status") != "ok" or report.get("scope_complete") is not True
+            or not isinstance(chunks, list)
+            or any(not isinstance(row, dict) or row.get("knowledge_id") != source["knowledge_id"]
+                   or row.get("kb_id") not in (None, source["kb_id"]) for row in chunks)):
+        report = None
+    if reads is not None:
+        reads.documents[key] = report
+    return connection, report
+
+
 def _fetch_verified_cross_page(db: Session, task: BsTask, scope: dict, source: dict,
-                               clause: dict, deadline: float):
+                               clause: dict, deadline: float, reads: _ReferenceReads | None = None):
     spec = source.get("cross_page") or {}
     pages = spec.get("pages")
     if (not isinstance(pages, list) or len(pages) < 2 or pages[0] != clause.get("page_start")
             or pages[-1] != clause.get("page_end") or source.get("physical_page") != pages[0]):
         return None
     try:
-        connection = _cross_page_connection(db, task, scope, source)
-        remaining = deadline - time.monotonic()
-        if connection is None or remaining <= 0:
+        connection, report = _fetch_authorized_document(db, task, scope, source, deadline, reads)
+        if report is None:
             return None
-        with acquire_provider_backend(connection, timeout_seconds=remaining) as backend:
-            report = backend.fetch_document_text_reported(source["knowledge_id"], kb_id=source["kb_id"], max_chars=None)
         parts = match_cross_page_reference(report, clause["text"], pages=pages, separators=spec.get("separators") or [])
-        if (not parts or not _verify_authorized_original(db, task, scope, source, deadline)
+        if (not parts or not _verify_authorized_original(db, task, scope, source, deadline, reads)
                 or _cross_page_connection(db, task, scope, source) != connection):
             return None
         return parts
@@ -557,7 +593,7 @@ def _fetch_verified_cross_page(db: Session, task: BsTask, scope: dict, source: d
 
 
 def _fetch_verified_local_rule_pages(db: Session, task: BsTask, scope: dict, source: dict,
-                                     clause: dict, deadline: float):
+                                     clause: dict, deadline: float, reads: _ReferenceReads | None = None):
     item = source.get("item_id")
     if item not in {"V16-02", "V16-03", "V16-04"} or source.get("local_illegal_rule") is not True:
         return None
@@ -572,14 +608,11 @@ def _fetch_verified_local_rule_pages(db: Session, task: BsTask, scope: dict, sou
     else:
         fragments.append({"page": 10, "role": "item", "text": leaf})
     try:
-        connection = _cross_page_connection(db, task, scope, source)
-        remaining = deadline - time.monotonic()
-        if connection is None or remaining <= 0:
+        connection, report = _fetch_authorized_document(db, task, scope, source, deadline, reads)
+        if report is None:
             return None
-        with acquire_provider_backend(connection, timeout_seconds=remaining) as backend:
-            report = backend.fetch_document_text_reported(source["knowledge_id"], kb_id=source["kb_id"], max_chars=None)
         parts = match_ordered_page_fragments(report, fragments)
-        if (not parts or not _verify_authorized_original(db, task, scope, source, deadline)
+        if (not parts or not _verify_authorized_original(db, task, scope, source, deadline, reads)
                 or _cross_page_connection(db, task, scope, source) != connection):
             return None
         return parts
@@ -588,7 +621,7 @@ def _fetch_verified_local_rule_pages(db: Session, task: BsTask, scope: dict, sou
 
 
 def _fetch_verified_local_transfer_pages(db: Session, task: BsTask, scope: dict, source: dict,
-                                         clause: dict, deadline: float):
+                                         clause: dict, deadline: float, reads: _ReferenceReads | None = None):
     item = source.get("item_id")
     if item not in {"T15-03", "T15-06", "T15-08", "T15-10"} or source.get("local_transfer_rule") is not True:
         return None
@@ -606,19 +639,16 @@ def _fetch_verified_local_transfer_pages(db: Session, task: BsTask, scope: dict,
     if item in {"T15-03", "T15-08"}:
         fragments.append({"page": 9, "role": "scope", "text": clause.get("local_scope_supplement")})
     try:
-        connection = _cross_page_connection(db, task, scope, source)
-        remaining = deadline - time.monotonic()
-        if connection is None or remaining <= 0:
+        connection, report = _fetch_authorized_document(db, task, scope, source, deadline, reads)
+        if report is None:
             return None
-        with acquire_provider_backend(connection, timeout_seconds=remaining) as backend:
-            report = backend.fetch_document_text_reported(source["knowledge_id"], kb_id=source["kb_id"], max_chars=None)
         parts = match_ordered_page_fragments(report, fragments)
         variant_used = False
         if not parts and clause.get("local_preamble_variant"):
             fragments[0] = {**fragments[0], "text": clause["local_preamble_variant"]}
             parts = match_ordered_page_fragments(report, fragments)
             variant_used = bool(parts)
-        if (not parts or not _verify_authorized_original(db, task, scope, source, deadline)
+        if (not parts or not _verify_authorized_original(db, task, scope, source, deadline, reads)
                 or _cross_page_connection(db, task, scope, source) != connection):
             return None
         return parts, variant_used
@@ -627,27 +657,19 @@ def _fetch_verified_local_transfer_pages(db: Session, task: BsTask, scope: dict,
 
 
 def _fetch_verified_text_parts(db: Session, task: BsTask, scope: dict, source: dict,
-                               clause: dict, preamble: str, deadline: float):
+                               clause: dict, preamble: str, deadline: float, reads: _ReferenceReads | None = None):
     try:
-        connection = _cross_page_connection(db, task, scope, source)
-        remaining = deadline - time.monotonic()
-        if connection is None or remaining <= 0:
-            return None
-        with acquire_provider_backend(connection, timeout_seconds=remaining) as backend:
-            report = backend.fetch_document_text_reported(source["knowledge_id"], kb_id=source["kb_id"], max_chars=None)
-        chunks = report.get("chunks") or []
-        if (report.get("status") != "ok" or report.get("scope_complete") is not True
-                or any(not isinstance(row, dict) or row.get("knowledge_id") != source["knowledge_id"]
-                       for row in chunks)):
+        connection, report = _fetch_authorized_document(db, task, scope, source, deadline, reads)
+        if report is None:
             return None
         document = document_from_report(report)
         if document is None:
             # 兼容尚未返回 assembly_trace 的旧 Provider；带图片占位符的
             # 不完整报告仍会由 reconstruct_text_chunks 明确拒绝。
-            text_chunks = [row for row in chunks if row.get("chunk_type") == "text"]
+            text_chunks = [row for row in report["chunks"] if row.get("chunk_type") == "text"]
             document = reconstruct_text_chunks(text_chunks)
         parts = match_text_parts(document, preamble, clause["text"]) if document else None
-        if (not parts or not _verify_authorized_original(db, task, scope, source, deadline)
+        if (not parts or not _verify_authorized_original(db, task, scope, source, deadline, reads)
                 or _cross_page_connection(db, task, scope, source) != connection):
             return None
         return parts
@@ -658,6 +680,35 @@ def _fetch_verified_text_parts(db: Session, task: BsTask, scope: dict, source: d
 def _reference_group_budget(source_count: int) -> float:
     """按来源数量分配有界时间，保留至少半个运行租约供后续持久化。"""
     return min(30.0, max(10.0, source_count * 0.5))
+
+
+def _same_document_candidates(db, task, scopes, source, expected, deadline, reads):
+    """在已获授权的同一文件中查找唯一的完整片段，原件验证由引用校验负责。"""
+    needle = "".join(expected.split()) if isinstance(expected, str) else ""
+    if not needle:
+        return []
+    targets = [scope for scope in scopes if scope.get("kb_id") == source["kb_id"]
+               and scope.get("provider_id") is not None and scope.get("binding_id") is not None
+               and source["knowledge_id"] in (scope.get("knowledge_ids") or [])]
+    if len(targets) != 1:
+        return []
+    [scope] = targets
+    try:
+        _, report = _fetch_authorized_document(db, task, scope, source, deadline, reads)
+        if report is None or any(row.get("kb_id") != source["kb_id"] for row in report["chunks"]):
+            return []
+    except Exception:
+        return []
+    matches = [chunk for chunk in report["chunks"] if needle in "".join((chunk.get("content") or "").split())]
+    if len(matches) != 1:
+        return []
+    [chunk] = matches
+    if ("".join(chunk["content"].split()).count(needle) != 1
+            or chunk.get("chunk_type") not in {"text", "image_ocr"} or not chunk.get("id")):
+        return []
+    return [{**{k: scope[k] for k in ("provider_id", "binding_id", "kb_id")},
+             "knowledge_id": source["knowledge_id"], "id": chunk["id"], "document": chunk["content"],
+             "metadata": {"chunk_type": chunk["chunk_type"]}}]
 
 
 def retrieve_reference_run(db: Session, task: BsTask, run: dict, *, as_of=_AS_OF_UNSET) -> dict:
@@ -679,11 +730,12 @@ def retrieve_reference_run(db: Session, task: BsTask, run: dict, *, as_of=_AS_OF
         return terminal
     deadline = time.monotonic() + _reference_group_budget(len(sources))
     statuses = []
-    query_cache, original_cache = {}, {}
+    query_cache = {}
+    reads = _ReferenceReads()
     results = []
     for source in sources:
         result = _retrieve_source(db, task, run, source, max(0.0, deadline - time.monotonic()), as_of=as_of,
-                                  query_cache=query_cache, original_cache=original_cache)
+                                  query_cache=query_cache, reads=reads)
         results.append(result)
     for index, source in enumerate(sources):
         previous = results[index]
@@ -698,7 +750,7 @@ def retrieve_reference_run(db: Session, task: BsTask, run: dict, *, as_of=_AS_OF
                 and (cached[0].status in {"hit", "partial"} or cached[1] < 2)
                 and deadline > time.monotonic()):
             recovered = _retrieve_source(db, task, run, source, deadline - time.monotonic(), as_of=as_of,
-                                         query_cache=query_cache, original_cache=original_cache)
+                                         query_cache=query_cache, reads=reads)
             if recovered.get("references"):
                 recovered["limitations"].append({"code": "reference_query_recovered",
                     "message": "部分参考查询曾超时，已在本轮重试并恢复；请结合引用状态核对原文"})
@@ -719,7 +771,7 @@ def retrieve_reference_run(db: Session, task: BsTask, run: dict, *, as_of=_AS_OF
 
 
 def _retrieve_source(db: Session, task: BsTask, run: dict, source: dict, budget: float, *, as_of=None,
-                     query_cache: dict | None = None, original_cache: dict | None = None) -> dict:
+                     query_cache: dict | None = None, reads: _ReferenceReads | None = None) -> dict:
     deadline = time.monotonic() + max(0.0, budget)
     terminal = deepcopy(run)
     terminal.update(state="completed", status="undetermined", references=[],
@@ -804,7 +856,6 @@ def _retrieve_source(db: Session, task: BsTask, run: dict, source: dict, budget:
     fingerprint_missing = False
     fingerprint_mismatch = False
     text_difference = False
-    verified_original = original_cache if original_cache is not None else {}
     use_parts = source.get("negative_parts") is True or source.get("national_transfer_parts") is True
     if use_parts and result.status in {"hit", "partial"}:
         eligible = {}
@@ -828,7 +879,8 @@ def _retrieve_source(db: Session, task: BsTask, run: dict, source: dict, budget:
             preamble = load_negative_list()["meta"]["preamble"]
         else:
             rule = {"kind": "prohibited", "text": clause["text"], "exceptions": []}
-            parent = next(c for c in load_basis_clauses(as_of=as_of)["clauses"]
+            parent = next(c for c in load_basis_clauses(
+                as_of=as_of, compare_shanghai=bool(source.get("temporal_notice")))["clauses"]
                           if c.get("clause_id") == "MOT-2024-2#第十五条")
             preamble = parent["text"].split("（一）", 1)[0]
         matches = []
@@ -836,9 +888,7 @@ def _retrieve_source(db: Session, task: BsTask, run: dict, source: dict, budget:
             parts = match_negative_fragments(rows, rule, preamble) if rule else None
             if not parts:
                 continue
-            if key not in verified_original:
-                verified_original[key] = _verify_authorized_original(db, task, rows[0], source, deadline)
-            if verified_original[key]:
+            if _verify_authorized_original(db, task, rows[0], source, deadline, reads):
                 matches.append((key, parts))
             else:
                 fingerprint_missing = True
@@ -848,10 +898,10 @@ def _retrieve_source(db: Session, task: BsTask, run: dict, source: dict, budget:
                       and (s.get("knowledge_ids") is None or source["knowledge_id"] in s["knowledge_ids"])]
             if len(scopes) == 1:
                 scope = scopes[0]
-                parts = _fetch_verified_text_parts(db, task, scope, source, clause, preamble, deadline)
+                parts = _fetch_verified_text_parts(db, task, scope, source, clause, preamble, deadline, reads)
                 if not parts and source.get("retrieval_text_variant"):
                     parts = _fetch_verified_text_parts(db, task, scope, source,
-                        {**clause, "text": source["retrieval_text_variant"]}, preamble, deadline)
+                        {**clause, "text": source["retrieval_text_variant"]}, preamble, deadline, reads)
                     text_difference = bool(parts)
                 if parts:
                     key = (scope["provider_id"], scope["binding_id"], source["kb_id"],
@@ -869,7 +919,21 @@ def _retrieve_source(db: Session, task: BsTask, run: dict, source: dict, budget:
                 "original_sha256": source["original_sha256"], "fingerprint_verification": "authorized_original_sha256",
                 "physical_page": source.get("physical_page"), "human_verified": bool(source.get("human_verified")),
             })
-    for row in ([] if use_parts or source.get("local_transfer_rule") else result.items):
+    fragments = clause.get("excerpt_fragments") or []
+    expected = fragments[0] if fragments else source.get("expected_context", clause["text"])
+    if source.get("required_negative_preamble") is True:
+        expected = load_negative_list()["meta"]["preamble"] + "\n" + expected
+
+    def candidate_rows():
+        yield from ((row, None) for row in result.items)
+        if (source.get("retrospective_shanghai_lookup") is True and result.status in {"hit", "partial"}
+                and not fingerprint_mismatch and not fingerprint_missing):
+            rows = _same_document_candidates(
+                db, task, result.target_scopes, source, expected, deadline, reads,
+            )
+            yield from ((row, "authorized_document_chunks") for row in rows)
+
+    for row, lookup_method in ([] if use_parts or source.get("local_transfer_rule") else candidate_rows()):
         metadata = row.get("metadata") or {}
         allowed = any(s["provider_id"] == row.get("provider_id")
                       and s["binding_id"] == row.get("binding_id")
@@ -884,10 +948,6 @@ def _retrieve_source(db: Session, task: BsTask, run: dict, source: dict, budget:
         if fingerprint and fingerprint != source["original_sha256"]:
             fingerprint_mismatch = True
             continue
-        fragments = clause.get("excerpt_fragments") or []
-        expected = fragments[0] if fragments else source.get("expected_context", clause["text"])
-        if source.get("required_negative_preamble") is True:
-            expected = load_negative_list()["meta"]["preamble"] + "\n" + expected
         excerpt = _excerpt(row.get("document") or "", expected)
         if not excerpt:
             continue
@@ -949,11 +1009,7 @@ def _retrieve_source(db: Session, task: BsTask, run: dict, source: dict, budget:
         verification_method = "chunk_metadata_sha256"
         if not fingerprint:
             fingerprint_missing = True
-            scope = (row.get("provider_id"), row.get("binding_id"), source["kb_id"], source["knowledge_id"],
-                     source["original_sha256"])
-            if scope not in verified_original:
-                verified_original[scope] = _verify_authorized_original(db, task, row, source, deadline)
-            if not verified_original[scope]:
+            if not _verify_authorized_original(db, task, row, source, deadline, reads):
                 continue
             verification_method = "authorized_original_sha256"
         terminal["references"].append({
@@ -971,6 +1027,7 @@ def _retrieve_source(db: Session, task: BsTask, run: dict, source: dict, budget:
             **({"list_no": source["list_no"]} if "list_no" in source else {}),
             "original_sha256": source["original_sha256"],
             "fingerprint_verification": verification_method,
+            **({"lookup_method": lookup_method} if lookup_method else {}),
             "physical_page": source.get("physical_page"),
             "human_verified": bool(source.get("human_verified")),
         })
@@ -984,7 +1041,7 @@ def _retrieve_source(db: Session, task: BsTask, run: dict, source: dict, budget:
             scope = scopes[0]
             parts = _fetch_verified_text_parts(db, task, scope, source,
                                                {**clause, "text": clause["item_line"]},
-                                               clause["section_anchor"], deadline)
+                                               clause["section_anchor"], deadline, reads)
             if parts:
                 terminal["references"].append({
                     "reference_id": "ref-1", "purpose": "reference_only", "used_for_decision": False,
@@ -1008,7 +1065,7 @@ def _retrieve_source(db: Session, task: BsTask, run: dict, source: dict, budget:
                     or source["knowledge_id"] in scope["knowledge_ids"])]
         if len(eligible) == 1:
             scope = eligible[0]
-            fetched = _fetch_verified_local_transfer_pages(db, task, scope, source, clause, deadline)
+            fetched = _fetch_verified_local_transfer_pages(db, task, scope, source, clause, deadline, reads)
             if fetched:
                 parts, text_difference = fetched
                 terminal["references"].append({
@@ -1032,7 +1089,7 @@ def _retrieve_source(db: Session, task: BsTask, run: dict, source: dict, budget:
                     or source["knowledge_id"] in scope["knowledge_ids"])]
         if len(eligible) == 1:
             scope = eligible[0]
-            parts = _fetch_verified_local_rule_pages(db, task, scope, source, clause, deadline)
+            parts = _fetch_verified_local_rule_pages(db, task, scope, source, clause, deadline, reads)
             if parts:
                 terminal["references"].append({
                     "reference_id": "ref-1", "purpose": "reference_only", "used_for_decision": False,
@@ -1052,7 +1109,7 @@ def _retrieve_source(db: Session, task: BsTask, run: dict, source: dict, budget:
                     or source["knowledge_id"] in scope["knowledge_ids"])]
         if len(eligible) == 1:
             scope = eligible[0]
-            parts = _fetch_verified_cross_page(db, task, scope, source, clause, deadline)
+            parts = _fetch_verified_cross_page(db, task, scope, source, clause, deadline, reads)
             if parts:
                 terminal["references"].append({
                     "reference_id": "ref-1", "purpose": "reference_only", "used_for_decision": False,

@@ -39,7 +39,7 @@ from .material_facts import persist_material_facts
 from .relation_resolution import resolve_task_relations
 from .models import (PARSE_STATE_STORED, STATUS_LABELS, BsFinding, BsMaterial, BsMaterialConfirmation, BsPacket,
                      BsReviewVersion, BsSubject, BsTask, BsTaskEvent, counted_status)
-from .rules import load_config
+from .rules import admission_comparison_enabled, basis_lookup, load_config
 
 logger = logging.getLogger(__name__)
 _PENDING_SUBJECT_TYPE_SCANS = Counter()
@@ -325,9 +325,26 @@ def record_anchor_recovery(db: Session, task_id: int, *, changes: list[dict],
                               "changes": changes}, commit=False)
 
 
-def _default_baseline_date() -> date:
-    """默认核查日期采用北京时间，不依赖服务器部署时区。"""
-    return datetime.now(timezone(timedelta(hours=8))).date()
+def _admission_baseline(db, task, *, exclude_material_id=None, exclude_pages=()) -> date | None:
+    from .retrospective_sources import freeze_material, infer_contract_date
+
+    materials = db.query(BsMaterial).filter(BsMaterial.task_id == task.id).all()
+    sources = []
+    for material in material_versions.active_input_materials(materials):
+        if material.role not in {"sub", "labor"} or material.parse_state != "done":
+            continue
+        source = freeze_material(material)
+        if material.id == exclude_material_id:
+            source["pages"] = [row for row in source["pages"] if row["page"] not in exclude_pages]
+        sources.append(source)
+    signed, _ = infer_contract_date(sources)
+    return date.fromisoformat(signed) if signed else None
+
+
+def _admission_baseline_basis(source, baseline):
+    if source == "manual":
+        return "manual"
+    return "subcontract_signing_date" if baseline else "unknown"
 
 
 def baseline_date_source(task: BsTask) -> str:
@@ -358,8 +375,7 @@ def create_task(db: Session, *, conversation_id: int, title: str,
                                "baseline_date_source": "manual" if selected_baseline else "automatic"},
         project_name=_clean_str(project_name),
         contract_section=_clean_str(contract_section),
-        baseline_date=(selected_baseline if selected_baseline or review_mode == task_review_mode.RETROSPECTIVE
-                       else _default_baseline_date()),
+        baseline_date=selected_baseline,
         jurisdiction=_coerce_jurisdiction(jurisdiction),
         profile_code=_coerce_profile_code(profile_code),
         created_by=created_by, created_by_type=created_by_type,
@@ -3187,6 +3203,19 @@ def _replace_findings(db: Session, task: BsTask, findings: list, *, commit: bool
         findings = [f for f in findings if f.item_id in scoped_ids]
     # 依据闸门（第二道，设计 1.6）：登记过的条目必须绑定到可引用条款，错配即拒落库。
     basis_validation.gate_findings(findings)
+    hits = [f for f in findings if f.status == "hit"] if admission_comparison_enabled(task) else []
+    if hits:
+        from .finding_semantics import FINDING_SEMANTICS_MANUAL_PROMPT
+
+        references = basis_lookup(as_of=task.baseline_date, compare_shanghai=True)
+        for finding in hits:
+            reference = references.get(finding.item_id, {})
+            notice = reference.get("temporal_notice")
+            if notice:
+                finding.status = "undecidable"
+                finding.finding_semantics = FINDING_SEMANTICS_MANUAL_PROMPT
+                finding.message = (f"合同材料出现与{reference['doc_no']}{reference.get('marker') or '相关条款'}"
+                                   f"要求存在差异的情形，见本项证据。{notice}")
     # 阅读门禁（设计 2.5）：未读/可疑页不得支撑「符合」结论，就地降级为缺项。
     # 放在删旧行之前，保证本代结论无论来自哪条 run_* 路径都过同一道闸。
     if findings:
@@ -3546,7 +3575,8 @@ def initialize_reference_review(db: Session, task: BsTask, *, rule_fingerprint: 
         task, review_run_id=review_id,
         material_fingerprint=knowledge_runs.material_fingerprint(db, task),
         rule_fingerprint=frozen_rule_fingerprint,
-        package=knowledge_runs.load_reference_package(as_of=task.baseline_date))
+        package=knowledge_runs.load_reference_package(
+            as_of=task.baseline_date, compare_shanghai=admission_comparison_enabled(task)))
     seed["report_policy"] = frozen_report_policy
     scope_enabled = optional_source_scope.scope_policy_enabled()
     seed["optional_source_scope"] = optional_source_scope.freeze_policy(scope_enabled)
@@ -5195,7 +5225,7 @@ def _apply_start_gates(db: Session, task: BsTask, *, check: dict, operator=None)
         _apply_section_suggestions(task, section_sources)
         date_source = baseline_date_source(task)
         if date_source == "automatic":
-            task.baseline_date = _default_baseline_date()
+            task.baseline_date = _admission_baseline(db, task)
         for s in newly_locked:
             s.type_locked = True
         # BS-P2-04 / 117-B：规则归属必须在启动成功的同一事务内冻结。后续收口、
@@ -5204,6 +5234,7 @@ def _apply_start_gates(db: Session, task: BsTask, *, check: dict, operator=None)
         task.options_snapshot_json = {
             "review_mode": task_review_mode.of(task),
             "baseline_date_source": date_source,
+            "baseline_date_basis": _admission_baseline_basis(date_source, task.baseline_date),
             "semantic_review_version": semantic_review.SEMANTIC_REVIEW_VERSION,
             "ruleset_manifest": ruleset_manifest,
             "task": {"id": task.id, "title": task.title,
@@ -7608,7 +7639,10 @@ def rerun_task(db: Session, task: BsTask, *, scope: str = "all", item_ids=None,
     # 误当成跨多代完整影响面。
     planning_changed_item_ids = [] if ruleset_diff and not ruleset_diff["changed"] else None
     date_source = baseline_date_source(task)
-    next_baseline = _default_baseline_date() if date_source == "automatic" else task.baseline_date
+    next_baseline = (_admission_baseline(db, task,
+                        exclude_material_id=candidate_material.id if candidate_material else None,
+                        exclude_pages=changed_pages if candidate_material else ())
+                     if date_source == "automatic" else task.baseline_date)
     baseline_changed = next_baseline != task.baseline_date
     section_sources = _missing_section_suggestions(db, task)
     plan = rule_item_catalog.plan_rerun(
@@ -7718,6 +7752,7 @@ def rerun_task(db: Session, task: BsTask, *, scope: str = "all", item_ids=None,
     # ⑤ 重置状态回 running（幂等：本就在 running 亦无副作用），carry 随选项快照落库。
     options = dict(task.options_snapshot_json or {})
     options["baseline_date_source"] = date_source
+    options["baseline_date_basis"] = _admission_baseline_basis(date_source, task.baseline_date)
     options["section"] = _section_snapshot(task)
     options["section_auto_sources"] = {**(options.get("section_auto_sources") or {}), **section_sources}
     options["semantic_review_version"] = semantic_review.SEMANTIC_REVIEW_VERSION
@@ -8079,6 +8114,7 @@ EVENT_LABELS = {
     "retrospective.batch_completed": "合同批次已处理",
     "retrospective.completed": "合同倒查报告已保存",
     "retrospective.failed": "合同倒查执行中断",
+    "retrospective.resumed": "已申请重新核查",
     _PAGE_TEXT_REFRESH_EVENT: "材料页面补读",
     "task.supplement_planned": "补件局部核查计划已生成",
     "task.supplement_blocked": "补件局部核查计划被阻止",
@@ -8373,6 +8409,12 @@ def event_dto(ev: BsTaskEvent) -> dict:
         payload = {key: raw[key] for key in ("run_id", "phase", "label", "index", "total", "batch_id", "execution_status", "state") if key in raw}
         if ev.event_type in {"retrospective.batch_started", "retrospective.batch_completed"}:
             label = raw.get("label") or label
+    retro_message = None
+    if retrospective_event:
+        if ev.event_type in {"retrospective.failed", "retrospective.resumed"}:
+            retro_message = raw.get("public_message")
+        if retro_message is None and raw.get("total", 0) > 1 and "index" in raw:
+            retro_message = f'{raw["index"]}/{raw["total"]}批'
     diagnostics = _safe_event_diagnostics(raw)
     event_time = ev.created_at
     # 兼容历史/替身事件对象：没有偏移列时按“未知”输出，不阻断时间线投影。
@@ -8383,7 +8425,7 @@ def event_dto(ev: BsTaskEvent) -> dict:
         "sequence": ev.sequence,
         "event_type": ev.event_type,
         "label": label,
-        "message": (f'{raw["index"]}/{raw["total"]}批' if retrospective_event and raw.get("total", 0) > 1 and "index" in raw else None) if retrospective_event else _event_message(ev),
+        "message": retro_message if retrospective_event else _event_message(ev),
         "run_id": raw.get("run_id") if retrospective_event else None,
         "stage": ev.stage,
         "payload": payload,

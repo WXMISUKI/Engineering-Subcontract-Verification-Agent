@@ -209,8 +209,14 @@ async def request_json(client, system, payload, *, on_usage=None, diagnostic_con
     )
     output_chars = len(raw)
     raw = re.sub(r'^```(?:json)?\s*|\s*```$', '', raw.strip())
+    def unique_object(pairs):
+        result = dict(pairs)
+        if len(result) != len(pairs):
+            raise InvalidModelResponse('模型响应对象包含重复字段')
+        return result
+
     try:
-        result = json.loads(raw)
+        result = json.loads(raw, object_pairs_hook=unique_object if response_schema is not None else None)
     except json.JSONDecodeError:
         logger.warning('AI model response invalid model_request_id=%s %s reason=json_parse_error output_chars=%s',
                        request_id, context_fields, output_chars)

@@ -4,7 +4,7 @@ import RetrospectiveWorkspace from '../src/plus-ui/blockchain-supervision/Retros
 
 const api = vi.hoisted(() => ({
   getBsTask: vi.fn(), getBsRetrospective: vi.fn(), downloadBsReport: vi.fn(), saveBlob: vi.fn(),
-  createBsTask: vi.fn(), deleteBsMaterial: vi.fn(), startBsRetrospective: vi.fn(), uploadBsMaterial: vi.fn(),
+  createBsTask: vi.fn(), deleteBsMaterial: vi.fn(), startBsRetrospective: vi.fn(), resumeBsRetrospective: vi.fn(), uploadBsMaterial: vi.fn(),
   associateBsGeneralSourceSet: vi.fn(), removeBsGeneralSourceSetMember: vi.fn(), saveBsRetrospectiveContracts: vi.fn(),
   setBsMaterialRole: vi.fn(), patchBsSection: vi.fn(),
 }))
@@ -43,17 +43,23 @@ describe('RetrospectiveWorkspace', () => {
     expect(screen.queryByText(/核查限制|未取得可靠正文/)).toBeNull()
   })
 
-  it('reuses the upload page and blocks a restored single contract', async () => {
+  it('reuses the upload page and starts a restored single subcontract', async () => {
+    const relations = [{ material_id: 7, relation: 'main' }]
     api.getBsTask.mockResolvedValue({ state: 'setup', materials: [{ material_id: 7, role: 'sub', file_name: '分包合同.pdf' }],
-      validation: { hard_ok: false, hard_gaps: ['请上传总包合同PDF'], contract_relations: [{ material_id: 7, relation: 'main' }] } })
+      validation: { hard_ok: true, hard_gaps: [], contract_relations: relations } })
     api.getBsRetrospective.mockResolvedValue({ state: 'not_started', report: null })
+    api.startBsRetrospective.mockResolvedValue({ state: 'queued', report: null })
     render(<RetrospectiveWorkspace taskId={4} conversationId={2}/>)
     await screen.findByText('分包合同.pdf')
+    expect(screen.getByText(/有对应总包合同的，可一并上传/)).toBeTruthy()
+    expect(screen.getByText(/上海细则继续参与对照/)).toBeTruthy()
+    expect(screen.getByText(/所选合同已就绪/)).toBeTruthy()
     expect(screen.getByTestId('prototype-upload-page')).toBeTruthy()
+    expect(screen.getByText(/分包合同必传，总包合同可选/)).toBeTruthy()
     const start = screen.getByRole('button', { name: '开始核查' })
-    expect(start.disabled).toBe(true)
+    expect(start.disabled).toBe(false)
     fireEvent.click(start)
-    expect(api.startBsRetrospective).not.toHaveBeenCalled()
+    await waitFor(() => expect(api.startBsRetrospective).toHaveBeenCalledWith(4, relations))
     expect(screen.queryByText(/五步核查|报审资料包/)).toBeNull()
     expect(screen.getByTestId('upload-category').textContent).not.toContain('报审资料包')
   })
@@ -112,6 +118,30 @@ describe('RetrospectiveWorkspace', () => {
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('已上传的文件会保留'))
     expect(created).toHaveBeenCalledWith(5)
     expect(api.uploadBsMaterial.mock.calls[0][2]).toMatchObject({ role: 'general', materialCategory: 'general' })
+  })
+
+  it('resumes an interrupted frozen task through the resume endpoint', async () => {
+    api.getBsTask.mockResolvedValue({ state: 'failed', materials: [] })
+    api.getBsRetrospective.mockResolvedValueOnce({ state: 'failed', run_id: 'run-a', report: null,
+      can_resume: true, error: '第2批结果校验失败，可重新核查。' })
+      .mockResolvedValue({ state: 'queued', run_id: 'run-a', report: null })
+    api.resumeBsRetrospective.mockResolvedValue({ state: 'queued', run_id: 'run-a', report: null })
+    render(<RetrospectiveWorkspace conversationId={2} taskId={4} />)
+    fireEvent.click(await screen.findByRole('button', { name: '重新核查' }))
+    await waitFor(() => expect(api.resumeBsRetrospective).toHaveBeenCalledWith(4))
+    expect(api.startBsRetrospective).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: '查看审查报告' })).toBeNull()
+  })
+
+  it('keeps the input-change reason visible when the resume request is rejected', async () => {
+    api.getBsTask.mockResolvedValue({ state: 'failed', materials: [] })
+    api.getBsRetrospective.mockResolvedValue({ state: 'failed', run_id: 'run-a', report: null,
+      can_resume: true, error: '第2批结果校验失败，可重新核查。' })
+    api.resumeBsRetrospective.mockRejectedValue(new Error('合同原件已变化，请新建核查任务。'))
+    render(<RetrospectiveWorkspace conversationId={2} taskId={4} />)
+    fireEvent.click(await screen.findByRole('button', { name: '重新核查' }))
+    expect(await screen.findByText('合同原件已变化，请新建核查任务。')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '查看审查报告' })).toBeNull()
   })
 
   it('shows a failed execution without a clean-report statement or export actions', async () => {

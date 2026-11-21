@@ -25,7 +25,7 @@ from .models import (STATUS_CODES, STATUS_LABELS, STATUS_UNDECIDABLE,
                      BsFinding, BsMaterial, BsSubject, BsTask, BsTaskEvent,
                      BsReviewVersion, counted_status)
 from .basis_subject_projection import SHARED_ATTACHMENT_IDS, subject_basis_view
-from .rules import (basis_lookup, configured_basis_lookup, load_config, load_report_checklist, load_signature_chains,
+from .rules import (admission_comparison_enabled, basis_lookup, configured_basis_lookup, load_config, load_report_checklist, load_signature_chains,
                     load_transfer_rules, negative_list_rules)
 from .severity import SEVERITY_LABELS
 from .finding_semantics import is_manual_prompt
@@ -425,6 +425,9 @@ def decision_trace(f: BsFinding, basis: dict | None = None) -> dict:
         "status_label": status,
         "evidence_status": evidence_status,
         "basis_available": bool(basis),
+        **({"temporal_basis": {key: basis.get(key) for key in
+                               ("doc_id", "clause_id", "doc_no", "temporal_notice")}}
+           if basis and basis.get("temporal_notice") else {}),
         "reason_code": finding_reason_code(f),
         "reason_label": reason_code_label(finding_reason_code(f)),
         "summary": "%s%s%s" % (basis_summary, evidence_summary, missing_summary),
@@ -1190,7 +1193,7 @@ def build_report(db: Session, task: BsTask, *, scope_coverage: dict | None = Non
         findings, project_compound_material_findings(findings, checklist_summary)) if projected is not f}
     subjects_by_id = {subject.id: subject for subject in subjects}
     neg_map, rc_map, sc_map, val_map = _label_maps()
-    basis_map = configured_basis_lookup(as_of=task.baseline_date)
+    basis_map = configured_basis_lookup(as_of=task.baseline_date, compare_shanghai=admission_comparison_enabled(task))
 
     by_kind: dict = {}
     for f in report_findings:
@@ -1854,7 +1857,7 @@ def build_opinion(db: Session, task: BsTask, *, scope_coverage: dict | None = No
                     seen.add(identity)
                     basis.append(dict(view))
     else:
-        lookup = configured_basis_lookup(as_of=task.baseline_date)
+        lookup = configured_basis_lookup(as_of=task.baseline_date, compare_shanghai=admission_comparison_enabled(task))
         subject_ids = {item.get("subject_id") for item in items
                        if item.get("item_id") in SHARED_ATTACHMENT_IDS and item.get("subject_id") is not None}
         subjects_by_id = {subject.id: subject for subject in db.query(BsSubject).filter(

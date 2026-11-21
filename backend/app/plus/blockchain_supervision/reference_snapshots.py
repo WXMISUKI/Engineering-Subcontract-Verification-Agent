@@ -13,7 +13,7 @@ from .card_artifacts import build_review_flow_overlay
 from .cards import resolve_rule_cards
 from .ai_scope_selection import resolved_scope_strategy
 from .models import BsTask, BsTaskEvent
-from .rules import load_basis_clauses, load_review_flow
+from .rules import admission_comparison_enabled, load_basis_clauses, load_review_flow, shanghai_comparison_notice
 
 REVIEW_EVENT = "knowledge.review_started"
 RUN_EVENT = "knowledge.reference_completed"
@@ -136,8 +136,8 @@ def build_review_seed(task: BsTask, *, review_run_id: str, material_fingerprint:
                       rule_fingerprint: str, package: dict) -> dict:
     """仅在开启本代时读规则；原文、页码、校对与在线来源随seed冻结。"""
     baseline_date = getattr(task, "baseline_date", None)
-    library = (load_basis_clauses(as_of=baseline_date)
-               if baseline_date is not None else load_basis_clauses())
+    compare_shanghai = admission_comparison_enabled(task)
+    library = load_basis_clauses(as_of=baseline_date, compare_shanghai=compare_shanghai)
     clauses = _clause_index(library)
     documents = {document["doc_id"]: document for document in library.get("docs") or []}
     task_expected_groups = expected_groups(task)
@@ -156,6 +156,10 @@ def build_review_seed(task: BsTask, *, review_run_id: str, material_fingerprint:
                 continue
             seen.add(identity)
             basis, limitation = _fixed_basis(coordinate, clauses, documents)
+            if compare_shanghai and basis.get("document"):
+                notice = shanghai_comparison_notice(basis["document"], baseline_date)
+                if notice:
+                    basis["temporal_notice"] = notice
             if coordinate.get("basis_kind") == "material_requirement":
                 material_basis.append(basis)
             else:
