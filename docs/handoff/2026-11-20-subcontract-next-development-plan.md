@@ -4,7 +4,7 @@
 
 ## 执行记录
 
-目标 A 已按用户指令暂停。候选代码保留在独立工作树 `C:/project/nanjin/Engineering-Subcontract-Verification-Agent-goal-a`，分支 `codex/goal-a-retrospective`。本方案和已批准的规格在主工作区维护。
+目标 A 已按用户指令暂停。工作树统一保留项目主目录 `C:/project/nanjin/Engineering-Subcontract-Verification-Agent`。本方案和已批准的规格在 `main` 维护，候选代码由本地开发分支 `codex/goal-a-retrospective` 保存。恢复开发时在同一工作树切换到该分支，测试仍使用隔离的数据库、端口和资料目录。
 
 暂停点：真实 Flash 已执行总包第 68–73 页的 84 个工程量清单片段，以及第 33–38 页的 36 个实质条款片段。首批逐项返回处理记录。后一批返回 55 个条款候选，离线对照发现了表述与所引编号错配，其中模型将第 34 页的计价文字错误绑定到第 36 页检测约定的编号。候选总分包比对 v15 限定前文范围并新增错引拦截，用原响应回放拒绝 38 条错绑候选，整批仍未完成。暂停前已发起一次隔离 Flash 复验，执行会话 `10909`，证据目录 `artifacts/bs-goal-a-20261120/provider-20261121/general-density-flash-v15/`。后端定向测试会话 `72036`。暂停时两项最终结果未读取，恢复时先查原会话或已落盘结果。正式全文提取选型、双合同端到端及目标环境验收待完成。
 
