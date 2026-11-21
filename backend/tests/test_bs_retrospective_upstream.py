@@ -210,6 +210,29 @@ def test_transport_short_skip_reason_is_rejected_and_marks_partial():
     assert result['rejected_skipped_count'] == 1
 
 
+def test_extraction_preserves_explicit_approval_exception_for_the_same_prohibition():
+    from app.plus.blockchain_supervision.retrospective_upstream import extraction_catalog
+    from app.plus.blockchain_supervision.retrospective_upstream_contracts import bind_selected_extraction
+
+    src = sources()[:1]
+    src[0]['pages'][0]['text'] = (
+        '承包人应设置标准养护室。除发包人批准以外，不允许租用民房或住宅用房作养护室。'
+        '试件养护时间不得少于21天。')
+    batch = analysis_batches(src)[0]
+    catalog = extraction_catalog(batch)
+    [key] = catalog
+    term = {'topic': 'quality', 'obligation_holder': 'general', 'transmission': 'self_perform',
+            'conditions': '', 'exceptions': '', 'priority': '', 'evidence_ids': [key]}
+    result = bind_selected_extraction({
+        'checked_topics': list(TOPICS), 'facts': [], 'skipped_evidence': [],
+        'terms': [{**term, 'statement': '不得租用民房或住宅用房。'},
+                  {**term, 'statement': '试件养护时间不得少于21天。'}],
+    }, batch, src, catalog)
+    assert result['state'] == 'completed'
+    assert result['terms'][0]['exceptions'] == '除发包人批准以外，不允许租用民房或住宅用房作养护室'
+    assert result['terms'][1]['exceptions'] == ''
+
+
 def test_extraction_catalog_preserves_each_substantive_original_fragment():
     from app.plus.blockchain_supervision.retrospective_upstream import extraction_catalog
     src = sources()[:1]
@@ -733,7 +756,7 @@ def test_real_runtime_persists_dual_evidence_and_same_report_exports(tmp_path, m
     result = http.get(base + '/retrospective').json()
     report = result['report']
     assert report, result
-    assert report['identity']['upstream_version'] == 'bs.contract-upstream.v15'
+    assert report['identity']['upstream_version'] == 'bs.contract-upstream.v16'
     assert report['upstream']['state'] == 'completed'
     assert {row['kind'] for row in report['rows']} == {'internal_ambiguity', 'upstream_risk'}
     row = next(row for row in report['rows'] if row['kind'] == 'upstream_risk')

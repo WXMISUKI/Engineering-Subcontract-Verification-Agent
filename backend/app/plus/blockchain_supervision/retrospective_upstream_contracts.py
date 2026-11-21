@@ -7,12 +7,17 @@ from pydantic import Field
 from .retrospective_contracts import (ALL_REPORT_DIMENSION_IDS, Citation, ContractModel, KINDS)
 from .retrospective_sources import digest, original_citation
 
-VERSION = 'bs.contract-upstream.v15'
+VERSION = 'bs.contract-upstream.v16'
 LABOR_UPSTREAM_OWNER_SUFFIX = re.compile(
     r'[（(]发包人全称[^（）()]{0,36}[）)]与工程承包人(?:已经|已)?签订施工总承包合同')
 CONTRACT_TIMING_RULE = re.compile(
     r'基准日期[：:][^。；;]{0,180}(?:截止日|签订日|签署日)前第?[0-9０-９]+天'
     r'|按天计算时间(?:的)?[，,](?:开始当天|开始日)不计入[，,]从次日开始计算')
+PROHIBITION = r'(?:不得|不允许|禁止)(?P<action>[^。；;，,]{6,96})'
+PROHIBITION_ACTION = re.compile(PROHIBITION)
+APPROVAL_EXCEPTION = re.compile(
+    r'除(?:经)?(?:发包人|业主|监理人|总承包人|承包人)(?:书面)?(?:批准|同意)(?:以)?外'
+    r'[，,]' + PROHIBITION)
 TOPICS = ('scope', 'price', 'payment', 'schedule', 'quality', 'safety',
           'environment', 'wages', 'insurance', 'equipment', 'priority')
 
@@ -155,6 +160,24 @@ def _profile_reference_supports(item, ref, sources):
                for occurrence in re.finditer(re.escape(value), quote))
 
 
+def _restore_approval_exception(term):
+    """保留与该项禁止行为对应的明确审批例外，不从其他义务移用。"""
+    if term['exceptions']:
+        return
+    statement = ''.join(term['statement'].split())
+    actions = [match['action'] for match in PROHIBITION_ACTION.finditer(statement)]
+    if not actions:
+        return
+    exceptions = {
+        match.group()
+        for ref in term['evidence']
+        for match in APPROVAL_EXCEPTION.finditer(''.join(ref['quote'].split()))
+        if any(action == match['action'] or match['action'].startswith(action) for action in actions)
+    }
+    if len(exceptions) == 1:
+        term['exceptions'] = exceptions.pop()
+
+
 def bind_extraction(raw, batch, sources):
     if not isinstance(raw, dict) or any(not isinstance(raw.get(key), list) or len(raw[key]) > limit
                                        for key, limit in [('facts', 24), ('terms', 60)]):
@@ -182,6 +205,7 @@ def bind_extraction(raw, batch, sources):
                     raise ValueError('所引原文无法支持对应的身份字段或合同角色')
                 row = {**item.model_dump(), 'evidence': refs}
                 if kind == 'terms':
+                    _restore_approval_exception(row)
                     row['term_id'] = digest(row)[:24]
                 output.append(row)
             except (ValueError, TypeError, KeyError) as exc:
